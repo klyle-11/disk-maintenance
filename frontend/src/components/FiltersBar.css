@@ -1,0 +1,58 @@
+.filters-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-group label {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.filter-group select,
+.filter-group input {
+  padding: 8px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.filter-group select:focus,
+.filter-group input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-pale);
+}
+
+.filter-group select {
+  min-width: 160px;
+  cursor: pointer;
+}
+
+.filter-group input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-group {
+  flex: 1;
+  min-width: 200px;
+}
+
+.search-group input {
+  width: 100%;
+}

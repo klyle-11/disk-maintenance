@@ -1,0 +1,18 @@
+{
+  "name": "disk-maintenance",
+  "version": "1.0.0",
+  "description": "Disk Intelligence - Full stack disk maintenance tool",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm:dev:frontend\" \"npm:dev:backend\"",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "python backend/main.py",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview",
+    "install-all": "npm --prefix frontend install && pip install -r backend/requirements.txt"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0"
+  }
+}

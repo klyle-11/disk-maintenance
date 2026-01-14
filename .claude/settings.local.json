@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(./venv/Scripts/pip:*)",
+      "Bash(curl:*)",
+      "Bash(taskkill:*)",
+      "Bash(npx tsc:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(wmic process where processid=53760 delete)",
+      "mcp__ide__getDiagnostics",
+      "Bash(pkill:*)",
+      "Bash(tasklist:*)",
+      "Bash(Get-Process -Id 57348)",
+      "Bash(Select-Object Name, Id)",
+      "Bash(kill:*)",
+      "Bash(wmic process where processid=57348 delete)",
+      "Bash(python main.py:*)",
+      "Bash(wmic process where processid=8824 delete)"
+    ]
+  }
+}

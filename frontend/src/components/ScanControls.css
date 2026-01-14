@@ -1,0 +1,142 @@
+.scan-controls {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.scan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.scan-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.status-badge.idle {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.status-badge.scanning {
+  background: var(--accent-pale);
+  color: var(--accent-primary);
+  animation: pulse 1.5s infinite;
+}
+
+.status-badge.completed {
+  background: rgba(107, 158, 120, 0.15);
+  color: var(--success);
+}
+
+.status-badge.error {
+  background: rgba(199, 107, 107, 0.15);
+  color: var(--danger);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.scan-input-row {
+  display: flex;
+  gap: 12px;
+}
+
+.path-input {
+  flex: 1;
+  padding: 12px 16px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.path-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-pale);
+}
+
+.path-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.path-input::placeholder {
+  color: var(--text-muted);
+}
+
+.scan-button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent-primary);
+  color: white;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.scan-button:hover:not(:disabled) {
+  background: var(--accent-secondary);
+}
+
+.scan-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.scan-error {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(199, 107, 107, 0.12);
+  border: 1px solid rgba(199, 107, 107, 0.3);
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.scan-summary {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.summary-item {
+  background: var(--bg-tertiary);
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.summary-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.summary-value {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-all;
+}

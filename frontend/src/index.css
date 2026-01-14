@@ -1,0 +1,113 @@
+/* Global Styles - Light & Dark Themes */
+* {
+  box-sizing: border-box;
+}
+
+/* Light Theme (Default) - Warm with Periwinkle */
+:root, [data-theme="light"] {
+  --bg-primary: #faf9f7;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f5f3f0;
+  --bg-hover: #efecea;
+
+  --accent-primary: #8b7ec8;
+  --accent-secondary: #a599d4;
+  --accent-light: #c7bfe6;
+  --accent-pale: #e8e4f4;
+
+  --text-primary: #3d3a36;
+  --text-secondary: #6b6660;
+  --text-muted: #9a948c;
+
+  --border-light: #e8e4df;
+  --border-medium: #d4cfc8;
+
+  --success: #6b9e78;
+  --warning: #c9a654;
+  --danger: #c76b6b;
+  --info: #7a9ec9;
+}
+
+/* Dark Theme - Catppuccin Mocha */
+[data-theme="dark"] {
+  --bg-primary: #11111b;
+  --bg-secondary: #1e1e2e;
+  --bg-tertiary: #313244;
+  --bg-hover: #45475a;
+
+  --accent-primary: #89b4fa;
+  --accent-secondary: #b4befe;
+  --accent-light: #74c7ec;
+  --accent-pale: rgba(137, 180, 250, 0.15);
+
+  --text-primary: #cdd6f4;
+  --text-secondary: #a6adc8;
+  --text-muted: #6c7086;
+
+  --border-light: #313244;
+  --border-medium: #45475a;
+
+  --success: #a6e3a1;
+  --warning: #f9e2af;
+  --danger: #f38ba8;
+  --info: #89dceb;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button {
+  font-family: inherit;
+}
+
+input, select, textarea {
+  font-family: inherit;
+}
+
+a {
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-tertiary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+::selection {
+  background: var(--accent-pale);
+}
