@@ -40,6 +40,12 @@ class SnapshotDB(Base):
     total_folders = Column(Integer)
     total_size_bytes = Column(Integer)
 
+    # Comparison snapshot fields
+    snapshot_type = Column(String, default="scan")  # "scan" or "comparison"
+    target_path = Column(String, nullable=True)  # Only for comparisons
+    comparison_json = Column(Text, nullable=True)  # Comparison tree data
+    comparison_summary_json = Column(Text, nullable=True)  # Summary counts
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
@@ -61,7 +67,11 @@ def serialize_snapshot(
     root_path: str,
     findings: list,
     extensions: list,
-    scan_info: dict
+    scan_info: dict,
+    snapshot_type: str = "scan",
+    target_path: str = None,
+    comparison_data: list = None,
+    comparison_summary: dict = None
 ) -> SnapshotDB:
     """Create a SnapshotDB instance from scan data."""
     return SnapshotDB(
@@ -74,12 +84,16 @@ def serialize_snapshot(
         total_files=scan_info.get('total_files') if isinstance(scan_info, dict) else scan_info.total_files,
         total_folders=scan_info.get('total_folders') if isinstance(scan_info, dict) else scan_info.total_folders,
         total_size_bytes=scan_info.get('total_size_bytes') if isinstance(scan_info, dict) else scan_info.total_size_bytes,
-        saved_at=datetime.utcnow()
+        saved_at=datetime.utcnow(),
+        snapshot_type=snapshot_type,
+        target_path=target_path,
+        comparison_json=json.dumps(comparison_data) if comparison_data else None,
+        comparison_summary_json=json.dumps(comparison_summary) if comparison_summary else None
     )
 
 def deserialize_snapshot(snapshot_db: SnapshotDB) -> dict:
     """Convert SnapshotDB to a dictionary for API response."""
-    return {
+    result = {
         "id": snapshot_db.id,
         "scan_id": snapshot_db.scan_id,
         "root_path": snapshot_db.root_path,
@@ -90,4 +104,13 @@ def deserialize_snapshot(snapshot_db: SnapshotDB) -> dict:
         "total_files": snapshot_db.total_files,
         "total_folders": snapshot_db.total_folders,
         "total_size_bytes": snapshot_db.total_size_bytes,
+        "snapshot_type": snapshot_db.snapshot_type or "scan",
+        "target_path": snapshot_db.target_path,
     }
+
+    if snapshot_db.comparison_json:
+        result["comparison"] = json.loads(snapshot_db.comparison_json)
+    if snapshot_db.comparison_summary_json:
+        result["comparison_summary"] = json.loads(snapshot_db.comparison_summary_json)
+
+    return result
