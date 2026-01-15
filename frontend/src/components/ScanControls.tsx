@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { scan, formatBytes } from "../api";
+import { useState, useRef, useEffect } from "react";
+import { scanWithProgress, formatBytes } from "../api";
 import type { ScanResponse } from "../api";
 import "./ScanControls.css";
 
@@ -12,6 +12,12 @@ interface ScanControlsProps {
   scanInfo: ScanResponse | null;
 }
 
+interface LogEntry {
+  timestamp: string;
+  message: string;
+  type: "info" | "success" | "error";
+}
+
 export function ScanControls({
   onScanComplete,
   status,
@@ -20,23 +26,128 @@ export function ScanControls({
 }: ScanControlsProps) {
   const [rootPath, setRootPath] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logsExpanded, setLogsExpanded] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const logsContentRef = useRef<HTMLDivElement>(null);
+  const lockedToBottomRef = useRef<boolean>(true);
+
+  const addLog = (message: string, type: LogEntry["type"] = "info") => {
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs((prev) => [...prev, { timestamp, message, type }]);
+  };
+
+  const handleLogsScroll = () => {
+    const el = logsContentRef.current;
+    if (!el) return;
+
+    const atBottom =
+      el.scrollTop + el.clientHeight === el.scrollHeight;
+
+    if (!atBottom) {
+      // User scrolled up even slightly → unlock
+      lockedToBottomRef.current = false;
+    } else {
+      // User scrolled back to bottom → re-lock
+      lockedToBottomRef.current = true;
+    }
+  };
+
+  useEffect(() => {
+    const el = logsContentRef.current;
+    if (!el) return;
+
+    if (lockedToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [logs]);
+
+  const handleDirectorySelect = async () => {
+    // Use native Electron dialog if available
+    if (window.electronAPI) {
+      try {
+        const selectedPath = await window.electronAPI.selectDirectory();
+        if (selectedPath) {
+          setRootPath(selectedPath);
+        }
+        // If null (cancelled), do nothing
+      } catch (err) {
+        console.error('Failed to open directory dialog:', err);
+        setError('Failed to open directory selection dialog');
+      }
+    } else {
+      // Fall back to HTML5 file input for browser environment
+      fileInputRef.current?.click();
+    }
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      // Get the path from the first file
+      const firstFile = files[0];
+      // Extract directory path from the file path
+      const fullPath = (firstFile as any).path || firstFile.webkitRelativePath;
+      if (fullPath) {
+        // Get the directory path (remove the file name)
+        const dirPath = fullPath.substring(0, fullPath.lastIndexOf('\\') || fullPath.lastIndexOf('/'));
+        setRootPath(dirPath || fullPath);
+      }
+    }
+  };
+
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setStatus("idle");
+      addLog("Scan cancelled by user", "error");
+    }
+  };
 
   const handleScan = async () => {
     if (!rootPath.trim()) {
-      setError("Please enter a path to scan");
+      setError("Please select a directory to scan");
       return;
     }
 
     setError(null);
+    setLogs([]);
     setStatus("scanning");
+    setLogsExpanded(true);
+
+    abortControllerRef.current = new AbortController();
+
+    addLog(`Starting scan of: ${rootPath.trim()}`, "info");
 
     try {
-      const result = await scan(rootPath.trim());
+      const result = await scanWithProgress(
+        rootPath.trim(),
+        (progressEvent) => {
+          const msg = `[${progressEvent.progress_percent}%] ${progressEvent.message} (${progressEvent.files_scanned} files, ${progressEvent.folders_scanned} folders)`;
+          addLog(msg, "info");
+        },
+        abortControllerRef.current.signal
+      );
+
+      abortControllerRef.current = null;
       setStatus("completed");
+      addLog(`Scan completed successfully`, "success");
+      addLog(`Found ${result.totalFiles.toLocaleString()} files in ${result.totalFolders.toLocaleString()} folders`, "success");
+      addLog(`Total size: ${formatBytes(result.totalSizeBytes)}`, "success");
       onScanComplete(result.scanId, result);
     } catch (err) {
+      abortControllerRef.current = null;
+
+      if (err instanceof Error && err.message === 'Scan cancelled') {
+        return;
+      }
+
       setStatus("error");
-      setError(err instanceof Error ? err.message : "Scan failed");
+      const errorMsg = err instanceof Error ? err.message : "Scan failed";
+      setError(errorMsg);
+      addLog(`Error: ${errorMsg}`, "error");
     }
   };
 
@@ -61,25 +172,73 @@ export function ScanControls({
       </div>
 
       <div className="scan-input-row">
-        <input
-          type="text"
-          className="path-input"
-          placeholder="Enter path to scan (e.g., C:\Users\YourName)"
-          value={rootPath}
-          onChange={(e) => setRootPath(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleScan()}
-          disabled={status === "scanning"}
-        />
+        {!window.electronAPI && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            /* @ts-ignore - webkitdirectory is not in TypeScript types */
+            webkitdirectory=""
+            directory=""
+            multiple
+            style={{ display: "none" }}
+            onChange={handleFileInputChange}
+          />
+        )}
         <button
-          className="scan-button"
-          onClick={handleScan}
+          className="select-directory-button"
+          onClick={handleDirectorySelect}
           disabled={status === "scanning"}
         >
-          {status === "scanning" ? "Scanning..." : "Scan & Analyze"}
+          {rootPath ? "Change Directory" : "Select Directory"}
         </button>
+        {rootPath && (
+          <div className="selected-path" title={rootPath}>
+            {rootPath}
+          </div>
+        )}
+        {status === "scanning" ? (
+          <button
+            className="cancel-button"
+            onClick={handleCancel}
+          >
+            Cancel Scan
+          </button>
+        ) : (
+          <button
+            className="scan-button"
+            onClick={handleScan}
+            disabled={!rootPath}
+          >
+            Scan & Analyze
+          </button>
+        )}
       </div>
 
       {error && <div className="scan-error">{error}</div>}
+
+      {logs.length > 0 && (
+        <div className="logs-section">
+          <button
+            className="logs-toggle"
+            onClick={() => setLogsExpanded(!logsExpanded)}
+          >
+            <span className={`toggle-icon ${logsExpanded ? "expanded" : ""}`}>
+              ▶
+            </span>
+            Scan Logs ({logs.length})
+          </button>
+          {logsExpanded && (
+            <div className="logs-content" ref={logsContentRef} onScroll={handleLogsScroll}>
+              {logs.map((log, index) => (
+                <div key={index} className={`log-entry log-${log.type}`}>
+                  <span className="log-timestamp">[{log.timestamp}]</span>
+                  <span className="log-message">{log.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {scanInfo && status === "completed" && (
         <div className="scan-summary">

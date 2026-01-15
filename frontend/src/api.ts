@@ -17,20 +17,26 @@ const API_ENDPOINT = `${API_BASE_URL}/api`;
 // Types
 // ============================================================================
 
-export type RiskLevel = "low" | "medium" | "high";
-export type ConfidenceLevel = "low" | "medium" | "high";
-export type ActionType = "move" | "delete";
+export interface ProgressEventData {
+  scan_id: string;
+  event_type: string;
+  files_scanned: number;
+  folders_scanned: number;
+  bytes_scanned: number;
+  current_path: string;
+  progress_percent: number;
+  elapsed_seconds: number;
+  message: string;
+  scan_response?: ScanResponse;
+}
 
 /** A single finding from a disk scan */
 export interface Finding {
   id: string;
   category: string;
-  confidence: ConfidenceLevel;
   reason: string;
   paths: string[];
-  estimatedReclaimableBytes: number;
-  riskLevel: RiskLevel;
-  score: number;
+  totalBytes: number;
 }
 
 /** Response from a completed disk scan */
@@ -51,32 +57,18 @@ export interface ExtensionSummary {
   totalBytes: number;
 }
 
-/** Request payload for previewing actions */
-export interface PreviewActionsRequest {
-  action: ActionType;
-  paths: string[];
-  archiveRoot?: string;
-}
-
-/** Response from previewing actions */
-export interface PreviewActionsResponse {
-  totalItems: number;
-  totalBytes: number;
-}
-
-/** Request payload for executing actions */
-export interface ExecuteActionsRequest {
-  action: ActionType;
-  paths: string[];
-  archiveRoot?: string;
-}
-
-/** Response from executing actions */
-export interface ExecuteActionsResponse {
-  success: boolean;
-  moved: number;
-  deleted: number;
-  errors: string[];
+/** A saved snapshot of scan results */
+export interface Snapshot {
+  id: string;
+  scanId: string;
+  rootPath: string;
+  findings: Finding[];
+  extensions: ExtensionSummary[];
+  scanInfo: ScanResponse;
+  savedAt: string;
+  totalFiles: number;
+  totalFolders: number;
+  totalSizeBytes: number;
 }
 
 // ============================================================================
@@ -111,13 +103,15 @@ async function apiFetch<T>(
 /**
  * Start a disk scan for the given root path.
  * @param rootPath - The root directory path to scan.
+ * @param signal - Optional AbortSignal to cancel the request.
  * @returns A ScanResponse with scan_id and metadata.
  */
-export async function scan(rootPath: string): Promise<ScanResponse> {
+export async function scan(rootPath: string, signal?: AbortSignal): Promise<ScanResponse> {
   return apiFetch<ScanResponse>("/scan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_path: rootPath }),
+    signal,
   }).then((data) => ({
     scanId: (data as any).scan_id,
     rootPath: (data as any).root_path,
@@ -130,6 +124,61 @@ export async function scan(rootPath: string): Promise<ScanResponse> {
 }
 
 /**
+ * Start a disk scan with real-time progress updates via SSE.
+ * @param rootPath - The root directory path to scan.
+ * @param onProgress - Callback for progress updates.
+ * @param signal - Optional AbortSignal to cancel the scan.
+ * @returns A ScanResponse with scan_id and metadata.
+ */
+export async function scanWithProgress(
+  rootPath: string,
+  onProgress: (event: ProgressEventData) => void,
+  signal?: AbortSignal
+): Promise<ScanResponse> {
+  return new Promise((resolve, reject) => {
+    const url = `${API_ENDPOINT}/scan/stream?root_path=${encodeURIComponent(rootPath)}`;
+    const eventSource = new EventSource(url);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data: ProgressEventData = JSON.parse(event.data);
+
+        if (data.event_type === 'progress') {
+          onProgress(data);
+        } else if (data.event_type === 'complete' && data.scan_response) {
+          eventSource.close();
+          const response = data.scan_response;
+          resolve({
+            scanId: (response as any).scan_id,
+            rootPath: (response as any).root_path,
+            startedAt: (response as any).started_at,
+            completedAt: (response as any).completed_at,
+            totalFiles: (response as any).total_files,
+            totalFolders: (response as any).total_folders,
+            totalSizeBytes: (response as any).total_size_bytes,
+          });
+        }
+      } catch (err) {
+        eventSource.close();
+        reject(new Error('Failed to parse progress event'));
+      }
+    };
+
+    eventSource.onerror = () => {
+      eventSource.close();
+      reject(new Error('Scan stream connection failed'));
+    };
+
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        eventSource.close();
+        reject(new Error('Scan cancelled'));
+      });
+    }
+  });
+}
+
+/**
  * Fetch findings for a completed scan.
  * @param scanId - The scan ID to fetch findings for.
  * @returns An array of Finding objects.
@@ -139,12 +188,9 @@ export async function getFindings(scanId: string): Promise<Finding[]> {
   return data.map((item) => ({
     id: item.id,
     category: item.category,
-    confidence: item.confidence as ConfidenceLevel,
     reason: item.reason,
     paths: item.paths,
-    estimatedReclaimableBytes: item.estimated_reclaimable_bytes,
-    riskLevel: item.risk_level as RiskLevel,
-    score: item.score,
+    totalBytes: item.total_bytes,
   }));
 }
 
@@ -165,53 +211,173 @@ export async function getExtensionSummary(
 }
 
 /**
- * Preview what would happen if actions were executed on the given paths.
- * @param payload - The action preview request payload.
- * @returns A PreviewActionsResponse with item and size estimates.
- */
-export async function previewActions(
-  payload: PreviewActionsRequest
-): Promise<PreviewActionsResponse> {
-  const data = await apiFetch<any>("/preview-actions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: payload.action,
-      paths: payload.paths,
-      ...(payload.archiveRoot && { archive_root: payload.archiveRoot }),
-    }),
-  });
-  return {
-    totalItems: data.total_items,
-    totalBytes: data.total_bytes,
-  };
-}
-
-/**
- * Execute an action (move or delete) on the given paths.
- * @param payload - The action execution request payload.
- * @returns An ExecuteActionsResponse with success status and counts.
- */
-export async function executeActions(
-  payload: ExecuteActionsRequest
-): Promise<ExecuteActionsResponse> {
-  return apiFetch<ExecuteActionsResponse>("/execute-actions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: payload.action,
-      paths: payload.paths,
-      ...(payload.archiveRoot && { archive_root: payload.archiveRoot }),
-    }),
-  });
-}
-
-/**
  * Check if the backend is running and healthy.
  * @returns A health status object.
  */
 export async function healthCheck(): Promise<{ status: string }> {
   return apiFetch<{ status: string }>("/health");
+}
+
+/**
+ * Save a snapshot of scan results.
+ * @param scanId - The scan ID to save a snapshot of.
+ * @param rootPath - The root path of the scan.
+ * @returns The saved snapshot.
+ */
+export async function saveSnapshot(
+  scanId: string,
+  rootPath: string
+): Promise<Snapshot> {
+  const item = await apiFetch<any>("/snapshots", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scan_id: scanId, root_path: rootPath }),
+  });
+  return {
+    id: item.id,
+    scanId: item.scan_id,
+    rootPath: item.root_path,
+    findings: (item.findings || []).map(transformFinding),
+    extensions: (item.extensions || []).map(transformExtension),
+    scanInfo: item.scan_info ? {
+      scanId: item.scan_info.scan_id,
+      rootPath: item.scan_info.root_path,
+      startedAt: item.scan_info.started_at,
+      completedAt: item.scan_info.completed_at,
+      totalFiles: item.scan_info.total_files,
+      totalFolders: item.scan_info.total_folders,
+      totalSizeBytes: item.scan_info.total_size_bytes,
+    } : {} as ScanResponse,
+    savedAt: item.saved_at,
+    totalFiles: item.total_files,
+    totalFolders: item.total_folders,
+    totalSizeBytes: item.total_size_bytes,
+  };
+}
+
+/**
+ * Transform snake_case Finding to camelCase
+ */
+function transformFinding(f: any): Finding {
+  return {
+    id: f.id,
+    category: f.category,
+    reason: f.reason,
+    paths: f.paths || [],
+    totalBytes: f.total_bytes || f.totalBytes || 0,
+  };
+}
+
+/**
+ * Transform snake_case ExtensionSummary to camelCase
+ */
+function transformExtension(e: any): ExtensionSummary {
+  return {
+    extension: e.extension,
+    fileCount: e.file_count || e.fileCount || 0,
+    totalBytes: e.total_bytes || e.totalBytes || 0,
+  };
+}
+
+/**
+ * Get all saved snapshots.
+ * @returns An array of snapshots.
+ */
+export async function getSnapshots(): Promise<Snapshot[]> {
+  const data = await apiFetch<any[]>("/snapshots");
+  return data.map((item) => ({
+    id: item.id,
+    scanId: item.scan_id,
+    rootPath: item.root_path,
+    findings: (item.findings || []).map(transformFinding),
+    extensions: (item.extensions || []).map(transformExtension),
+    scanInfo: item.scan_info ? {
+      scanId: item.scan_info.scan_id,
+      rootPath: item.scan_info.root_path,
+      startedAt: item.scan_info.started_at,
+      completedAt: item.scan_info.completed_at,
+      totalFiles: item.scan_info.total_files,
+      totalFolders: item.scan_info.total_folders,
+      totalSizeBytes: item.scan_info.total_size_bytes,
+    } : {} as ScanResponse,
+    savedAt: item.saved_at,
+    totalFiles: item.total_files,
+    totalFolders: item.total_folders,
+    totalSizeBytes: item.total_size_bytes,
+  }));
+}
+
+/**
+ * Get a specific snapshot by ID.
+ * @param snapshotId - The ID of the snapshot to retrieve.
+ * @returns The snapshot data.
+ */
+export async function getSnapshot(snapshotId: string): Promise<Snapshot> {
+  const item = await apiFetch<any>(`/snapshots/${snapshotId}`);
+  return {
+    id: item.id,
+    scanId: item.scan_id,
+    rootPath: item.root_path,
+    findings: (item.findings || []).map(transformFinding),
+    extensions: (item.extensions || []).map(transformExtension),
+    scanInfo: item.scan_info ? {
+      scanId: item.scan_info.scan_id,
+      rootPath: item.scan_info.root_path,
+      startedAt: item.scan_info.started_at,
+      completedAt: item.scan_info.completed_at,
+      totalFiles: item.scan_info.total_files,
+      totalFolders: item.scan_info.total_folders,
+      totalSizeBytes: item.scan_info.total_size_bytes,
+    } : {} as ScanResponse,
+    savedAt: item.saved_at,
+    totalFiles: item.total_files,
+    totalFolders: item.total_folders,
+    totalSizeBytes: item.total_size_bytes,
+  };
+}
+
+/**
+ * Update a snapshot by re-scanning its path.
+ * @param snapshotId - The ID of the snapshot to update.
+ * @returns The updated snapshot.
+ */
+export async function updateSnapshot(snapshotId: string): Promise<Snapshot> {
+  const item = await apiFetch<any>(`/snapshots/${snapshotId}`, {
+    method: "PUT",
+  });
+  return {
+    id: item.id,
+    scanId: item.scan_id,
+    rootPath: item.root_path,
+    findings: (item.findings || []).map(transformFinding),
+    extensions: (item.extensions || []).map(transformExtension),
+    scanInfo: item.scan_info ? {
+      scanId: item.scan_info.scan_id,
+      rootPath: item.scan_info.root_path,
+      startedAt: item.scan_info.started_at,
+      completedAt: item.scan_info.completed_at,
+      totalFiles: item.scan_info.total_files,
+      totalFolders: item.scan_info.total_folders,
+      totalSizeBytes: item.scan_info.total_size_bytes,
+    } : {} as ScanResponse,
+    savedAt: item.saved_at,
+    totalFiles: item.total_files,
+    totalFolders: item.total_folders,
+    totalSizeBytes: item.total_size_bytes,
+  };
+}
+
+/**
+ * Delete a snapshot.
+ * @param snapshotId - The ID of the snapshot to delete.
+ * @returns A success message.
+ */
+export async function deleteSnapshot(
+  snapshotId: string
+): Promise<{ message: string }> {
+  return apiFetch<{ message: string }>(`/snapshots/${snapshotId}`, {
+    method: "DELETE",
+  });
 }
 
 // ============================================================================
@@ -244,23 +410,4 @@ export function getCategoryDisplayName(category: string): string {
     system_junk: "System Junk",
   };
   return names[category] || category.replace(/_/g, " ");
-}
-
-/**
- * Get color for a risk level.
- */
-export function getRiskColor(riskLevel: RiskLevel): string {
-  const colors: Record<RiskLevel, string> = {
-    low: "#4CAF50",
-    medium: "#FFC107",
-    high: "#F44336",
-  };
-  return colors[riskLevel];
-}
-
-/**
- * Get label for a risk level.
- */
-export function getRiskLabel(riskLevel: RiskLevel): string {
-  return riskLevel.charAt(0).toUpperCase() + riskLevel.slice(1);
 }

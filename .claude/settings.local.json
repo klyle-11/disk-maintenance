@@ -17,7 +17,9 @@
       "Bash(kill:*)",
       "Bash(wmic process where processid=57348 delete)",
       "Bash(python main.py:*)",
-      "Bash(wmic process where processid=8824 delete)"
+      "Bash(wmic process where processid=8824 delete)",
+      "Bash(python -m py_compile:*)",
+      "Skill(superpowers:executing-plans)"
     ]
   }
 }

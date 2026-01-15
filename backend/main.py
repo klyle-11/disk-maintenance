@@ -8,17 +8,23 @@ To run:
     2. Run server: uvicorn main:app --reload --port 8000
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from sqlalchemy.orm import Session
 import os
-import shutil
 import uuid
 import logging
+import asyncio
+import json
+import time
 from collections import defaultdict
 from pathlib import Path
+
+from database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
 
 # Configure logging
 logging.basicConfig(
@@ -26,9 +32,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Action log file
-ACTION_LOG_FILE = "disk_intel_actions.log"
 
 app = FastAPI(title="Disk Intelligence API", version="1.0.0")
 
@@ -60,32 +63,41 @@ class ScanResponse(BaseModel):
 class Finding(BaseModel):
     id: str
     category: str
-    confidence: str  # "low" | "medium" | "high"
     reason: str
     paths: list[str]
-    estimated_reclaimable_bytes: int
-    risk_level: str  # "low" | "medium" | "high"
-    score: float
+    total_bytes: int
 
 class ExtensionSummary(BaseModel):
     extension: str
     file_count: int
     total_bytes: int
 
-class ActionPreviewRequest(BaseModel):
-    action: str  # "move" | "delete"
-    paths: list[str]
-    archive_root: Optional[str] = None
+class ProgressEvent(BaseModel):
+    scan_id: str
+    event_type: str  # "progress" | "complete" | "error"
+    files_scanned: int
+    folders_scanned: int
+    bytes_scanned: int
+    current_path: str
+    progress_percent: int
+    elapsed_seconds: float
+    message: str
 
-class ActionPreviewResponse(BaseModel):
-    total_items: int
-    total_bytes: int
+class SnapshotRequest(BaseModel):
+    scan_id: str
+    root_path: str
 
-class ActionExecuteResponse(BaseModel):
-    success: bool
-    moved: int
-    deleted: int
-    errors: list[str]
+class SnapshotResponse(BaseModel):
+    id: str
+    scan_id: str
+    root_path: str
+    findings: list[Finding]
+    extensions: list[ExtensionSummary]
+    scan_info: ScanResponse
+    saved_at: str
+    total_files: int
+    total_folders: int
+    total_size_bytes: int
 
 # ============================================================================
 # IN-MEMORY STORAGE (per scan)
@@ -146,10 +158,12 @@ class DiskScanner:
     Recursively scans a directory and collects file/folder metadata.
     """
 
-    def __init__(self, root_path: str):
+    def __init__(self, root_path: str, progress_callback=None):
         self.root_path = root_path
         self.files: list[dict] = []
         self.folders: dict[str, dict] = {}
+        self.progress_callback = progress_callback
+        self.start_time = None
 
     def should_ignore(self, path: str) -> bool:
         """Check if path should be ignored."""
@@ -219,6 +233,87 @@ class DiskScanner:
         self._propagate_folder_sizes()
 
         logger.info(f"Scan complete: {len(self.files)} files, {len(self.folders)} folders")
+        return self.files, self.folders
+
+    async def scan_async(self) -> tuple[list[dict], dict[str, dict]]:
+        """Async scan with progress callbacks."""
+        self.start_time = time.time()
+        logger.info(f"Starting async scan of: {self.root_path}")
+
+        self.folders[self.root_path] = {
+            "path": self.root_path,
+            "total_size": 0,
+            "file_count": 0,
+            "last_modified": None,
+            "last_accessed": None,
+        }
+
+        file_count = 0
+        last_emit = time.time()
+        total_bytes = 0
+
+        try:
+            for root, dirs, files in os.walk(self.root_path, topdown=True):
+                dirs[:] = [d for d in dirs if not self.should_ignore(os.path.join(root, d))]
+
+                if root not in self.folders:
+                    self.folders[root] = {
+                        "path": root,
+                        "total_size": 0,
+                        "file_count": 0,
+                        "last_modified": None,
+                        "last_accessed": None,
+                    }
+
+                for filename in files:
+                    try:
+                        file_path = os.path.join(root, filename)
+                        stat = os.stat(file_path)
+
+                        file_info = {
+                            "path": file_path,
+                            "size_bytes": stat.st_size,
+                            "extension": os.path.splitext(filename)[1].lower(),
+                            "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                            "accessed_at": datetime.fromtimestamp(stat.st_atime).isoformat(),
+                            "parent_dir": root,
+                        }
+                        self.files.append(file_info)
+                        self._update_folder_stats(root, stat)
+
+                        file_count += 1
+                        total_bytes += stat.st_size
+
+                    except (PermissionError, OSError) as e:
+                        logger.debug(f"Skipping file {filename}: {e}")
+                        continue
+
+                # Emit progress every 50 files or every 1 second
+                now = time.time()
+                if file_count % 50 == 0 or (now - last_emit) >= 1.0:
+                    if self.progress_callback:
+                        elapsed = now - self.start_time
+                        depth = root.count(os.sep) - self.root_path.count(os.sep)
+                        progress = min(95, int(20 + (depth * 5)))
+
+                        await self.progress_callback({
+                            "files_scanned": len(self.files),
+                            "folders_scanned": len(self.folders),
+                            "bytes_scanned": total_bytes,
+                            "current_path": root,
+                            "progress_percent": progress,
+                            "elapsed_seconds": elapsed,
+                            "message": f"Scanning: {root}"
+                        })
+                        last_emit = now
+                        await asyncio.sleep(0)  # Yield control
+
+        except PermissionError as e:
+            logger.warning(f"Permission denied for {self.root_path}: {e}")
+
+        self._propagate_folder_sizes()
+        logger.info(f"Async scan complete: {len(self.files)} files, {len(self.folders)} folders")
         return self.files, self.folders
 
     def _update_folder_stats(self, folder_path: str, stat):
@@ -291,12 +386,6 @@ class Analyzer:
         self.finding_id += 1
         return f"finding-{self.finding_id}"
 
-    def _calculate_score(self, reclaimable_bytes: int, risk_level: str) -> float:
-        """Calculate score: higher is better (more reclaimable, lower risk)."""
-        risk_factors = {"low": 1, "medium": 2, "high": 4}
-        factor = risk_factors.get(risk_level, 2)
-        return reclaimable_bytes / factor
-
     def analyze(self) -> list[Finding]:
         """Run all analysis heuristics and return findings."""
         logger.info("Starting analysis...")
@@ -307,9 +396,6 @@ class Analyzer:
         self._analyze_duplicate_folder_candidates()
         self._analyze_duplicate_file_candidates()
         self._analyze_cold_archive_candidates()
-
-        # Sort by score descending
-        self.findings.sort(key=lambda f: f.score, reverse=True)
 
         logger.info(f"Analysis complete: {len(self.findings)} findings")
         return self.findings
@@ -329,12 +415,9 @@ class Analyzer:
             self.findings.append(Finding(
                 id=self._next_id(),
                 category="large_folder",
-                confidence="high",
                 reason=f"Folder is {size_gb:.1f} GB ({info['file_count']} files)",
                 paths=[path],
-                estimated_reclaimable_bytes=info["total_size"],
-                risk_level="medium",
-                score=self._calculate_score(info["total_size"], "medium")
+                total_bytes=info["total_size"]
             ))
 
     def _analyze_old_large_folders(self):
@@ -355,25 +438,19 @@ class Analyzer:
                 self.findings.append(Finding(
                     id=self._next_id(),
                     category="old_large_folder",
-                    confidence="high",
                     reason=f"Folder is {size_gb:.1f} GB and last modified {days_old} days ago",
                     paths=[path],
-                    estimated_reclaimable_bytes=info["total_size"],
-                    risk_level="low",
-                    score=self._calculate_score(info["total_size"], "low")
+                    total_bytes=info["total_size"]
                 ))
             elif days_old <= self.RECENT_DAYS_THRESHOLD and info["total_size"] >= self.LARGE_FOLDER_THRESHOLD * 2:
-                # Large and recently modified - higher risk
+                # Large and recently modified
                 size_gb = info["total_size"] / (1024**3)
                 self.findings.append(Finding(
                     id=self._next_id(),
                     category="active_large_folder",
-                    confidence="medium",
                     reason=f"Folder is {size_gb:.1f} GB and was modified within the last {days_old} days",
                     paths=[path],
-                    estimated_reclaimable_bytes=info["total_size"],
-                    risk_level="high",
-                    score=self._calculate_score(info["total_size"], "high")
+                    total_bytes=info["total_size"]
                 ))
 
     def _analyze_cache_candidates(self):
@@ -393,12 +470,9 @@ class Analyzer:
                 self.findings.append(Finding(
                     id=self._next_id(),
                     category="cache_candidate",
-                    confidence="high",
                     reason=f"Matches known cache/regenerable pattern ({size_mb:.1f} MB)",
                     paths=[path],
-                    estimated_reclaimable_bytes=info["total_size"],
-                    risk_level="low",
-                    score=self._calculate_score(info["total_size"], "low")
+                    total_bytes=info["total_size"]
                 ))
 
     def _analyze_duplicate_folder_candidates(self):
@@ -444,12 +518,9 @@ class Analyzer:
                     self.findings.append(Finding(
                         id=self._next_id(),
                         category="duplicate_folder_candidate",
-                        confidence="medium",
                         reason=f"{len(group)} folders named '{name}' with similar sizes",
                         paths=paths,
-                        estimated_reclaimable_bytes=reclaimable,
-                        risk_level="medium",
-                        score=self._calculate_score(reclaimable, "medium")
+                        total_bytes=reclaimable
                     ))
 
     def _analyze_duplicate_file_candidates(self):
@@ -472,12 +543,9 @@ class Analyzer:
                 self.findings.append(Finding(
                     id=self._next_id(),
                     category="duplicate_file_candidate",
-                    confidence="medium",
                     reason=f"{len(paths)} files named '{filename}' ({size_mb:.1f} MB each)",
                     paths=paths,
-                    estimated_reclaimable_bytes=reclaimable,
-                    risk_level="medium",
-                    score=self._calculate_score(reclaimable, "medium")
+                    total_bytes=reclaimable
                 ))
 
     def _analyze_cold_archive_candidates(self):
@@ -498,12 +566,9 @@ class Analyzer:
                 self.findings.append(Finding(
                     id=self._next_id(),
                     category="cold_archive_candidate",
-                    confidence="high",
-                    reason=f"{size_gb:.1f} GB, not accessed in {days_since_access} days; consider archiving",
+                    reason=f"{size_gb:.1f} GB, not accessed in {days_since_access} days",
                     paths=[path],
-                    estimated_reclaimable_bytes=info["total_size"],
-                    risk_level="low",
-                    score=self._calculate_score(info["total_size"], "low")
+                    total_bytes=info["total_size"]
                 ))
 
     def get_extension_summary(self) -> list[ExtensionSummary]:
@@ -529,127 +594,6 @@ class Analyzer:
         return summaries
 
 # ============================================================================
-# ACTIONS
-# ============================================================================
-
-class Actions:
-    """
-    Handles file/folder operations with logging.
-    """
-
-    @staticmethod
-    def log_action(action_type: str, source: str, destination: str = "", category: str = "", reason: str = ""):
-        """Log an action to the action log file."""
-        timestamp = datetime.now().isoformat()
-        log_entry = f"{timestamp} | {action_type} | {source}"
-        if destination:
-            log_entry += f" -> {destination}"
-        if category:
-            log_entry += f" | Category: {category}"
-        if reason:
-            log_entry += f" | Reason: {reason}"
-        log_entry += "\n"
-
-        with open(ACTION_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(log_entry)
-
-        logger.info(f"Action logged: {action_type} {source}")
-
-    @staticmethod
-    def get_path_size(path: str) -> int:
-        """Get total size of a file or folder."""
-        if os.path.isfile(path):
-            return os.path.getsize(path)
-
-        total = 0
-        try:
-            for root, dirs, files in os.walk(path):
-                for f in files:
-                    try:
-                        total += os.path.getsize(os.path.join(root, f))
-                    except (OSError, PermissionError):
-                        pass
-        except (OSError, PermissionError):
-            pass
-        return total
-
-    @staticmethod
-    def preview_actions(paths: list[str]) -> tuple[int, int]:
-        """Preview actions - return (item_count, total_bytes)."""
-        total_items = len(paths)
-        total_bytes = 0
-
-        for path in paths:
-            if os.path.exists(path):
-                total_bytes += Actions.get_path_size(path)
-
-        return total_items, total_bytes
-
-    @staticmethod
-    def move_to_archive(paths: list[str], archive_root: str) -> tuple[int, list[str]]:
-        """Move items to archive folder. Returns (moved_count, errors)."""
-        moved = 0
-        errors = []
-
-        # Create archive root if needed
-        os.makedirs(archive_root, exist_ok=True)
-
-        for path in paths:
-            try:
-                if not os.path.exists(path):
-                    errors.append(f"Path not found: {path}")
-                    continue
-
-                # Create destination path preserving some structure
-                basename = os.path.basename(path)
-                dest = os.path.join(archive_root, basename)
-
-                # Handle name conflicts
-                counter = 1
-                original_dest = dest
-                while os.path.exists(dest):
-                    name, ext = os.path.splitext(basename)
-                    if os.path.isdir(path):
-                        dest = os.path.join(archive_root, f"{basename}_{counter}")
-                    else:
-                        dest = os.path.join(archive_root, f"{name}_{counter}{ext}")
-                    counter += 1
-
-                shutil.move(path, dest)
-                Actions.log_action("MOVE", path, dest)
-                moved += 1
-
-            except Exception as e:
-                errors.append(f"Failed to move {path}: {str(e)}")
-
-        return moved, errors
-
-    @staticmethod
-    def delete_items(paths: list[str]) -> tuple[int, list[str]]:
-        """Delete items. Returns (deleted_count, errors)."""
-        deleted = 0
-        errors = []
-
-        for path in paths:
-            try:
-                if not os.path.exists(path):
-                    errors.append(f"Path not found: {path}")
-                    continue
-
-                if os.path.isfile(path):
-                    os.remove(path)
-                else:
-                    shutil.rmtree(path)
-
-                Actions.log_action("DELETE", path)
-                deleted += 1
-
-            except Exception as e:
-                errors.append(f"Failed to delete {path}: {str(e)}")
-
-        return deleted, errors
-
-# ============================================================================
 # API ENDPOINTS
 # ============================================================================
 
@@ -657,6 +601,81 @@ class Actions:
 async def health_check():
     """Health check endpoint."""
     return {"status": "ok"}
+
+@app.get("/api/scan/stream")
+async def scan_stream(root_path: str):
+    """Stream scan progress via Server-Sent Events."""
+
+    if not os.path.exists(root_path):
+        raise HTTPException(status_code=400, detail=f"Path does not exist: {root_path}")
+    if not os.path.isdir(root_path):
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {root_path}")
+
+    async def event_generator():
+        scan_id = str(uuid.uuid4())
+        started_at = datetime.now()
+
+        progress_queue = asyncio.Queue()
+
+        async def progress_callback(data):
+            await progress_queue.put(data)
+
+        async def scanner_task():
+            scanner = DiskScanner(root_path, progress_callback)
+            return await scanner.scan_async()
+
+        scan_task = asyncio.create_task(scanner_task())
+
+        # Stream progress events
+        while not scan_task.done():
+            try:
+                progress_data = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+                progress_data['scan_id'] = scan_id
+                progress_data['event_type'] = 'progress'
+                yield f"data: {json.dumps(progress_data)}\n\n"
+            except asyncio.TimeoutError:
+                continue
+
+        # Get scan results
+        files, folders = await scan_task
+        completed_at = datetime.now()
+
+        # Store scan data
+        total_files = len(files)
+        total_folders = len(folders)
+        total_size = sum(f["size_bytes"] for f in files)
+
+        scan_data = ScanData()
+        scan_data.files = files
+        scan_data.folders = folders
+        scan_data.scan_info = ScanResponse(
+            scan_id=scan_id,
+            root_path=root_path,
+            started_at=started_at.isoformat(),
+            completed_at=completed_at.isoformat(),
+            total_files=total_files,
+            total_folders=total_folders,
+            total_size_bytes=total_size
+        )
+        scans[scan_id] = scan_data
+
+        # Send completion event
+        completion_data = {
+            "scan_id": scan_id,
+            "event_type": "complete",
+            "scan_response": scan_data.scan_info.dict()
+        }
+        yield f"data: {json.dumps(completion_data)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive"
+        }
+    )
 
 @app.post("/api/scan", response_model=ScanResponse)
 async def start_scan(request: ScanRequest):
@@ -737,27 +756,134 @@ async def get_extensions_summary(scan_id: str) -> list[ExtensionSummary]:
     analyzer = Analyzer(scan_data.files, scan_data.folders)
     return analyzer.get_extension_summary()
 
-@app.post("/api/preview-actions", response_model=ActionPreviewResponse)
-async def preview_actions(request: ActionPreviewRequest):
-    """Preview the result of actions."""
-    total_items, total_bytes = Actions.preview_actions(request.paths)
-    return ActionPreviewResponse(total_items=total_items, total_bytes=total_bytes)
+# ============================================================================
+# SNAPSHOT ENDPOINTS
+# ============================================================================
 
-@app.post("/api/execute-actions", response_model=ActionExecuteResponse)
-async def execute_actions(request: ActionPreviewRequest):
-    """Execute move or delete actions."""
-    if request.action == "move":
-        if not request.archive_root:
-            raise HTTPException(status_code=400, detail="archive_root required for move action")
-        moved, errors = Actions.move_to_archive(request.paths, request.archive_root)
-        return ActionExecuteResponse(success=len(errors) == 0, moved=moved, deleted=0, errors=errors)
+@app.post("/api/snapshots")
+async def save_snapshot(request: SnapshotRequest, db: Session = Depends(get_db)):
+    """Save a snapshot of scan results."""
+    scan_id = request.scan_id
 
-    elif request.action == "delete":
-        deleted, errors = Actions.delete_items(request.paths)
-        return ActionExecuteResponse(success=len(errors) == 0, moved=0, deleted=deleted, errors=errors)
+    if scan_id not in scans:
+        raise HTTPException(status_code=404, detail=f"Scan not found: {scan_id}")
 
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown action: {request.action}")
+    scan_data = scans[scan_id]
+
+    # Get findings and extensions
+    analyzer = Analyzer(scan_data.files, scan_data.folders)
+    findings = analyzer.analyze()
+    extensions = analyzer.get_extension_summary()
+
+    # Generate snapshot ID
+    snapshot_id = f"snapshot-{uuid.uuid4()}"
+
+    # Create snapshot
+    snapshot = serialize_snapshot(
+        snapshot_id,
+        scan_id,
+        request.root_path,
+        findings,
+        extensions,
+        scan_data.scan_info
+    )
+
+    # Save to database
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+
+    return deserialize_snapshot(snapshot)
+
+@app.get("/api/snapshots")
+async def get_snapshots(db: Session = Depends(get_db)):
+    """Get all saved snapshots."""
+    snapshots = db.query(SnapshotDB).order_by(SnapshotDB.saved_at.desc()).all()
+    return [deserialize_snapshot(s) for s in snapshots]
+
+@app.get("/api/snapshots/{snapshot_id}")
+async def get_snapshot(snapshot_id: str, db: Session = Depends(get_db)):
+    """Get a specific snapshot by ID."""
+    snapshot = db.query(SnapshotDB).filter(SnapshotDB.id == snapshot_id).first()
+
+    if not snapshot:
+        raise HTTPException(status_code=404, detail=f"Snapshot not found: {snapshot_id}")
+
+    return deserialize_snapshot(snapshot)
+
+@app.put("/api/snapshots/{snapshot_id}")
+async def update_snapshot(snapshot_id: str, db: Session = Depends(get_db)):
+    """Update a snapshot by re-scanning its path."""
+    snapshot = db.query(SnapshotDB).filter(SnapshotDB.id == snapshot_id).first()
+
+    if not snapshot:
+        raise HTTPException(status_code=404, detail=f"Snapshot not found: {snapshot_id}")
+
+    root_path = snapshot.root_path
+
+    # Validate path still exists
+    if not os.path.exists(root_path):
+        raise HTTPException(status_code=400, detail=f"Path no longer exists: {root_path}")
+    if not os.path.isdir(root_path):
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {root_path}")
+
+    # Perform new scan
+    new_scan_id = str(uuid.uuid4())
+    started_at = datetime.now()
+
+    scanner = DiskScanner(root_path)
+    files, folders = scanner.scan()
+
+    completed_at = datetime.now()
+
+    # Calculate totals
+    total_files = len(files)
+    total_folders = len(folders)
+    total_size = sum(f["size_bytes"] for f in files)
+
+    # Create new scan info
+    scan_info = ScanResponse(
+        scan_id=new_scan_id,
+        root_path=root_path,
+        started_at=started_at.isoformat(),
+        completed_at=completed_at.isoformat(),
+        total_files=total_files,
+        total_folders=total_folders,
+        total_size_bytes=total_size
+    )
+
+    # Get findings and extensions
+    analyzer = Analyzer(files, folders)
+    findings = analyzer.analyze()
+    extensions = analyzer.get_extension_summary()
+
+    # Update snapshot
+    snapshot.scan_id = new_scan_id
+    snapshot.findings_json = json.dumps([f.dict() for f in findings])
+    snapshot.extensions_json = json.dumps([e.dict() for e in extensions])
+    snapshot.scan_info_json = json.dumps(scan_info.dict())
+    snapshot.total_files = total_files
+    snapshot.total_folders = total_folders
+    snapshot.total_size_bytes = total_size
+    snapshot.saved_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(snapshot)
+
+    return deserialize_snapshot(snapshot)
+
+@app.delete("/api/snapshots/{snapshot_id}")
+async def delete_snapshot(snapshot_id: str, db: Session = Depends(get_db)):
+    """Delete a snapshot."""
+    snapshot = db.query(SnapshotDB).filter(SnapshotDB.id == snapshot_id).first()
+
+    if not snapshot:
+        raise HTTPException(status_code=404, detail=f"Snapshot not found: {snapshot_id}")
+
+    db.delete(snapshot)
+    db.commit()
+
+    return {"message": "Snapshot deleted successfully"}
 
 # ============================================================================
 # MAIN

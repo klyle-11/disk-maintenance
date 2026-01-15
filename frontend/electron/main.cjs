@@ -7,7 +7,7 @@
  * app lifecycle events.
  */
 
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
 const path = require('path');
 
 // Determine if we're in development mode
@@ -27,8 +27,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      // In production, we might want a preload script
-      // preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
     },
     // Window styling
     titleBarStyle: 'default',
@@ -38,7 +37,7 @@ function createWindow() {
   // Load the app
   if (isDev) {
     // In development, load from Vite dev server (port 5300 to avoid conflicts)
-    mainWindow.loadURL('http://localhost:5300');
+    mainWindow.loadURL('http://localhost:5176');
     // Open DevTools in development
     mainWindow.webContents.openDevTools();
   } else {
@@ -62,6 +61,30 @@ function createWindow() {
     mainWindow = null;
   });
 }
+
+// IPC Handlers
+// ============================================================================
+
+/**
+ * Handle directory selection dialog requests.
+ * Opens a native OS dialog that only allows selecting directories.
+ */
+ipcMain.handle('dialog:selectDirectory', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+    title: 'Select Directory to Scan',
+  });
+
+  // Return the first selected path, or null if cancelled
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+
+  return result.filePaths[0];
+});
+
+// App Lifecycle
+// ============================================================================
 
 // Create window when Electron is ready
 app.whenReady().then(() => {

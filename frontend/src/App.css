@@ -82,8 +82,15 @@
 /* Tabs */
 .tabs {
   display: flex;
-  gap: 8px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 20px;
+}
+
+.tab-buttons {
+  display: flex;
+  gap: 8px;
 }
 
 .tab {
@@ -107,6 +114,31 @@
   border-color: var(--accent-primary);
   color: white;
   font-weight: 600;
+}
+
+.snapshot-action-btn {
+  padding: 10px 24px;
+  border: 1px solid var(--accent-primary);
+  border-radius: 8px;
+  background: var(--accent-primary);
+  color: white;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.snapshot-action-btn:hover:not(:disabled) {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.snapshot-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Loading State */

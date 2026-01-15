@@ -3,21 +3,24 @@ import {
   getFindings,
   getExtensionSummary,
   healthCheck,
+  saveSnapshot,
+  getSnapshots,
+  updateSnapshot,
+  deleteSnapshot,
 } from "./api";
 import type {
   Finding,
   ScanResponse,
   ExtensionSummary as ExtSummaryType,
+  Snapshot,
 } from "./api";
-import { ScanControls, ScanStatus } from "./components/ScanControls";
-import { FiltersBar } from "./components/FiltersBar";
-import { FindingsTable } from "./components/FindingsTable";
-import { ActionBar } from "./components/ActionBar";
-import { ExtensionSummary } from "./components/ExtensionSummary";
+import { ScanControls } from "./components/ScanControls";
+import type { ScanStatus } from './components/ScanControls';
+import { ScanResults } from "./components/ScanResults";
+import { SnapshotGallery } from "./components/SnapshotGallery";
 import "./App.css";
 
 type TabId = "findings" | "extensions";
-
 type Theme = "light" | "dark";
 
 function App() {
@@ -43,9 +46,12 @@ function App() {
   // UI state
   const [activeTab, setActiveTab] = useState<TabId>("findings");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [selectedRisk, setSelectedRisk] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Snapshot state
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [currentSnapshot, setCurrentSnapshot] = useState<Snapshot | null>(null);
+  const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
 
   // Apply theme to document
   useEffect(() => {
@@ -62,6 +68,19 @@ function App() {
     healthCheck()
       .then(() => setConnected(true))
       .catch(() => setConnected(false));
+  }, []);
+
+  // Load snapshots on mount
+  useEffect(() => {
+    const loadSnapshots = async () => {
+      try {
+        const loadedSnapshots = await getSnapshots();
+        setSnapshots(loadedSnapshots);
+      } catch (err) {
+        console.error("Failed to load snapshots:", err);
+      }
+    };
+    loadSnapshots();
   }, []);
 
   // Fetch findings when scan completes
@@ -90,19 +109,84 @@ function App() {
   const handleScanComplete = (newScanId: string, info: ScanResponse) => {
     setScanId(newScanId);
     setScanInfo(info);
-    setSelectedIds(new Set());
+    setCurrentSnapshot(null); // Clear snapshot mode when new scan completes
   };
 
-  // Handle action completion (refresh findings)
-  const handleActionComplete = async () => {
-    if (!scanId) return;
-    setSelectedIds(new Set());
-    // Re-fetch findings after action
+  // Handle saving a snapshot
+  const handleSaveSnapshot = async () => {
+    if (!scanId || !scanInfo) return;
+
+    setIsSavingSnapshot(true);
     try {
-      const findingsData = await getFindings(scanId);
-      setFindings(findingsData);
+      const snapshot = await saveSnapshot(scanId, scanInfo.rootPath);
+      setSnapshots([snapshot, ...snapshots]);
+      setCurrentSnapshot(snapshot);
+      alert("Snapshot saved successfully!");
     } catch (err) {
-      console.error("Failed to refresh findings:", err);
+      console.error("Failed to save snapshot:", err);
+      alert("Failed to save snapshot. Please try again.");
+    } finally {
+      setIsSavingSnapshot(false);
+    }
+  };
+
+  // Handle updating a snapshot
+  const handleUpdateSnapshot = async () => {
+    if (!currentSnapshot) return;
+
+    setIsSavingSnapshot(true);
+    try {
+      const updated = await updateSnapshot(currentSnapshot.id);
+
+      // Update the snapshot in the list
+      setSnapshots(snapshots.map(s => s.id === updated.id ? updated : s));
+
+      // Update current data
+      setFindings(updated.findings);
+      setExtensions(updated.extensions);
+      setScanInfo(updated.scanInfo);
+      setScanId(updated.scanId);
+      setCurrentSnapshot(updated);
+
+      alert("Snapshot updated successfully!");
+    } catch (err) {
+      console.error("Failed to update snapshot:", err);
+      alert("Failed to update snapshot. Please try again.");
+    } finally {
+      setIsSavingSnapshot(false);
+    }
+  };
+
+  // Handle selecting a snapshot from the gallery
+  const handleSelectSnapshot = (snapshot: Snapshot) => {
+    console.log("Selecting snapshot:", snapshot);
+    setCurrentSnapshot(snapshot);
+    setFindings(snapshot.findings);
+    setExtensions(snapshot.extensions);
+    setScanInfo(snapshot.scanInfo);
+    setScanId(snapshot.scanId);
+    setActiveTab("findings");
+  };
+
+  // Handle deleting a snapshot
+  const handleDeleteSnapshot = async (snapshotId: string) => {
+    try {
+      await deleteSnapshot(snapshotId);
+      setSnapshots(snapshots.filter(s => s.id !== snapshotId));
+
+      // If we're viewing this snapshot, clear the view
+      if (currentSnapshot?.id === snapshotId) {
+        setCurrentSnapshot(null);
+        setScanId(null);
+        setFindings([]);
+        setExtensions([]);
+        setScanInfo(null);
+      }
+
+      alert("Snapshot deleted successfully!");
+    } catch (err) {
+      console.error("Failed to delete snapshot:", err);
+      alert("Failed to delete snapshot. Please try again.");
     }
   };
 
@@ -119,10 +203,6 @@ function App() {
       if (selectedCategory !== "all" && f.category !== selectedCategory) {
         return false;
       }
-      // Risk filter
-      if (selectedRisk !== "all" && f.riskLevel !== selectedRisk) {
-        return false;
-      }
       // Search filter
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -136,12 +216,7 @@ function App() {
       }
       return true;
     });
-  }, [findings, selectedCategory, selectedRisk, searchQuery]);
-
-  // Get selected findings
-  const selectedFindings = useMemo(() => {
-    return filteredFindings.filter((f) => selectedIds.has(f.id));
-  }, [filteredFindings, selectedIds]);
+  }, [findings, selectedCategory, searchQuery]);
 
   return (
     <div className="app">
@@ -167,80 +242,55 @@ function App() {
           scanInfo={scanInfo}
         />
 
-        {scanId && (
-          <>
-            <div className="tabs">
-              <button
-                className={`tab ${activeTab === "findings" ? "active" : ""}`}
-                onClick={() => setActiveTab("findings")}
-              >
-                Findings ({findings.length})
-              </button>
-              <button
-                className={`tab ${activeTab === "extensions" ? "active" : ""}`}
-                onClick={() => setActiveTab("extensions")}
-              >
-                File Types ({extensions.length})
-              </button>
-            </div>
-
-            {activeTab === "findings" && (
-              <>
-                <FiltersBar
-                  categories={categories}
-                  selectedCategory={selectedCategory}
-                  setSelectedCategory={setSelectedCategory}
-                  selectedRisk={selectedRisk}
-                  setSelectedRisk={setSelectedRisk}
-                  searchQuery={searchQuery}
-                  setSearchQuery={setSearchQuery}
-                />
-
-                <ActionBar
-                  selectedFindings={selectedFindings}
-                  onActionComplete={handleActionComplete}
-                />
-
-                {loading ? (
-                  <div className="loading">Loading findings...</div>
-                ) : (
-                  <FindingsTable
-                    findings={filteredFindings}
-                    selectedIds={selectedIds}
-                    onSelectionChange={setSelectedIds}
-                  />
-                )}
-              </>
-            )}
-
-            {activeTab === "extensions" && (
-              <ExtensionSummary extensions={extensions} />
-            )}
-          </>
+        {scanId && scanInfo && (
+          <ScanResults
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            findings={findings}
+            extensions={extensions}
+            categories={categories}
+            selectedCategory={selectedCategory}
+            setSelectedCategory={setSelectedCategory}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            loading={loading}
+            filteredFindings={filteredFindings}
+            scanId={scanId}
+            rootPath={scanInfo.rootPath}
+            isSnapshot={currentSnapshot !== null}
+            snapshotId={currentSnapshot?.id}
+            onSaveSnapshot={handleSaveSnapshot}
+            onUpdateSnapshot={handleUpdateSnapshot}
+            isSaving={isSavingSnapshot}
+          />
         )}
 
         {!scanId && scanStatus === "idle" && (
-          <div className="welcome-message">
-            <h2>Welcome to Disk Intelligence</h2>
-            <p>
-              Analyze your disk to find large files, duplicates, cache folders,
-              and other opportunities to reclaim space.
-            </p>
-            <ol>
-              <li>Enter a path to scan (e.g., C:\Users\YourName)</li>
-              <li>Click "Scan & Analyze" to start</li>
-              <li>Review findings and take action</li>
-            </ol>
-            <p className="safety-note">
-              <strong>Safety first:</strong> All operations require explicit
-              confirmation. Nothing is deleted automatically.
-            </p>
-          </div>
+          <>
+            <div className="welcome-message">
+              <h2>Welcome to Disk Intelligence</h2>
+              <p>
+                Analyze your disk to find large files, duplicates, cache folders,
+                and other disk usage insights.
+              </p>
+              <ol>
+                <li>Select a directory to scan</li>
+                <li>Click "Scan & Analyze" to start</li>
+                <li>Review findings and understand your disk usage</li>
+              </ol>
+            </div>
+
+            <SnapshotGallery
+              snapshots={snapshots}
+              onSelectSnapshot={handleSelectSnapshot}
+              onDeleteSnapshot={handleDeleteSnapshot}
+            />
+          </>
         )}
       </main>
 
       <footer className="app-footer">
-        <p>Disk Intelligence MVP - Use with caution when deleting files</p>
+        <p>Disk Intelligence - Read-only disk analysis tool</p>
       </footer>
     </div>
   );
