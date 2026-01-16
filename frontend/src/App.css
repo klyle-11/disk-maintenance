@@ -28,7 +28,17 @@
 [data-theme="sepia"] .app-header h1,
 [data-theme="sepia"] h2,
 [data-theme="sepia"] h3,
-[data-theme="sepia"] h4 {
+[data-theme="sepia"] h4,
+[data-theme="sepia"] .snapshot-gallery h3 {
+  font-family: 'Papyrus', 'Palatino Linotype', 'Book Antiqua', 'Times New Roman', serif;
+}
+
+/* Dark Sepia theme - Papyrus font for headers */
+[data-theme="dark-sepia"] .app-header h1,
+[data-theme="dark-sepia"] h2,
+[data-theme="dark-sepia"] h3,
+[data-theme="dark-sepia"] h4,
+[data-theme="dark-sepia"] .snapshot-gallery h3 {
   font-family: 'Papyrus', 'Palatino Linotype', 'Book Antiqua', 'Times New Roman', serif;
 }
 
@@ -228,4 +238,9 @@
   margin: 0;
   color: var(--text-muted);
   font-size: 0.85rem;
+}
+
+/* Snapshot Gallery spacing when shown with scan results */
+.snapshot-gallery {
+  margin-top: 32px;
 }

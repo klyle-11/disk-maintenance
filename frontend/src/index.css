@@ -78,6 +78,31 @@
   --info: #5b8fa8;
 }
 
+/* Dark Sepia Theme - Dark Earthy Tones with Bold Gold */
+[data-theme="dark-sepia"] {
+  --bg-primary: #2a2218;
+  --bg-secondary: #352b20;
+  --bg-tertiary: #403528;
+  --bg-hover: #4b3f30;
+
+  --accent-primary: #ffd700;
+  --accent-secondary: #ffb700;
+  --accent-light: #ffe066;
+  --accent-pale: rgba(255, 215, 0, 0.15);
+
+  --text-primary: #f0e6d8;
+  --text-secondary: #c4b8a8;
+  --text-muted: #8a8074;
+
+  --border-light: #403528;
+  --border-medium: #4b3f30;
+
+  --success: #7cb342;
+  --warning: #ffb300;
+  --danger: #ef5350;
+  --info: #42a5f5;
+}
+
 html, body {
   margin: 0;
   padding: 0;

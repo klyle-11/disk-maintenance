@@ -26,7 +26,7 @@ import { ComparisonResults } from "./components/ComparisonResults";
 import "./App.css";
 
 type TabId = "findings" | "extensions";
-type Theme = "light" | "dark" | "sepia";
+type Theme = "light" | "dark" | "sepia" | "dark-sepia";
 
 function App() {
   // Theme state
@@ -226,6 +226,18 @@ function App() {
   const handleSelectSnapshot = (snapshot: ComparisonSnapshot) => {
     console.log("Selecting snapshot:", snapshot);
 
+    // Check if there's an unsaved current scan
+    const hasUnsavedScan = scanId && !currentSnapshot;
+
+    if (hasUnsavedScan) {
+      const confirmed = confirm(
+        "You have an unsaved scan. Navigating away will cause this scan data to be lost. Are you sure you want to continue?"
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     // Check if this is a comparison snapshot
     if (snapshot.snapshotType === "comparison" && snapshot.comparisonTree) {
       // Load comparison snapshot
@@ -328,6 +340,7 @@ function App() {
             <option value="light">Light</option>
             <option value="dark">Dark</option>
             <option value="sepia">Sepia</option>
+            <option value="dark-sepia">Dark Sepia</option>
           </select>
           <div className="connection-status">
             {connected === null && <span className="status checking">Checking...</span>}
@@ -383,27 +396,25 @@ function App() {
         )}
 
         {!scanId && !comparisonResult && scanStatus === "idle" && (
-          <>
-            <div className="welcome-message">
-              <h2>Welcome to Disk Intelligence</h2>
-              <p>
-                Analyze your disk to find large files, duplicates, cache folders,
-                and other disk usage insights.
-              </p>
-              <ol>
-                <li>Select a directory to scan</li>
-                <li>Click "Scan & Analyze" to start</li>
-                <li>Review findings and understand your disk usage</li>
-              </ol>
-            </div>
-
-            <SnapshotGallery
-              snapshots={snapshots}
-              onSelectSnapshot={handleSelectSnapshot}
-              onDeleteSnapshot={handleDeleteSnapshot}
-            />
-          </>
+          <div className="welcome-message">
+            <h2>Welcome to Disk Intelligence</h2>
+            <p>
+              Analyze your disk to find large files, duplicates, cache folders,
+              and other disk usage insights.
+            </p>
+            <ol>
+              <li>Select a directory to scan</li>
+              <li>Click "Scan & Analyze" to start</li>
+              <li>Review findings and understand your disk usage</li>
+            </ol>
+          </div>
         )}
+
+        <SnapshotGallery
+          snapshots={snapshots}
+          onSelectSnapshot={handleSelectSnapshot}
+          onDeleteSnapshot={handleDeleteSnapshot}
+        />
       </main>
 
       <footer className="app-footer">
