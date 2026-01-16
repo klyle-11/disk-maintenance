@@ -19,7 +19,9 @@
       "Bash(python main.py:*)",
       "Bash(wmic process where processid=8824 delete)",
       "Bash(python -m py_compile:*)",
-      "Skill(superpowers:executing-plans)"
+      "Skill(superpowers:executing-plans)",
+      "Skill(superpowers:writing-plans)",
+      "Bash(npm run build:*)"
     ]
   }
 }

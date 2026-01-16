@@ -110,3 +110,52 @@
   color: var(--text-secondary);
   text-align: right;
 }
+
+/* Comparison snapshot styles */
+.snapshot-card.comparison {
+  border-left: 3px solid;
+  border-image: linear-gradient(135deg, var(--accent-primary, #4a7ab0), var(--success, #6b9e78)) 1;
+}
+
+.snapshot-type-icon {
+  font-size: 1.25rem;
+  flex-shrink: 0;
+  margin-right: 0.5rem;
+}
+
+.snapshot-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.comparison-path {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.comparison-path .path-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+  min-width: 50px;
+}
+
+.comparison-path .path-value {
+  color: var(--text-primary);
+  word-break: break-all;
+  flex: 1;
+}
+
+.stat-value.identical {
+  color: var(--success, #6b9e78);
+}
+
+.stat-value.modified {
+  color: #c9a654;
+}

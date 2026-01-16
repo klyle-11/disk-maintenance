@@ -49,6 +49,34 @@ class SnapshotDB(Base):
 # Create tables
 Base.metadata.create_all(bind=engine)
 
+def migrate_database():
+    """Add missing columns to existing database for backwards compatibility."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        # Check if we need to add new columns
+        result = conn.execute(text("PRAGMA table_info(snapshots)"))
+        existing_columns = {row[1] for row in result.fetchall()}
+
+        migrations = [
+            ("snapshot_type", "VARCHAR DEFAULT 'scan'"),
+            ("target_path", "VARCHAR"),
+            ("comparison_json", "TEXT"),
+            ("comparison_summary_json", "TEXT"),
+        ]
+
+        for column_name, column_def in migrations:
+            if column_name not in existing_columns:
+                try:
+                    conn.execute(text(f"ALTER TABLE snapshots ADD COLUMN {column_name} {column_def}"))
+                    conn.commit()
+                    print(f"Added column: {column_name}")
+                except Exception as e:
+                    print(f"Column {column_name} may already exist: {e}")
+
+# Run migrations on import
+migrate_database()
+
 # ============================================================================
 # Database helper functions
 # ============================================================================

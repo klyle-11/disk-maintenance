@@ -7,21 +7,26 @@ import {
   getSnapshots,
   updateSnapshot,
   deleteSnapshot,
+  saveComparisonSnapshot,
+  updateComparisonSnapshot,
 } from "./api";
 import type {
   Finding,
   ScanResponse,
   ExtensionSummary as ExtSummaryType,
   Snapshot,
+  ComparisonResponse,
+  ComparisonSnapshot,
 } from "./api";
 import { ScanControls } from "./components/ScanControls";
 import type { ScanStatus } from './components/ScanControls';
 import { ScanResults } from "./components/ScanResults";
 import { SnapshotGallery } from "./components/SnapshotGallery";
+import { ComparisonResults } from "./components/ComparisonResults";
 import "./App.css";
 
 type TabId = "findings" | "extensions";
-type Theme = "light" | "dark";
+type Theme = "light" | "dark" | "sepia";
 
 function App() {
   // Theme state
@@ -49,9 +54,13 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
 
   // Snapshot state
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [currentSnapshot, setCurrentSnapshot] = useState<Snapshot | null>(null);
+  const [snapshots, setSnapshots] = useState<ComparisonSnapshot[]>([]);
+  const [currentSnapshot, setCurrentSnapshot] = useState<ComparisonSnapshot | null>(null);
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
+
+  // Comparison state
+  const [comparisonResult, setComparisonResult] = useState<ComparisonResponse | null>(null);
+  const [comparisonSnapshotId, setComparisonSnapshotId] = useState<string | null>(null);
 
   // Apply theme to document
   useEffect(() => {
@@ -59,8 +68,8 @@ function App() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  const toggleTheme = () => {
-    setTheme(theme === "light" ? "dark" : "light");
+  const handleThemeChange = (newTheme: Theme) => {
+    setTheme(newTheme);
   };
 
   // Check backend health on mount
@@ -110,6 +119,16 @@ function App() {
     setScanId(newScanId);
     setScanInfo(info);
     setCurrentSnapshot(null); // Clear snapshot mode when new scan completes
+    setComparisonResult(null); // Clear comparison when new scan starts
+    setComparisonSnapshotId(null);
+  };
+
+  // Handle comparison completion
+  const handleComparisonComplete = (result: ComparisonResponse) => {
+    setComparisonResult(result);
+    setComparisonSnapshotId(null);
+    setScanId(null); // Clear scan results when showing comparison
+    setCurrentSnapshot(null);
   };
 
   // Handle saving a snapshot
@@ -157,15 +176,86 @@ function App() {
     }
   };
 
+  // Handle saving a comparison snapshot
+  const handleSaveComparisonSnapshot = async () => {
+    if (!comparisonResult) return;
+
+    setIsSavingSnapshot(true);
+    try {
+      const snapshot = await saveComparisonSnapshot(
+        comparisonResult.sourcePath,
+        comparisonResult.targetPath,
+        comparisonResult.summary,
+        comparisonResult.tree
+      );
+      setSnapshots([snapshot, ...snapshots]);
+      setComparisonSnapshotId(snapshot.id);
+      alert("Comparison saved successfully!");
+    } catch (err) {
+      console.error("Failed to save comparison snapshot:", err);
+      alert("Failed to save comparison. Please try again.");
+    } finally {
+      setIsSavingSnapshot(false);
+    }
+  };
+
+  // Handle updating a comparison snapshot
+  const handleUpdateComparisonSnapshot = async () => {
+    if (!comparisonSnapshotId || !comparisonResult) return;
+
+    setIsSavingSnapshot(true);
+    try {
+      const updated = await updateComparisonSnapshot(
+        comparisonSnapshotId,
+        comparisonResult.summary,
+        comparisonResult.tree
+      );
+
+      // Update the snapshot in the list
+      setSnapshots(snapshots.map(s => s.id === updated.id ? updated : s));
+      alert("Comparison updated successfully!");
+    } catch (err) {
+      console.error("Failed to update comparison snapshot:", err);
+      alert("Failed to update comparison. Please try again.");
+    } finally {
+      setIsSavingSnapshot(false);
+    }
+  };
+
   // Handle selecting a snapshot from the gallery
-  const handleSelectSnapshot = (snapshot: Snapshot) => {
+  const handleSelectSnapshot = (snapshot: ComparisonSnapshot) => {
     console.log("Selecting snapshot:", snapshot);
-    setCurrentSnapshot(snapshot);
-    setFindings(snapshot.findings);
-    setExtensions(snapshot.extensions);
-    setScanInfo(snapshot.scanInfo);
-    setScanId(snapshot.scanId);
-    setActiveTab("findings");
+
+    // Check if this is a comparison snapshot
+    if (snapshot.snapshotType === "comparison" && snapshot.comparisonTree) {
+      // Load comparison snapshot
+      setComparisonResult({
+        sourcePath: snapshot.rootPath,
+        targetPath: snapshot.targetPath || "",
+        summary: snapshot.comparisonSummary || {
+          identical: 0,
+          modified: 0,
+          missingFromTarget: 0,
+          extraInTarget: 0,
+        },
+        tree: snapshot.comparisonTree,
+      });
+      setComparisonSnapshotId(snapshot.id);
+      setScanId(null);
+      setCurrentSnapshot(null);
+      setFindings([]);
+      setExtensions([]);
+    } else {
+      // Load regular scan snapshot
+      setCurrentSnapshot(snapshot);
+      setFindings(snapshot.findings || []);
+      setExtensions(snapshot.extensions || []);
+      setScanInfo(snapshot.scanInfo);
+      setScanId(snapshot.scanId);
+      setActiveTab("findings");
+      setComparisonResult(null);
+      setComparisonSnapshotId(null);
+    }
   };
 
   // Handle deleting a snapshot
@@ -181,6 +271,12 @@ function App() {
         setFindings([]);
         setExtensions([]);
         setScanInfo(null);
+      }
+
+      // If we're viewing this comparison snapshot, clear the comparison view
+      if (comparisonSnapshotId === snapshotId) {
+        setComparisonResult(null);
+        setComparisonSnapshotId(null);
       }
 
       alert("Snapshot deleted successfully!");
@@ -223,9 +319,16 @@ function App() {
       <header className="app-header">
         <h1>Disk Intelligence</h1>
         <div className="header-right">
-          <button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}>
-            {theme === "light" ? "Dark" : "Light"}
-          </button>
+          <select
+            className="theme-select"
+            value={theme}
+            onChange={(e) => handleThemeChange(e.target.value as Theme)}
+            title="Select theme"
+          >
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="sepia">Sepia</option>
+          </select>
           <div className="connection-status">
             {connected === null && <span className="status checking">Checking...</span>}
             {connected === true && <span className="status connected">Connected</span>}
@@ -237,6 +340,7 @@ function App() {
       <main className="app-main">
         <ScanControls
           onScanComplete={handleScanComplete}
+          onComparisonComplete={handleComparisonComplete}
           status={scanStatus}
           setStatus={setScanStatus}
           scanInfo={scanInfo}
@@ -265,7 +369,20 @@ function App() {
           />
         )}
 
-        {!scanId && scanStatus === "idle" && (
+        {comparisonResult && (
+          <ComparisonResults
+            sourcePath={comparisonResult.sourcePath}
+            targetPath={comparisonResult.targetPath}
+            summary={comparisonResult.summary}
+            tree={comparisonResult.tree}
+            isSnapshot={comparisonSnapshotId !== null}
+            onSaveSnapshot={handleSaveComparisonSnapshot}
+            onUpdateSnapshot={handleUpdateComparisonSnapshot}
+            isSaving={isSavingSnapshot}
+          />
+        )}
+
+        {!scanId && !comparisonResult && scanStatus === "idle" && (
           <>
             <div className="welcome-message">
               <h2>Welcome to Disk Intelligence</h2>

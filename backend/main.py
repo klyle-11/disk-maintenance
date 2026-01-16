@@ -33,6 +33,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def sanitize_string(s: str) -> str:
+    """Remove or replace surrogate characters that can't be encoded to UTF-8."""
+    if not s:
+        return s
+    # Encode to UTF-8, replacing surrogates with replacement character, then decode back
+    return s.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')
+
 app = FastAPI(title="Disk Intelligence API", version="1.0.0")
 
 # Enable CORS for frontend
@@ -98,6 +105,43 @@ class SnapshotResponse(BaseModel):
     total_files: int
     total_folders: int
     total_size_bytes: int
+
+class ComparisonItem(BaseModel):
+    """A single item in the comparison tree."""
+    name: str
+    relative_path: str
+    item_type: str  # "file" or "folder"
+    status: str  # "identical", "modified", "missing_from_target", "extra_in_target"
+    source_size: Optional[int] = None
+    target_size: Optional[int] = None
+    source_modified: Optional[str] = None
+    target_modified: Optional[str] = None
+    source_hash: Optional[str] = None
+    target_hash: Optional[str] = None
+    children: Optional[list["ComparisonItem"]] = None
+    difference_count: int = 0  # For folders: count of differences within
+
+class ComparisonRequest(BaseModel):
+    source_path: str
+    target_path: str
+    deep_scan: bool = False
+
+class ComparisonSummary(BaseModel):
+    identical: int = 0
+    modified: int = 0
+    missing_from_target: int = 0
+    extra_in_target: int = 0
+    total_source_size: int = 0
+    total_target_size: int = 0
+
+class ComparisonResponse(BaseModel):
+    comparison_id: str
+    source_path: str
+    target_path: str
+    summary: ComparisonSummary
+    tree: list[ComparisonItem]
+    deep_scan: bool
+    completed_at: str
 
 # ============================================================================
 # IN-MEMORY STORAGE (per scan)
@@ -594,6 +638,194 @@ class Analyzer:
         return summaries
 
 # ============================================================================
+# FOLDER COMPARATOR
+# ============================================================================
+
+class FolderComparator:
+    """
+    Compares two directory trees and identifies differences.
+    """
+
+    def __init__(self, source_path: str, target_path: str, deep_scan: bool = False):
+        self.source_path = source_path
+        self.target_path = target_path
+        self.deep_scan = deep_scan
+        self.summary = ComparisonSummary()
+
+    def _get_relative_path(self, full_path: str, root: str) -> str:
+        """Get path relative to root."""
+        return os.path.relpath(full_path, root)
+
+    def _hash_file(self, file_path: str) -> Optional[str]:
+        """Compute SHA256 hash of a file."""
+        import hashlib
+        try:
+            sha256 = hashlib.sha256()
+            with open(file_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(8192), b''):
+                    sha256.update(chunk)
+            return sha256.hexdigest()
+        except (PermissionError, OSError):
+            return None
+
+    def _build_file_index(self, root_path: str) -> dict[str, dict]:
+        """Build an index of all files keyed by relative path."""
+        index = {}
+        for root, dirs, files in os.walk(root_path, topdown=True):
+            # Skip ignored directories
+            dirs[:] = [d for d in dirs if not any(
+                ignore.lower() in os.path.join(root, d).lower()
+                for ignore in IGNORE_PATHS
+            )]
+
+            for filename in files:
+                try:
+                    file_path = os.path.join(root, filename)
+                    rel_path = sanitize_string(self._get_relative_path(file_path, root_path))
+                    stat = os.stat(file_path)
+
+                    index[rel_path] = {
+                        "full_path": file_path,
+                        "size": stat.st_size,
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "is_dir": False,
+                    }
+                except (PermissionError, OSError):
+                    continue
+
+            # Also index directories
+            for dirname in dirs:
+                try:
+                    dir_path = os.path.join(root, dirname)
+                    rel_path = sanitize_string(self._get_relative_path(dir_path, root_path))
+                    stat = os.stat(dir_path)
+
+                    index[rel_path] = {
+                        "full_path": dir_path,
+                        "size": 0,  # Will be calculated
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "is_dir": True,
+                    }
+                except (PermissionError, OSError):
+                    continue
+
+        return index
+
+    def _compare_files(
+        self,
+        rel_path: str,
+        source_info: dict,
+        target_info: dict
+    ) -> str:
+        """Compare two files and return status."""
+        # Size differs = modified
+        if source_info["size"] != target_info["size"]:
+            return "modified"
+
+        # Same size, check dates
+        if source_info["modified"] != target_info["modified"]:
+            # If deep scan, verify with hash
+            if self.deep_scan:
+                source_hash = self._hash_file(source_info["full_path"])
+                target_hash = self._hash_file(target_info["full_path"])
+                if source_hash and target_hash and source_hash == target_hash:
+                    return "identical"
+            return "modified"
+
+        # Same size and date
+        if self.deep_scan:
+            source_hash = self._hash_file(source_info["full_path"])
+            target_hash = self._hash_file(target_info["full_path"])
+            if source_hash and target_hash and source_hash != target_hash:
+                return "modified"
+
+        return "identical"
+
+    def compare(self) -> tuple[list[ComparisonItem], ComparisonSummary]:
+        """
+        Compare source and target directories.
+        Returns (tree, summary).
+        """
+        logger.info(f"Comparing: {self.source_path} vs {self.target_path}")
+
+        # Build indexes
+        source_index = self._build_file_index(self.source_path)
+        target_index = self._build_file_index(self.target_path)
+
+        all_paths = set(source_index.keys()) | set(target_index.keys())
+        items_by_path: dict[str, ComparisonItem] = {}
+
+        for rel_path in sorted(all_paths):
+            in_source = rel_path in source_index
+            in_target = rel_path in target_index
+
+            source_info = source_index.get(rel_path, {})
+            target_info = target_index.get(rel_path, {})
+
+            name = os.path.basename(rel_path)
+            is_dir = source_info.get("is_dir", False) or target_info.get("is_dir", False)
+
+            if in_source and in_target:
+                if is_dir:
+                    status = "identical"  # Will be updated based on children
+                else:
+                    status = self._compare_files(rel_path, source_info, target_info)
+            elif in_source:
+                status = "missing_from_target"
+            else:
+                status = "extra_in_target"
+
+            # Update summary (only for files)
+            if not is_dir:
+                if status == "identical":
+                    self.summary.identical += 1
+                elif status == "modified":
+                    self.summary.modified += 1
+                elif status == "missing_from_target":
+                    self.summary.missing_from_target += 1
+                elif status == "extra_in_target":
+                    self.summary.extra_in_target += 1
+
+            self.summary.total_source_size += source_info.get("size", 0)
+            self.summary.total_target_size += target_info.get("size", 0)
+
+            item = ComparisonItem(
+                name=sanitize_string(name),
+                relative_path=sanitize_string(rel_path),
+                item_type="folder" if is_dir else "file",
+                status=status,
+                source_size=source_info.get("size") if in_source else None,
+                target_size=target_info.get("size") if in_target else None,
+                source_modified=source_info.get("modified") if in_source else None,
+                target_modified=target_info.get("modified") if in_target else None,
+                children=[] if is_dir else None,
+                difference_count=0
+            )
+
+            items_by_path[rel_path] = item
+
+        # Build tree structure
+        root_items: list[ComparisonItem] = []
+
+        for rel_path, item in sorted(items_by_path.items(), key=lambda x: x[0]):
+            parent_path = os.path.dirname(rel_path)
+
+            if parent_path and parent_path in items_by_path:
+                parent = items_by_path[parent_path]
+                if parent.children is not None:
+                    parent.children.append(item)
+                    # Propagate difference counts up
+                    if item.status != "identical" or item.difference_count > 0:
+                        parent.difference_count += 1 + item.difference_count
+                        if parent.status == "identical":
+                            parent.status = "modified"  # Has different children
+            else:
+                root_items.append(item)
+
+        logger.info(f"Comparison complete: {self.summary}")
+        return root_items, self.summary
+
+# ============================================================================
 # API ENDPOINTS
 # ============================================================================
 
@@ -884,6 +1116,127 @@ async def delete_snapshot(snapshot_id: str, db: Session = Depends(get_db)):
     db.commit()
 
     return {"message": "Snapshot deleted successfully"}
+
+# ============================================================================
+# COMPARISON ENDPOINTS
+# ============================================================================
+
+@app.post("/api/compare")
+async def compare_directories(request: ComparisonRequest):
+    """Compare two directories and return differences."""
+    source_path = request.source_path
+    target_path = request.target_path
+
+    # Validate paths
+    if not os.path.exists(source_path):
+        raise HTTPException(status_code=400, detail=f"Source path does not exist: {source_path}")
+    if not os.path.isdir(source_path):
+        raise HTTPException(status_code=400, detail=f"Source path is not a directory: {source_path}")
+    if not os.path.exists(target_path):
+        raise HTTPException(status_code=400, detail=f"Target path does not exist: {target_path}")
+    if not os.path.isdir(target_path):
+        raise HTTPException(status_code=400, detail=f"Target path is not a directory: {target_path}")
+
+    comparison_id = str(uuid.uuid4())
+
+    # Run comparison
+    comparator = FolderComparator(source_path, target_path, request.deep_scan)
+    tree, summary = comparator.compare()
+
+    return ComparisonResponse(
+        comparison_id=comparison_id,
+        source_path=source_path,
+        target_path=target_path,
+        summary=summary,
+        tree=tree,
+        deep_scan=request.deep_scan,
+        completed_at=datetime.now().isoformat()
+    )
+
+
+@app.post("/api/snapshots/comparison")
+async def save_comparison_snapshot(
+    source_path: str,
+    target_path: str,
+    comparison_id: str,
+    db: Session = Depends(get_db)
+):
+    """Save a comparison as a snapshot."""
+    # Re-run comparison to get fresh data
+    comparator = FolderComparator(source_path, target_path, deep_scan=False)
+    tree, summary = comparator.compare()
+
+    snapshot_id = f"comparison-{uuid.uuid4()}"
+
+    # Create minimal scan info for compatibility
+    scan_info = {
+        "scan_id": comparison_id,
+        "root_path": source_path,
+        "started_at": datetime.now().isoformat(),
+        "completed_at": datetime.now().isoformat(),
+        "total_files": summary.identical + summary.modified + summary.missing_from_target,
+        "total_folders": 0,
+        "total_size_bytes": summary.total_source_size
+    }
+
+    snapshot = SnapshotDB(
+        id=snapshot_id,
+        scan_id=comparison_id,
+        root_path=source_path,
+        findings_json=json.dumps([]),
+        extensions_json=json.dumps([]),
+        scan_info_json=json.dumps(scan_info),
+        total_files=scan_info["total_files"],
+        total_folders=0,
+        total_size_bytes=summary.total_source_size,
+        saved_at=datetime.utcnow(),
+        snapshot_type="comparison",
+        target_path=target_path,
+        comparison_json=json.dumps([item.dict() for item in tree]),
+        comparison_summary_json=json.dumps(summary.dict())
+    )
+
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+
+    return deserialize_snapshot(snapshot)
+
+
+@app.put("/api/snapshots/comparison/{snapshot_id}")
+async def update_comparison_snapshot(snapshot_id: str, db: Session = Depends(get_db)):
+    """Update a comparison snapshot by re-running the comparison."""
+    snapshot = db.query(SnapshotDB).filter(SnapshotDB.id == snapshot_id).first()
+
+    if not snapshot:
+        raise HTTPException(status_code=404, detail=f"Snapshot not found: {snapshot_id}")
+    if snapshot.snapshot_type != "comparison":
+        raise HTTPException(status_code=400, detail="Not a comparison snapshot")
+
+    source_path = snapshot.root_path
+    target_path = snapshot.target_path
+
+    # Validate paths still exist
+    if not os.path.exists(source_path):
+        raise HTTPException(status_code=400, detail=f"Source path no longer exists: {source_path}")
+    if not os.path.exists(target_path):
+        raise HTTPException(status_code=400, detail=f"Target path no longer exists: {target_path}")
+
+    # Re-run comparison
+    comparator = FolderComparator(source_path, target_path, deep_scan=False)
+    tree, summary = comparator.compare()
+
+    # Update snapshot
+    snapshot.comparison_json = json.dumps([item.dict() for item in tree])
+    snapshot.comparison_summary_json = json.dumps(summary.dict())
+    snapshot.total_files = summary.identical + summary.modified + summary.missing_from_target
+    snapshot.total_size_bytes = summary.total_source_size
+    snapshot.saved_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(snapshot)
+
+    return deserialize_snapshot(snapshot)
 
 # ============================================================================
 # MAIN

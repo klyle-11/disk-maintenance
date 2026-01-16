@@ -71,6 +71,58 @@ export interface Snapshot {
   totalSizeBytes: number;
 }
 
+/** Status of a compared item */
+export type ComparisonStatus =
+  | "identical"
+  | "modified"
+  | "missing_from_target"
+  | "extra_in_target";
+
+/** A single item in the comparison tree */
+export interface ComparisonItem {
+  name: string;
+  relativePath: string;
+  itemType: "file" | "folder";
+  status: ComparisonStatus;
+  sourceSize: number | null;
+  targetSize: number | null;
+  sourceModified: string | null;
+  targetModified: string | null;
+  sourceHash: string | null;
+  targetHash: string | null;
+  children: ComparisonItem[] | null;
+  differenceCount: number;
+}
+
+/** Summary of comparison results */
+export interface ComparisonSummary {
+  identical: number;
+  modified: number;
+  missingFromTarget: number;
+  extraInTarget: number;
+  totalSourceSize: number;
+  totalTargetSize: number;
+}
+
+/** Response from a comparison */
+export interface ComparisonResponse {
+  comparisonId: string;
+  sourcePath: string;
+  targetPath: string;
+  summary: ComparisonSummary;
+  tree: ComparisonItem[];
+  deepScan: boolean;
+  completedAt: string;
+}
+
+/** Extended snapshot that may include comparison data */
+export interface ComparisonSnapshot extends Snapshot {
+  snapshotType: "scan" | "comparison";
+  targetPath?: string;
+  comparison?: ComparisonItem[];
+  comparisonSummary?: ComparisonSummary;
+}
+
 // ============================================================================
 // Private helper
 // ============================================================================
@@ -280,12 +332,44 @@ function transformExtension(e: any): ExtensionSummary {
 }
 
 /**
- * Get all saved snapshots.
- * @returns An array of snapshots.
+ * Transform snake_case ComparisonItem to camelCase (recursive)
  */
-export async function getSnapshots(): Promise<Snapshot[]> {
-  const data = await apiFetch<any[]>("/snapshots");
-  return data.map((item) => ({
+function transformComparisonItem(item: any): ComparisonItem {
+  return {
+    name: item.name,
+    relativePath: item.relative_path,
+    itemType: item.item_type,
+    status: item.status,
+    sourceSize: item.source_size,
+    targetSize: item.target_size,
+    sourceModified: item.source_modified,
+    targetModified: item.target_modified,
+    sourceHash: item.source_hash,
+    targetHash: item.target_hash,
+    children: item.children?.map(transformComparisonItem) || null,
+    differenceCount: item.difference_count || 0,
+  };
+}
+
+/**
+ * Transform snake_case ComparisonSummary to camelCase
+ */
+function transformComparisonSummary(summary: any): ComparisonSummary {
+  return {
+    identical: summary.identical || 0,
+    modified: summary.modified || 0,
+    missingFromTarget: summary.missing_from_target || 0,
+    extraInTarget: summary.extra_in_target || 0,
+    totalSourceSize: summary.total_source_size || 0,
+    totalTargetSize: summary.total_target_size || 0,
+  };
+}
+
+/**
+ * Transform snapshot with comparison fields
+ */
+function transformSnapshot(item: any): ComparisonSnapshot {
+  const base: ComparisonSnapshot = {
     id: item.id,
     scanId: item.scan_id,
     rootPath: item.root_path,
@@ -304,7 +388,27 @@ export async function getSnapshots(): Promise<Snapshot[]> {
     totalFiles: item.total_files,
     totalFolders: item.total_folders,
     totalSizeBytes: item.total_size_bytes,
-  }));
+    snapshotType: item.snapshot_type || "scan",
+    targetPath: item.target_path,
+  };
+
+  if (item.comparison) {
+    base.comparison = item.comparison.map(transformComparisonItem);
+  }
+  if (item.comparison_summary) {
+    base.comparisonSummary = transformComparisonSummary(item.comparison_summary);
+  }
+
+  return base;
+}
+
+/**
+ * Get all saved snapshots.
+ * @returns An array of snapshots.
+ */
+export async function getSnapshots(): Promise<ComparisonSnapshot[]> {
+  const data = await apiFetch<any[]>("/snapshots");
+  return data.map(transformSnapshot);
 }
 
 /**
@@ -378,6 +482,77 @@ export async function deleteSnapshot(
   return apiFetch<{ message: string }>(`/snapshots/${snapshotId}`, {
     method: "DELETE",
   });
+}
+
+// ============================================================================
+// Comparison API functions
+// ============================================================================
+
+/**
+ * Compare two directories.
+ * @param sourcePath - The source directory path.
+ * @param targetPath - The target directory path.
+ * @param deepScan - Whether to verify with file hashes.
+ * @returns Comparison results.
+ */
+export async function compareDirectories(
+  sourcePath: string,
+  targetPath: string,
+  deepScan: boolean = false
+): Promise<ComparisonResponse> {
+  const data = await apiFetch<any>("/compare", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source_path: sourcePath,
+      target_path: targetPath,
+      deep_scan: deepScan,
+    }),
+  });
+
+  return {
+    comparisonId: data.comparison_id,
+    sourcePath: data.source_path,
+    targetPath: data.target_path,
+    summary: transformComparisonSummary(data.summary),
+    tree: data.tree.map(transformComparisonItem),
+    deepScan: data.deep_scan,
+    completedAt: data.completed_at,
+  };
+}
+
+/**
+ * Save a comparison as a snapshot.
+ */
+export async function saveComparisonSnapshot(
+  sourcePath: string,
+  targetPath: string,
+  comparisonId: string
+): Promise<ComparisonSnapshot> {
+  const params = new URLSearchParams({
+    source_path: sourcePath,
+    target_path: targetPath,
+    comparison_id: comparisonId,
+  });
+
+  const item = await apiFetch<any>(`/snapshots/comparison?${params}`, {
+    method: "POST",
+  });
+
+  return transformSnapshot(item);
+}
+
+/**
+ * Update a comparison snapshot by re-running the comparison.
+ */
+export async function updateComparisonSnapshot(
+  snapshotId: string
+): Promise<ComparisonSnapshot> {
+  const item = await apiFetch<any>(`/snapshots/comparison/${snapshotId}`, {
+    method: "PUT",
+  });
+
+  return transformSnapshot(item);
 }
 
 // ============================================================================

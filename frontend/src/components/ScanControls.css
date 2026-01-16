@@ -290,3 +290,88 @@
 .log-error .log-message {
   color: var(--danger);
 }
+
+/* Comparison Mode */
+.compare-toggle {
+  margin: 12px 0;
+  padding: 8px 0;
+}
+
+.compare-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.compare-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.comparison-controls {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 8px;
+}
+
+.comparison-controls .scan-input-row {
+  margin-bottom: 12px;
+}
+
+.select-directory-button.target {
+  background: var(--bg-primary);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.select-directory-button.target:hover:not(:disabled) {
+  background: rgba(107, 158, 120, 0.1);
+  border-color: var(--success);
+}
+
+.compare-button {
+  padding: 12px 24px;
+  background: linear-gradient(135deg, var(--accent-primary), var(--success));
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.compare-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.compare-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.deep-scan-toggle {
+  margin-top: 8px;
+}
+
+.deep-scan-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.deep-scan-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}

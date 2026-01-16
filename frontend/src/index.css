@@ -53,6 +53,31 @@
   --info: #89dceb;
 }
 
+/* Sepia Theme - Light Earthy Tones */
+[data-theme="sepia"] {
+  --bg-primary: #f5f0e6;
+  --bg-secondary: #faf8f3;
+  --bg-tertiary: #ebe4d6;
+  --bg-hover: #e0d8c7;
+
+  --accent-primary: #8b6914;
+  --accent-secondary: #a67c00;
+  --accent-light: #c9a227;
+  --accent-pale: rgba(139, 105, 20, 0.1);
+
+  --text-primary: #4a3f35;
+  --text-secondary: #6d6155;
+  --text-muted: #8f8275;
+
+  --border-light: #d9cfc2;
+  --border-medium: #c4b8a9;
+
+  --success: #5d8f4a;
+  --warning: #b8860b;
+  --danger: #c25c4e;
+  --info: #5b8fa8;
+}
+
 html, body {
   margin: 0;
   padding: 0;

@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from "react";
-import { scanWithProgress, formatBytes } from "../api";
-import type { ScanResponse } from "../api";
+import { scanWithProgress, compareDirectories, formatBytes } from "../api";
+import type { ScanResponse, ComparisonResponse } from "../api";
 import "./ScanControls.css";
 
-export type ScanStatus = "idle" | "scanning" | "completed" | "error";
+export type ScanStatus = "idle" | "scanning" | "completed" | "error" | "comparing";
 
 interface ScanControlsProps {
   onScanComplete: (scanId: string, scanInfo: ScanResponse) => void;
+  onComparisonComplete: (result: ComparisonResponse) => void;
   status: ScanStatus;
   setStatus: (status: ScanStatus) => void;
   scanInfo: ScanResponse | null;
@@ -20,6 +21,7 @@ interface LogEntry {
 
 export function ScanControls({
   onScanComplete,
+  onComparisonComplete,
   status,
   setStatus,
   scanInfo,
@@ -32,6 +34,12 @@ export function ScanControls({
   const abortControllerRef = useRef<AbortController | null>(null);
   const logsContentRef = useRef<HTMLDivElement>(null);
   const lockedToBottomRef = useRef<boolean>(true);
+
+  // Comparison mode state
+  const [compareMode, setCompareMode] = useState(false);
+  const [targetPath, setTargetPath] = useState("");
+  const [deepScan, setDeepScan] = useState(false);
+  const targetFileInputRef = useRef<HTMLInputElement>(null);
 
   const addLog = (message: string, type: LogEntry["type"] = "info") => {
     const timestamp = new Date().toLocaleTimeString();
@@ -151,12 +159,81 @@ export function ScanControls({
     }
   };
 
+  const handleTargetDirectorySelect = async () => {
+    if (window.electronAPI) {
+      try {
+        const selectedPath = await window.electronAPI.selectDirectory();
+        if (selectedPath) {
+          setTargetPath(selectedPath);
+        }
+      } catch (err) {
+        console.error('Failed to open directory dialog:', err);
+        setError('Failed to open directory selection dialog');
+      }
+    } else {
+      targetFileInputRef.current?.click();
+    }
+  };
+
+  const handleTargetFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const firstFile = files[0];
+      const fullPath = (firstFile as any).path || firstFile.webkitRelativePath;
+      if (fullPath) {
+        const dirPath = fullPath.substring(0, fullPath.lastIndexOf('\\') || fullPath.lastIndexOf('/'));
+        setTargetPath(dirPath || fullPath);
+      }
+    }
+  };
+
+  const handleCompare = async () => {
+    if (!rootPath.trim() || !targetPath.trim()) {
+      setError("Please select both source and target directories");
+      return;
+    }
+
+    setError(null);
+    setLogs([]);
+    setStatus("comparing");
+    setLogsExpanded(true);
+
+    addLog(`Comparing: ${rootPath.trim()} vs ${targetPath.trim()}`, "info");
+    if (deepScan) {
+      addLog("Deep scan enabled - verifying file contents with hashes", "info");
+    }
+
+    try {
+      const result = await compareDirectories(
+        rootPath.trim(),
+        targetPath.trim(),
+        deepScan
+      );
+
+      setStatus("completed");
+      addLog("Comparison completed successfully", "success");
+      addLog(
+        `Found: ${result.summary.identical} identical, ${result.summary.modified} modified, ` +
+        `${result.summary.missingFromTarget} missing, ${result.summary.extraInTarget} extra`,
+        "success"
+      );
+      onComparisonComplete(result);
+    } catch (err) {
+      setStatus("error");
+      const errorMsg = err instanceof Error ? err.message : "Comparison failed";
+      setError(errorMsg);
+      addLog(`Error: ${errorMsg}`, "error");
+    }
+  };
+
   const getStatusBadge = () => {
     switch (status) {
       case "idle":
         return <span className="status-badge idle">Ready</span>;
       case "scanning":
         return <span className="status-badge scanning">Scanning...</span>;
+      case "comparing":
+        return <span className="status-badge scanning">Comparing...</span>;
       case "completed":
         return <span className="status-badge completed">Completed</span>;
       case "error":
@@ -187,32 +264,92 @@ export function ScanControls({
         <button
           className="select-directory-button"
           onClick={handleDirectorySelect}
-          disabled={status === "scanning"}
+          disabled={status === "scanning" || status === "comparing"}
         >
-          {rootPath ? "Change Directory" : "Select Directory"}
+          {rootPath ? (compareMode ? "Change Source" : "Change Directory") : (compareMode ? "Select Source" : "Select Directory")}
         </button>
         {rootPath && (
           <div className="selected-path" title={rootPath}>
             {rootPath}
           </div>
         )}
-        {status === "scanning" ? (
-          <button
-            className="cancel-button"
-            onClick={handleCancel}
-          >
-            Cancel Scan
-          </button>
-        ) : (
-          <button
-            className="scan-button"
-            onClick={handleScan}
-            disabled={!rootPath}
-          >
-            Scan & Analyze
-          </button>
+        {!compareMode && (
+          status === "scanning" ? (
+            <button className="cancel-button" onClick={handleCancel}>
+              Cancel Scan
+            </button>
+          ) : (
+            <button
+              className="scan-button"
+              onClick={handleScan}
+              disabled={!rootPath}
+            >
+              Scan & Analyze
+            </button>
+          )
         )}
       </div>
+
+      <div className="compare-toggle">
+        <label>
+          <input
+            type="checkbox"
+            checked={compareMode}
+            onChange={(e) => setCompareMode(e.target.checked)}
+            disabled={status === "scanning" || status === "comparing"}
+          />
+          Compare with another folder
+        </label>
+      </div>
+
+      {compareMode && (
+        <div className="comparison-controls">
+          <div className="scan-input-row">
+            {!window.electronAPI && (
+              <input
+                ref={targetFileInputRef}
+                type="file"
+                /* @ts-ignore */
+                webkitdirectory=""
+                directory=""
+                multiple
+                style={{ display: "none" }}
+                onChange={handleTargetFileInputChange}
+              />
+            )}
+            <button
+              className="select-directory-button target"
+              onClick={handleTargetDirectorySelect}
+              disabled={status === "scanning" || status === "comparing"}
+            >
+              {targetPath ? "Change Target" : "Select Target"}
+            </button>
+            {targetPath && (
+              <div className="selected-path" title={targetPath}>
+                {targetPath}
+              </div>
+            )}
+            <button
+              className="compare-button"
+              onClick={handleCompare}
+              disabled={!rootPath || !targetPath || status === "comparing"}
+            >
+              {status === "comparing" ? "Comparing..." : "Compare"}
+            </button>
+          </div>
+          <div className="deep-scan-toggle">
+            <label>
+              <input
+                type="checkbox"
+                checked={deepScan}
+                onChange={(e) => setDeepScan(e.target.checked)}
+                disabled={status === "comparing"}
+              />
+              Deep scan (verify file contents with hashes)
+            </label>
+          </div>
+        </div>
+      )}
 
       {error && <div className="scan-error">{error}</div>}
 
