@@ -195,6 +195,10 @@
   font-family: 'Papyrus', 'Palatino Linotype', 'Book Antiqua', 'Times New Roman', serif;
 }
 
+[data-theme="dark-sepia"] .welcome-message h2 {
+  font-family: 'Papyrus', 'Palatino Linotype', 'Book Antiqua', 'Times New Roman', serif;
+}
+
 .welcome-message p {
   color: var(--text-secondary);
   margin: 0 0 20px 0;

@@ -41,6 +41,8 @@ env/
 ENV/
 .python-version
 *.sqlite3
+*.db
+disk_intelligence.db
 .pytest_cache/
 .mypy_cache/
 

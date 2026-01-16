@@ -29,8 +29,9 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
     },
-    // Window styling
-    titleBarStyle: 'default',
+    // Window styling - use native frame on macOS
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    frame: process.platform !== 'darwin',
     show: false, // Don't show until ready
   });
 

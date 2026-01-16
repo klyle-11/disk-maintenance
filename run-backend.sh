@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# Start only Python backend (macOS/Linux)
+cd backend
+source venv/bin/activate
+echo "Starting Disk Intelligence Backend on http://127.0.0.1:8000"
+echo "Press Ctrl+C to stop."
+echo ""
+python3 main.py
