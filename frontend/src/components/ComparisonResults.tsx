@@ -3,6 +3,8 @@ import type { ComparisonItem, ComparisonSummary } from "../api";
 import { formatBytes } from "../api";
 import "./ComparisonResults.css";
 
+type StatusFilter = "all" | "identical" | "modified" | "missing_from_target" | "extra_in_target";
+
 interface ComparisonResultsProps {
   sourcePath: string;
   targetPath: string;
@@ -24,22 +26,24 @@ export function ComparisonResults({
   onUpdateSnapshot,
   isSaving,
 }: ComparisonResultsProps) {
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => {
-    // Initially expand folders with differences
+    // Initially expand only top level folders
     const expanded = new Set<string>();
-    const findDifferent = (items: ComparisonItem[], path = "") => {
+    const expandFirstLevel = (items: ComparisonItem[], path = "", depth = 0) => {
       for (const item of items) {
         const itemPath = path ? `${path}/${item.name}` : item.name;
-        if (item.differenceCount > 0 || item.status !== "identical") {
+        // Expand only folders at depth 0 (top level)
+        if (item.itemType === "folder" && depth === 0) {
           expanded.add(itemPath);
         }
         if (item.children) {
-          findDifferent(item.children, itemPath);
+          expandFirstLevel(item.children, itemPath, depth + 1);
         }
       }
     };
-    findDifferent(tree);
+    expandFirstLevel(tree);
     return expanded;
   });
 
@@ -53,6 +57,27 @@ export function ComparisonResults({
       }
       return next;
     });
+  };
+
+  const collapseAll = () => {
+    setExpandedPaths(new Set());
+  };
+
+  const expandAll = () => {
+    const expanded = new Set<string>();
+    const collectAllFolders = (items: ComparisonItem[], path = "") => {
+      for (const item of items) {
+        const itemPath = path ? `${path}/${item.name}` : item.name;
+        if (item.itemType === "folder") {
+          expanded.add(itemPath);
+        }
+        if (item.children) {
+          collectAllFolders(item.children, itemPath);
+        }
+      }
+    };
+    collectAllFolders(tree);
+    setExpandedPaths(expanded);
   };
 
   const getStatusIcon = (status: string) => {
@@ -101,8 +126,21 @@ export function ComparisonResults({
     const isFolder = item.itemType === "folder";
     const hasDifferences = item.differenceCount > 0 || item.status !== "identical";
 
-    // Filter out identical items if not showing all
-    if (!showAll && item.status === "identical" && item.differenceCount === 0) {
+    // Filter based on selected status
+    const shouldShow = statusFilter === "all" || item.status === statusFilter;
+
+    if (!shouldShow) {
+      return null;
+    }
+
+    // Check if all children are filtered out (for folders)
+    const hasVisibleChildren = isFolder && item.children
+      ? item.children.some(child => {
+          return statusFilter === "all" || child.status === statusFilter;
+        })
+      : true;
+
+    if (isFolder && !hasVisibleChildren && statusFilter !== "all") {
       return null;
     }
 
@@ -191,61 +229,119 @@ export function ComparisonResults({
           <span className="path-label">Target:</span>
           <span className="path-value">{targetPath}</span>
         </div>
-        <button
-          className="snapshot-action-btn"
-          onClick={isSnapshot ? onUpdateSnapshot : onSaveSnapshot}
-          disabled={isSaving}
-        >
-          {isSaving
-            ? "Saving..."
-            : isSnapshot
-            ? "Update Comparison"
-            : "Save Comparison"}
-        </button>
+        <div className="header-actions">
+          {statusFilter !== "all" && (
+            <button
+              className="filter-badge"
+              onClick={() => setStatusFilter("all")}
+            >
+              Filter: {statusFilter === "identical" ? "Identical" : statusFilter === "modified" ? "Modified" : statusFilter === "missing_from_target" ? "Missing" : "Extra"} ✕
+            </button>
+          )}
+          <button
+            className="snapshot-action-btn"
+            onClick={isSnapshot ? onUpdateSnapshot : onSaveSnapshot}
+            disabled={isSaving}
+          >
+            {isSaving
+              ? "Saving..."
+              : isSnapshot
+              ? "Update Comparison"
+              : "Save Comparison"}
+          </button>
+        </div>
       </div>
 
+      {statusFilter !== "all" && (
+        <div className="filter-active-message">
+          Showing {summary.identical} identical, {summary.modified} modified, {summary.missingFromTarget} missing, and {summary.extraInTarget} extra items
+        </div>
+      )}
+
       <div className="comparison-summary">
-        <div className="summary-item identical">
+        <div
+          className={`summary-item identical ${statusFilter === "all" || statusFilter === "identical" ? "active" : ""}`}
+          onClick={() => statusFilter === "identical" ? setStatusFilter("all") : setStatusFilter("identical")}
+        >
           <span className="summary-count">{summary.identical}</span>
           <span className="summary-label">Identical</span>
         </div>
-        <div className="summary-item modified">
+        <div
+          className={`summary-item modified ${statusFilter === "all" || statusFilter === "modified" ? "active" : ""}`}
+          onClick={() => statusFilter === "modified" ? setStatusFilter("all") : setStatusFilter("modified")}
+        >
           <span className="summary-count">{summary.modified}</span>
           <span className="summary-label">Modified</span>
         </div>
-        <div className="summary-item missing">
+        <div
+          className={`summary-item missing ${statusFilter === "all" || statusFilter === "missing_from_target" ? "active" : ""}`}
+          onClick={() => statusFilter === "missing_from_target" ? setStatusFilter("all") : setStatusFilter("missing_from_target")}
+        >
           <span className="summary-count">{summary.missingFromTarget}</span>
           <span className="summary-label">Missing</span>
         </div>
-        <div className="summary-item extra">
+        <div
+          className={`summary-item extra ${statusFilter === "all" || statusFilter === "extra_in_target" ? "active" : ""}`}
+          onClick={() => statusFilter === "extra_in_target" ? setStatusFilter("all") : setStatusFilter("extra_in_target")}
+        >
           <span className="summary-count">{summary.extraInTarget}</span>
           <span className="summary-label">Extra</span>
         </div>
       </div>
 
-      <div className="comparison-controls-bar">
-        <button
-          className={`view-toggle ${!showAll ? "active" : ""}`}
-          onClick={() => setShowAll(false)}
-        >
-          Differences only ({totalDifferences})
-        </button>
-        <button
-          className={`view-toggle ${showAll ? "active" : ""}`}
-          onClick={() => setShowAll(true)}
-        >
-          Show all
-        </button>
-      </div>
+      {statusFilter === "all" && (
+        <div className="comparison-controls-bar">
+          <div className="view-toggles">
+            <button
+              className={`view-toggle ${!showAll ? "active" : ""}`}
+              onClick={() => setShowAll(false)}
+            >
+              Differences only ({totalDifferences})
+            </button>
+            <button
+              className={`view-toggle ${showAll ? "active" : ""}`}
+              onClick={() => setShowAll(true)}
+            >
+              Show all
+            </button>
+          </div>
+          <div className="expand-collapse-buttons">
+            <button className="expand-collapse-btn" onClick={collapseAll}>
+              Collapse All
+            </button>
+            <button className="expand-collapse-btn" onClick={expandAll}>
+              Expand All
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="comparison-tree">
         {tree.map((item) => renderItem(item, "", 0))}
-        {!showAll && totalDifferences === 0 && (
+        {statusFilter !== "all" && (
+          <div className="filter-active-message">
+            Showing {summary.identical} identical, {summary.modified} modified, {summary.missingFromTarget} missing, and {summary.extraInTarget} extra items
+          </div>
+        )}
+        {statusFilter === "all" && !showAll && totalDifferences === 0 && (
           <div className="no-differences">
             All files are identical! The folders match perfectly.
           </div>
         )}
+        {statusFilter === "all" && !showAll && totalDifferences > 0 && (
+          <div className="filtered-message">
+            Showing {totalDifferences} items with differences only
+          </div>
+        )}
       </div>
+
+      {statusFilter !== "all" && (
+        <div className="no-filtered-items">
+          <span className="empty-icon">📭</span>
+          <h3>No Items Match Filter</h3>
+          <p>Try selecting a different status filter to view items.</p>
+        </div>
+      )}
     </div>
   );
 }

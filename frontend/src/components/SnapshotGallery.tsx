@@ -6,19 +6,54 @@ interface SnapshotGalleryProps {
   snapshots: ComparisonSnapshot[];
   onSelectSnapshot: (snapshot: ComparisonSnapshot) => void;
   onDeleteSnapshot: (snapshotId: string) => void;
+  isLoading?: boolean;
+  isUpdating?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
 export function SnapshotGallery({
   snapshots,
   onSelectSnapshot,
   onDeleteSnapshot,
+  isLoading = false,
+  isUpdating = false,
+  error = null,
+  onRetry,
 }: SnapshotGalleryProps) {
-  console.log("SnapshotGallery received snapshots:", snapshots);
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="snapshot-gallery-loading">
+        <div className="loading-spinner"></div>
+        <p>Loading saved snapshots...</p>
+      </div>
+    );
+  }
 
+  // Error state
+  if (error) {
+    return (
+      <div className="snapshot-gallery-error">
+        <span className="error-icon">⚠️</span>
+        <h3>Failed to Load Snapshots</h3>
+        <p>{error}</p>
+        {onRetry && (
+          <button className="retry-button" onClick={onRetry}>
+            Retry Loading
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Empty state
   if (!snapshots || snapshots.length === 0) {
     return (
       <div className="snapshot-gallery-empty">
-        <p>No saved snapshots yet. Run a scan and save it to track changes over time.</p>
+        <span className="empty-icon">📸</span>
+        <h3>No Snapshots Yet</h3>
+        <p>Run a scan and save it to track changes over time. Your snapshots will appear here.</p>
       </div>
     );
   }
@@ -40,7 +75,13 @@ export function SnapshotGallery({
 
   return (
     <div className="snapshot-gallery">
-      <h3>Saved Snapshots</h3>
+      <div className="gallery-header">
+        <h3>Saved Snapshots</h3>
+        <p className="gallery-subtitle">
+          Your saved scan results and comparisons
+          {isUpdating && <span className="updating-indicator">Refreshing snapshot data...</span>}
+        </p>
+      </div>
       <div className="snapshot-cards">
         {snapshots.filter(s => s && s.id).map((snapshot) => {
           const isComparison = snapshot.snapshotType === "comparison";
@@ -49,10 +90,7 @@ export function SnapshotGallery({
             <div
               key={snapshot.id}
               className={`snapshot-card ${isComparison ? "comparison" : ""}`}
-              onClick={() => {
-                console.log("Snapshot card clicked:", snapshot);
-                onSelectSnapshot(snapshot);
-              }}
+              onClick={() => onSelectSnapshot(snapshot)}
             >
               <div className="snapshot-header">
                 <div className="snapshot-type-icon">
@@ -132,8 +170,10 @@ export function SnapshotGallery({
                 )}
               </div>
 
-              <div className="snapshot-date">
-                Saved {formatDate(snapshot.savedAt || new Date().toISOString())}
+              <div className="snapshot-footer">
+                <div className="snapshot-date">
+                  Last updated: {formatDate(snapshot.savedAt || new Date().toISOString())}
+                </div>
               </div>
             </div>
           );

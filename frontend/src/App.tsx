@@ -23,6 +23,7 @@ import type { ScanStatus } from './components/ScanControls';
 import { ScanResults } from "./components/ScanResults";
 import { SnapshotGallery } from "./components/SnapshotGallery";
 import { ComparisonResults } from "./components/ComparisonResults";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./App.css";
 
 type TabId = "findings" | "extensions";
@@ -57,6 +58,8 @@ function App() {
   const [snapshots, setSnapshots] = useState<ComparisonSnapshot[]>([]);
   const [currentSnapshot, setCurrentSnapshot] = useState<ComparisonSnapshot | null>(null);
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
+  const [isLoadingSnapshots, setIsLoadingSnapshots] = useState(true);
+  const [snapshotsError, setSnapshotsError] = useState<string | null>(null);
 
   // Comparison state
   const [comparisonResult, setComparisonResult] = useState<ComparisonResponse | null>(null);
@@ -82,11 +85,16 @@ function App() {
   // Load snapshots on mount
   useEffect(() => {
     const loadSnapshots = async () => {
+      setIsLoadingSnapshots(true);
+      setSnapshotsError(null);
       try {
         const loadedSnapshots = await getSnapshots();
         setSnapshots(loadedSnapshots);
       } catch (err) {
         console.error("Failed to load snapshots:", err);
+        setSnapshotsError(err instanceof Error ? err.message : "Failed to load snapshots");
+      } finally {
+        setIsLoadingSnapshots(false);
       }
     };
     loadSnapshots();
@@ -185,8 +193,7 @@ function App() {
       const snapshot = await saveComparisonSnapshot(
         comparisonResult.sourcePath,
         comparisonResult.targetPath,
-        comparisonResult.summary,
-        comparisonResult.tree
+        comparisonResult.comparisonId
       );
       setSnapshots([snapshot, ...snapshots]);
       setComparisonSnapshotId(snapshot.id);
@@ -201,18 +208,28 @@ function App() {
 
   // Handle updating a comparison snapshot
   const handleUpdateComparisonSnapshot = async () => {
-    if (!comparisonSnapshotId || !comparisonResult) return;
+    if (!comparisonSnapshotId) return;
 
     setIsSavingSnapshot(true);
     try {
-      const updated = await updateComparisonSnapshot(
-        comparisonSnapshotId,
-        comparisonResult.summary,
-        comparisonResult.tree
-      );
+      const updated = await updateComparisonSnapshot(comparisonSnapshotId);
 
       // Update the snapshot in the list
       setSnapshots(snapshots.map(s => s.id === updated.id ? updated : s));
+
+      // Update the current comparison result with fresh data
+      if (updated.comparison && updated.comparisonSummary) {
+        setComparisonResult({
+          comparisonId: updated.scanId,
+          sourcePath: updated.rootPath,
+          targetPath: updated.targetPath || "",
+          summary: updated.comparisonSummary,
+          tree: updated.comparison,
+          deepScan: false,
+          completedAt: updated.savedAt,
+        });
+      }
+
       alert("Comparison updated successfully!");
     } catch (err) {
       console.error("Failed to update comparison snapshot:", err);
@@ -223,7 +240,7 @@ function App() {
   };
 
   // Handle selecting a snapshot from the gallery
-  const handleSelectSnapshot = (snapshot: ComparisonSnapshot) => {
+  const handleSelectSnapshot = async (snapshot: ComparisonSnapshot) => {
     console.log("Selecting snapshot:", snapshot);
 
     // Check if there's an unsaved current scan
@@ -238,35 +255,96 @@ function App() {
       }
     }
 
-    // Check if this is a comparison snapshot
-    if (snapshot.snapshotType === "comparison" && snapshot.comparisonTree) {
-      // Load comparison snapshot
-      setComparisonResult({
-        sourcePath: snapshot.rootPath,
-        targetPath: snapshot.targetPath || "",
-        summary: snapshot.comparisonSummary || {
-          identical: 0,
-          modified: 0,
-          missingFromTarget: 0,
-          extraInTarget: 0,
-        },
-        tree: snapshot.comparisonTree,
-      });
-      setComparisonSnapshotId(snapshot.id);
-      setScanId(null);
-      setCurrentSnapshot(null);
-      setFindings([]);
-      setExtensions([]);
-    } else {
-      // Load regular scan snapshot
-      setCurrentSnapshot(snapshot);
-      setFindings(snapshot.findings || []);
-      setExtensions(snapshot.extensions || []);
-      setScanInfo(snapshot.scanInfo);
-      setScanId(snapshot.scanId);
-      setActiveTab("findings");
-      setComparisonResult(null);
-      setComparisonSnapshotId(null);
+    setIsSavingSnapshot(true);
+    try {
+      let updatedSnapshot: ComparisonSnapshot = snapshot;
+
+      // Auto-update the snapshot when loading to get fresh data
+      if (snapshot.snapshotType === "comparison") {
+        updatedSnapshot = await updateComparisonSnapshot(snapshot.id);
+      } else {
+        const updated = await updateSnapshot(snapshot.id);
+        // Convert Snapshot to ComparisonSnapshot for consistent handling
+        updatedSnapshot = { ...updated, snapshotType: "scan" as const };
+      }
+
+      // Update the snapshot in the list with fresh data
+      setSnapshots(snapshots.map(s => s.id === updatedSnapshot.id ? updatedSnapshot : s));
+
+      // Check if this is a comparison snapshot
+      if (updatedSnapshot.snapshotType === "comparison" && updatedSnapshot.comparison) {
+        // Load comparison snapshot with updated data
+        setComparisonResult({
+          comparisonId: updatedSnapshot.scanId,
+          sourcePath: updatedSnapshot.rootPath,
+          targetPath: updatedSnapshot.targetPath || "",
+          summary: updatedSnapshot.comparisonSummary || {
+            identical: 0,
+            modified: 0,
+            missingFromTarget: 0,
+            extraInTarget: 0,
+            totalSourceSize: 0,
+            totalTargetSize: 0,
+          },
+          tree: updatedSnapshot.comparison,
+          deepScan: false,
+          completedAt: updatedSnapshot.savedAt,
+        });
+        setComparisonSnapshotId(updatedSnapshot.id);
+        setScanId(null);
+        setCurrentSnapshot(null);
+        setFindings([]);
+        setExtensions([]);
+        setScanInfo(null);
+      } else {
+        // Load regular scan snapshot with updated data
+        setCurrentSnapshot(updatedSnapshot);
+        setFindings(updatedSnapshot.findings || []);
+        setExtensions(updatedSnapshot.extensions || []);
+        setScanInfo(updatedSnapshot.scanInfo);
+        setScanId(updatedSnapshot.scanId);
+        setActiveTab("findings");
+        setComparisonResult(null);
+        setComparisonSnapshotId(null);
+      }
+    } catch (err) {
+      console.error("Failed to update snapshot on load:", err);
+      // If auto-update fails, still load the original snapshot data
+      if (snapshot.snapshotType === "comparison" && snapshot.comparison) {
+        setComparisonResult({
+          comparisonId: snapshot.scanId,
+          sourcePath: snapshot.rootPath,
+          targetPath: snapshot.targetPath || "",
+          summary: snapshot.comparisonSummary || {
+            identical: 0,
+            modified: 0,
+            missingFromTarget: 0,
+            extraInTarget: 0,
+            totalSourceSize: 0,
+            totalTargetSize: 0,
+          },
+          tree: snapshot.comparison,
+          deepScan: false,
+          completedAt: snapshot.savedAt,
+        });
+        setComparisonSnapshotId(snapshot.id);
+        setScanId(null);
+        setCurrentSnapshot(null);
+        setFindings([]);
+        setExtensions([]);
+        setScanInfo(null);
+      } else {
+        setCurrentSnapshot(snapshot);
+        setFindings(snapshot.findings || []);
+        setExtensions(snapshot.extensions || []);
+        setScanInfo(snapshot.scanInfo);
+        setScanId(snapshot.scanId);
+        setActiveTab("findings");
+        setComparisonResult(null);
+        setComparisonSnapshotId(null);
+      }
+    } finally {
+      setIsSavingSnapshot(false);
     }
   };
 
@@ -360,61 +438,73 @@ function App() {
         />
 
         {scanId && scanInfo && (
-          <ScanResults
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            findings={findings}
-            extensions={extensions}
-            categories={categories}
-            selectedCategory={selectedCategory}
-            setSelectedCategory={setSelectedCategory}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            loading={loading}
-            filteredFindings={filteredFindings}
-            scanId={scanId}
-            rootPath={scanInfo.rootPath}
-            isSnapshot={currentSnapshot !== null}
-            snapshotId={currentSnapshot?.id}
-            onSaveSnapshot={handleSaveSnapshot}
-            onUpdateSnapshot={handleUpdateSnapshot}
-            isSaving={isSavingSnapshot}
-          />
+          <ErrorBoundary>
+            <ScanResults
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              findings={findings}
+              extensions={extensions}
+              categories={categories}
+              selectedCategory={selectedCategory}
+              setSelectedCategory={setSelectedCategory}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              loading={loading}
+              filteredFindings={filteredFindings}
+              scanId={scanId}
+              rootPath={scanInfo.rootPath}
+              isSnapshot={currentSnapshot !== null}
+              snapshotId={currentSnapshot?.id}
+              onSaveSnapshot={handleSaveSnapshot}
+              onUpdateSnapshot={handleUpdateSnapshot}
+              isSaving={isSavingSnapshot}
+            />
+          </ErrorBoundary>
         )}
 
         {comparisonResult && (
-          <ComparisonResults
-            sourcePath={comparisonResult.sourcePath}
-            targetPath={comparisonResult.targetPath}
-            summary={comparisonResult.summary}
-            tree={comparisonResult.tree}
-            isSnapshot={comparisonSnapshotId !== null}
-            onSaveSnapshot={handleSaveComparisonSnapshot}
-            onUpdateSnapshot={handleUpdateComparisonSnapshot}
-            isSaving={isSavingSnapshot}
-          />
+          <ErrorBoundary>
+            <ComparisonResults
+              sourcePath={comparisonResult.sourcePath}
+              targetPath={comparisonResult.targetPath}
+              summary={comparisonResult.summary}
+              tree={comparisonResult.tree}
+              isSnapshot={comparisonSnapshotId !== null}
+              onSaveSnapshot={handleSaveComparisonSnapshot}
+              onUpdateSnapshot={handleUpdateComparisonSnapshot}
+              isSaving={isSavingSnapshot}
+            />
+          </ErrorBoundary>
         )}
 
         {!scanId && !comparisonResult && scanStatus === "idle" && (
-          <div className="welcome-message">
-            <h2>Welcome to Disk Intelligence</h2>
-            <p>
-              Analyze your disk to find large files, duplicates, cache folders,
-              and other disk usage insights.
-            </p>
-            <ol>
-              <li>Select a directory to scan</li>
-              <li>Click "Scan & Analyze" to start</li>
-              <li>Review findings and understand your disk usage</li>
-            </ol>
+          <div className="home-container">
+            <div className="welcome-message">
+                <h2>Welcome to Disk Intelligence</h2>
+                <p className="welcome-subtitle">
+                  Discover disk usage patterns, identify space hogs, and reclaim valuable storage
+                </p>
+                <p><strong>Read-Only & Safe:</strong> Disk Intelligence only analyzes your files without modifying them. Your data stays secure.</p>
+            </div>
+
+            <SnapshotGallery
+              snapshots={snapshots}
+              onSelectSnapshot={handleSelectSnapshot}
+              onDeleteSnapshot={handleDeleteSnapshot}
+              isLoading={isLoadingSnapshots}
+              isUpdating={isSavingSnapshot}
+              error={snapshotsError}
+              onRetry={() => {
+                setIsLoadingSnapshots(true);
+                setSnapshotsError(null);
+                getSnapshots()
+                  .then(setSnapshots)
+                  .catch((err) => setSnapshotsError(err instanceof Error ? err.message : "Failed to load"))
+                  .finally(() => setIsLoadingSnapshots(false));
+              }}
+            />
           </div>
         )}
-
-        <SnapshotGallery
-          snapshots={snapshots}
-          onSelectSnapshot={handleSelectSnapshot}
-          onDeleteSnapshot={handleDeleteSnapshot}
-        />
       </main>
 
       <footer className="app-footer">
