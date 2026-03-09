@@ -1,31 +1,40 @@
 .findings-table-container {
   background: var(--bg-secondary);
   border: 1px solid var(--border-light);
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
-  margin-bottom: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  margin-bottom: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  max-height: calc(100vh - 280px);
+  display: flex;
+  flex-direction: column;
 }
 
 .findings-empty {
-  padding: 60px 20px;
+  padding: 40px 20px;
   text-align: center;
   color: var(--text-muted);
 }
 
 .findings-empty p {
-  margin: 8px 0;
+  margin: 6px 0;
+  font-size: 0.8rem;
+}
+
+.findings-table-wrapper {
+  overflow-y: auto;
+  flex: 1;
 }
 
 .findings-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: 0.75rem;
 }
 
 .findings-table th {
   background: var(--bg-tertiary);
-  padding: 14px 12px;
+  padding: 8px 10px;
   text-align: left;
   font-weight: 600;
   color: var(--text-primary);
@@ -33,6 +42,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
+  font-size: 0.7rem;
 }
 
 .findings-table th.sortable {
@@ -45,13 +55,13 @@
 }
 
 .sort-icon {
-  margin-left: 6px;
-  font-size: 0.8rem;
+  margin-left: 4px;
+  font-size: 0.7rem;
   color: var(--accent-primary);
 }
 
 .findings-table td {
-  padding: 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border-light);
   color: var(--text-primary);
   vertical-align: middle;
@@ -71,52 +81,53 @@
 }
 
 .col-checkbox {
-  width: 40px;
+  width: 30px;
   text-align: center;
 }
 
 .col-checkbox input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   cursor: pointer;
   accent-color: var(--accent-primary);
 }
 
 .col-category {
-  width: 160px;
+  width: 120px;
 }
 
 .category-badge {
   display: inline-block;
-  padding: 4px 10px;
-  border-radius: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
   background: var(--accent-pale);
-  font-size: 0.8rem;
+  font-size: 0.7rem;
   color: var(--accent-primary);
   font-weight: 500;
 }
 
 .col-risk {
-  width: 80px;
+  width: 60px;
 }
 
 .risk-badge {
   display: inline-block;
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 0.8rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
   font-weight: 600;
   color: white;
 }
 
 .col-size {
-  width: 100px;
+  width: 80px;
   text-align: right;
   font-family: monospace;
+  font-size: 0.7rem;
 }
 
 .col-path {
-  max-width: 300px;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -124,16 +135,16 @@
 
 .more-paths {
   display: inline-block;
-  margin-left: 8px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  margin-left: 6px;
+  padding: 2px 5px;
+  border-radius: 3px;
   background: var(--accent-primary);
   color: white;
-  font-size: 0.75rem;
+  font-size: 0.65rem;
 }
 
 .col-reason {
-  max-width: 250px;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -141,16 +152,17 @@
 }
 
 .col-score {
-  width: 80px;
+  width: 60px;
   text-align: right;
   font-family: monospace;
   color: var(--accent-primary);
   font-weight: 600;
+  font-size: 0.7rem;
 }
 
 .expanded-row td {
   background: var(--bg-tertiary);
-  padding: 16px 20px;
+  padding: 10px 14px;
 }
 
 .expanded-paths {
@@ -159,18 +171,19 @@
 
 .expanded-paths strong {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+  font-size: 0.8rem;
 }
 
 .expanded-paths ul {
   margin: 0;
-  padding-left: 20px;
+  padding-left: 16px;
   list-style: disc;
 }
 
 .expanded-paths li {
-  padding: 4px 0;
+  padding: 3px 0;
   font-family: monospace;
-  font-size: 0.85rem;
+  font-size: 0.7rem;
   color: var(--text-secondary);
 }

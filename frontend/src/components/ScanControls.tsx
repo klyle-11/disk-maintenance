@@ -11,6 +11,7 @@ interface ScanControlsProps {
   status: ScanStatus;
   setStatus: (status: ScanStatus) => void;
   scanInfo: ScanResponse | null;
+  onNavigateBack?: () => void;
 }
 
 interface LogEntry {
@@ -25,6 +26,7 @@ export function ScanControls({
   status,
   setStatus,
   scanInfo,
+  onNavigateBack,
 }: ScanControlsProps) {
   const [rootPath, setRootPath] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -244,7 +246,14 @@ export function ScanControls({
   return (
     <div className="scan-controls">
       <div className="scan-header">
-        <h2>Disk Intelligence</h2>
+        <div className="scan-header-left">
+          {onNavigateBack && (
+            <button className="back-button" onClick={onNavigateBack}>
+              ← Back
+            </button>
+          )}
+          <h2>Disk Intelligence</h2>
+        </div>
         {getStatusBadge()}
       </div>
 

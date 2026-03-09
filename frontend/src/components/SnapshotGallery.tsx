@@ -9,6 +9,7 @@ interface SnapshotGalleryProps {
   isLoading?: boolean;
   isUpdating?: boolean;
   error?: string | null;
+  snapshotErrors?: Record<string, string>;
   onRetry?: () => void;
 }
 
@@ -19,6 +20,7 @@ export function SnapshotGallery({
   isLoading = false,
   isUpdating = false,
   error = null,
+  snapshotErrors = {},
   onRetry,
 }: SnapshotGalleryProps) {
   // Loading state
@@ -85,11 +87,12 @@ export function SnapshotGallery({
       <div className="snapshot-cards">
         {snapshots.filter(s => s && s.id).map((snapshot) => {
           const isComparison = snapshot.snapshotType === "comparison";
+          const error = snapshotErrors[snapshot.id];
 
           return (
             <div
               key={snapshot.id}
-              className={`snapshot-card ${isComparison ? "comparison" : ""}`}
+              className={`snapshot-card ${isComparison ? "comparison" : ""} ${error ? "has-error" : ""}`}
               onClick={() => onSelectSnapshot(snapshot)}
             >
               <div className="snapshot-header">
@@ -116,6 +119,13 @@ export function SnapshotGallery({
                   ×
                 </button>
               </div>
+
+              {error && (
+                <div className="snapshot-error-banner">
+                  <span className="error-icon">⚠️</span>
+                  <span className="error-message">{error}</span>
+                </div>
+              )}
 
               {isComparison && (
                 <div className="snapshot-paths">

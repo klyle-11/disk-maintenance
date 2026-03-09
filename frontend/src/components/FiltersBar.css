@@ -1,46 +1,46 @@
 .filters-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 10px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-light);
-  border-radius: 12px;
-  padding: 16px 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 }
 
 .filter-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .filter-group label {
-  font-size: 0.9rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .filter-group select,
 .filter-group input {
-  padding: 8px 12px;
+  padding: 6px 10px;
   border: 1px solid var(--border-light);
-  border-radius: 6px;
+  border-radius: 5px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 0.9rem;
+  font-size: 0.75rem;
 }
 
 .filter-group select:focus,
 .filter-group input:focus {
   outline: none;
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px var(--accent-pale);
+  box-shadow: 0 0 0 2px var(--accent-pale);
 }
 
 .filter-group select {
-  min-width: 160px;
+  min-width: 120px;
   cursor: pointer;
 }
 
@@ -50,7 +50,7 @@
 
 .search-group {
   flex: 1;
-  min-width: 200px;
+  min-width: 150px;
 }
 
 .search-group input {

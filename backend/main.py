@@ -26,12 +26,17 @@ from collections import defaultdict
 from pathlib import Path
 
 from database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
+import sys
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+sys.path.insert(0, r"C:\Users\khali\csprojects\du-hast-much")
+from du_hast_much import scan_directory, format_size
+
+from backend.security.path_validator import PathValidator, InvalidPathError, create_default_validator
+from backend.security.input_sanitizer import InputSanitizer, ValidationError
+from backend.security.secure_logger import SecureLogger
+from backend.security.headers import add_security_headers
+
+logger = SecureLogger(__name__)
 
 
 def normalize_path_for_comparison(path: str) -> str:
@@ -53,14 +58,26 @@ def sanitize_string(s: str) -> str:
 
 app = FastAPI(title="Disk Intelligence API", version="1.0.0")
 
-# Enable CORS for frontend
+# SECURITY: Lock down CORS to localhost only (CRITICAL-003)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type"],
 )
+
+# SECURITY: Add security headers middleware (SR-009)
+add_security_headers(app)
+
+# SECURITY: Initialize path validator with user home as allowed root
+path_validator = create_default_validator()
+input_sanitizer = InputSanitizer(strict_mode=True)
 
 # ============================================================================
 # PYDANTIC MODELS
@@ -995,6 +1012,14 @@ async def health_check():
 @app.get("/api/scan/stream")
 async def scan_stream(root_path: str):
     """Stream scan progress via Server-Sent Events."""
+    # SECURITY: Validate and sanitize path input (CRITICAL-001, CRITICAL-006)
+    try:
+        safe_path = input_sanitizer.sanitize_scan_path(root_path)
+        validated_path = path_validator.validate_and_sanitize(safe_path)
+        root_path = str(validated_path)
+    except (ValidationError, InvalidPathError) as e:
+        logger.error(f"Path validation failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid path: {str(e)}")
 
     if not os.path.exists(root_path):
         raise HTTPException(status_code=400, detail=f"Path does not exist: {root_path}")
@@ -1075,7 +1100,14 @@ async def scan_stream(root_path: str):
 @app.post("/api/scan", response_model=ScanResponse)
 async def start_scan(request: ScanRequest):
     """Start a new scan of the specified path."""
-    root_path = request.root_path
+    # SECURITY: Validate and sanitize path input (CRITICAL-001, CRITICAL-006)
+    try:
+        safe_path = input_sanitizer.sanitize_scan_path(request.root_path)
+        validated_path = path_validator.validate_and_sanitize(safe_path)
+        root_path = str(validated_path)
+    except (ValidationError, InvalidPathError) as e:
+        logger.error(f"Path validation failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid path: {str(e)}")
 
     # Validate path
     if not os.path.exists(root_path):
@@ -1309,8 +1341,18 @@ async def delete_snapshot(snapshot_id: str, db: Session = Depends(get_db)):
 @app.post("/api/compare")
 async def compare_directories(request: ComparisonRequest):
     """Compare two directories and return differences."""
-    source_path = request.source_path
-    target_path = request.target_path
+    # SECURITY: Validate and sanitize both path inputs (CRITICAL-001, CRITICAL-006)
+    try:
+        safe_source = input_sanitizer.sanitize_comparison_path(request.source_path)
+        validated_source = path_validator.validate_and_sanitize(safe_source)
+        source_path = str(validated_source)
+
+        safe_target = input_sanitizer.sanitize_comparison_path(request.target_path)
+        validated_target = path_validator.validate_and_sanitize(safe_target)
+        target_path = str(validated_target)
+    except (ValidationError, InvalidPathError) as e:
+        logger.error(f"Path validation failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid path: {str(e)}")
 
     # Validate paths
     if not os.path.exists(source_path):
@@ -1355,6 +1397,19 @@ async def save_comparison_snapshot(
     db: Session = Depends(get_db),
 ):
     """Save a comparison as a snapshot."""
+    # SECURITY: Validate and sanitize both path inputs (CRITICAL-001, CRITICAL-006)
+    try:
+        safe_source = input_sanitizer.sanitize_comparison_path(source_path)
+        validated_source = path_validator.validate_and_sanitize(safe_source)
+        source_path = str(validated_source)
+
+        safe_target = input_sanitizer.sanitize_comparison_path(target_path)
+        validated_target = path_validator.validate_and_sanitize(safe_target)
+        target_path = str(validated_target)
+    except (ValidationError, InvalidPathError) as e:
+        logger.error(f"Path validation failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid path: {str(e)}")
+
     # Re-run comparison to get fresh data
     comparator = FolderComparator(source_path, target_path, deep_scan=False)
     tree, summary = comparator.compare()
@@ -1410,8 +1465,18 @@ async def update_comparison_snapshot(snapshot_id: str, db: Session = Depends(get
     if snapshot.snapshot_type != "comparison":
         raise HTTPException(status_code=400, detail="Not a comparison snapshot")
 
-    source_path = snapshot.root_path
-    target_path = snapshot.target_path
+    # SECURITY: Validate and sanitize paths from database (defense in depth)
+    try:
+        safe_source = input_sanitizer.sanitize_comparison_path(snapshot.root_path)
+        validated_source = path_validator.validate_and_sanitize(safe_source)
+        source_path = str(validated_source)
+
+        safe_target = input_sanitizer.sanitize_comparison_path(snapshot.target_path)
+        validated_target = path_validator.validate_and_sanitize(safe_target)
+        target_path = str(validated_target)
+    except (ValidationError, InvalidPathError) as e:
+        logger.error(f"Path validation failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid path: {str(e)}")
 
     # Validate paths still exist
     if not os.path.exists(source_path):
@@ -1440,6 +1505,99 @@ async def update_comparison_snapshot(snapshot_id: str, db: Session = Depends(get
     db.refresh(snapshot)
 
     return deserialize_snapshot(snapshot)
+
+
+# ============================================================================
+# DU-HAST-MUCH INTEGRATION
+# ============================================================================
+
+
+class DuHastMuchRequest(BaseModel):
+    path: str
+    depth: int = 1
+    top: Optional[int] = None
+    latest: bool = False
+    exclude: list[str] = []
+
+
+class DuHastMuchResult(BaseModel):
+    name: str
+    path: str
+    size: int
+    files: int
+    latest_mtime: float
+    avg_file_size: float
+
+
+class DuHastMuchResponse(BaseModel):
+    results: list[DuHastMuchResult]
+    total_size: int
+    total_files: int
+    elapsed_seconds: float
+
+
+@app.post("/api/du-hast-much", response_model=DuHastMuchResponse)
+async def run_du_hast_much(request: DuHastMuchRequest):
+    """Run du-hast-much scan on a directory."""
+    # SECURITY: Validate and sanitize path input (CRITICAL-001, CRITICAL-006)
+    try:
+        safe_path = input_sanitizer.sanitize_scan_path(request.path)
+        validated_path = path_validator.validate_and_sanitize(safe_path)
+        root_path = str(validated_path)
+    except (ValidationError, InvalidPathError) as e:
+        logger.error(f"Path validation failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid path: {str(e)}")
+
+    if not os.path.exists(root_path):
+        raise HTTPException(status_code=400, detail=f"Path does not exist: {root_path}")
+    if not os.path.isdir(root_path):
+        raise HTTPException(status_code=400, detail=f"Not a directory: {root_path}")
+
+    start = time.time()
+    
+    progress_state = {"files_scanned": 0}
+    
+    def on_progress(info):
+        progress_state["files_scanned"] = info.get("files_scanned", 0)
+
+    results_raw = scan_directory(
+        root_path, 
+        depth=request.depth, 
+        on_progress=on_progress, 
+        exclude=request.exclude
+    )
+    
+    elapsed = time.time() - start
+
+    if request.latest:
+        results_raw = sorted(results_raw, key=lambda r: r["latest_mtime"], reverse=True)
+    else:
+        results_raw = sorted(results_raw, key=lambda r: r["size"], reverse=True)
+
+    if request.top:
+        results_raw = results_raw[:request.top]
+
+    results = [
+        DuHastMuchResult(
+            name=r["name"],
+            path=r["path"],
+            size=r["size"],
+            files=r["files"],
+            latest_mtime=r["latest_mtime"],
+            avg_file_size=r["avg_file_size"],
+        )
+        for r in results_raw
+    ]
+
+    total_size = sum(r.size for r in results)
+    total_files = progress_state["files_scanned"]
+
+    return DuHastMuchResponse(
+        results=results,
+        total_size=total_size,
+        total_files=total_files,
+        elapsed_seconds=elapsed,
+    )
 
 
 # ============================================================================
