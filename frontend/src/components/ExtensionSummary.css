@@ -1,27 +1,36 @@
 .extension-summary {
   background: var(--bg-secondary);
   border: 1px solid var(--border-light);
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  max-height: calc(100vh - 280px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .extension-summary.empty {
   text-align: center;
   color: var(--text-muted);
-  padding: 40px 20px;
+  padding: 30px 20px;
 }
 
 .extension-summary h3 {
-  margin: 0 0 8px 0;
+  margin: 0 0 6px 0;
   color: var(--text-primary);
-  font-size: 1.1rem;
+  font-size: 0.9rem;
 }
 
 .summary-note {
-  margin: 0 0 16px 0;
+  margin: 0 0 10px 0;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.75rem;
+}
+
+.extension-table-wrapper {
+  overflow-y: auto;
+  flex: 1;
 }
 
 .extension-table {
@@ -30,18 +39,18 @@
 }
 
 .extension-table th {
-  padding: 10px 12px;
+  padding: 6px 8px;
   text-align: left;
   font-weight: 600;
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: 0.7rem;
   border-bottom: 1px solid var(--border-light);
 }
 
 .extension-table td {
-  padding: 10px 12px;
+  padding: 6px 8px;
   color: var(--text-primary);
-  font-size: 0.9rem;
+  font-size: 0.75rem;
   border-bottom: 1px solid var(--border-light);
 }
 
@@ -62,30 +71,30 @@
 }
 
 .ext-percent {
-  width: 150px;
+  width: 120px;
 }
 
 .percent-bar-container {
   position: relative;
-  height: 20px;
+  height: 16px;
   background: var(--bg-tertiary);
-  border-radius: 4px;
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .percent-bar {
   height: 100%;
   background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
-  border-radius: 4px;
-  transition: width 0.3s ease;
+  border-radius: 3px;
+  transition: width 0.2s ease;
 }
 
 .percent-label {
   position: absolute;
-  right: 8px;
+  right: 6px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   color: var(--text-primary);
   font-family: monospace;
   font-weight: 500;

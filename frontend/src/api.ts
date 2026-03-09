@@ -7,9 +7,55 @@
 // Configuration
 // ============================================================================
 
-/** Base URL for the API, configurable via VITE_API_BASE_URL env var */
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8001";
+/**
+ * SECURITY: Validate that API URL is localhost-only (CRITICAL-003, CRITICAL-005)
+ * Throws an error if the URL is not localhost.
+ */
+function validateLocalhostUrl(url: string): void {
+  try {
+    const parsedUrl = new URL(url);
+
+    // Check if hostname is localhost
+    const allowedHosts = [
+      'localhost',
+      '127.0.0.1',
+      '::1',
+      '0.0.0.0',
+    ];
+
+    const hostname = parsedUrl.hostname.toLowerCase();
+
+    if (!allowedHosts.includes(hostname)) {
+      throw new Error(
+        `SECURITY: API URL must be localhost only. Got: ${hostname}. ` +
+        `This prevents external network calls (CRITICAL-005).`
+      );
+    }
+
+    // Ensure the URL uses http or https (no other protocols)
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      throw new Error(
+        `SECURITY: API URL must use HTTP/HTTPS. Got: ${parsedUrl.protocol}`
+      );
+    }
+
+  } catch (error) {
+    if (error instanceof Error) {
+      console.error('[SECURITY]', error.message);
+      throw error;
+    }
+    throw new Error('SECURITY: Invalid API URL format');
+  }
+}
+
+/**
+ * Base URL for the API, configurable via VITE_API_BASE_URL env var.
+ * SECURITY: Validates that the URL is localhost-only (CRITICAL-003, CRITICAL-005)
+ */
+const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8001";
+validateLocalhostUrl(rawApiBaseUrl);
+
+export const API_BASE_URL = rawApiBaseUrl;
 
 const API_ENDPOINT = `${API_BASE_URL}/api`;
 
@@ -127,25 +173,96 @@ export interface ComparisonSnapshot extends Snapshot {
 // Private helper
 // ============================================================================
 
+/** Default request timeout in milliseconds (10 seconds) */
+const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** Extended timeout for long-running operations (120 seconds) */
+const LONG_TIMEOUT_MS = 120_000;
+
+/** Short timeout for quick connectivity checks (5 seconds) */
+const HEALTH_TIMEOUT_MS = 5_000;
+
 /**
  * Helper function to make typed API calls.
- * Throws an Error on non-2xx responses with a meaningful message.
+ * Throws an Error on non-2xx responses or timeout with a meaningful message.
  */
 async function apiFetch<T>(
   path: string,
-  options?: RequestInit
+  options?: RequestInit & { timeoutMs?: number }
 ): Promise<T> {
   const url = `${API_ENDPOINT}${path}`;
-  const response = await fetch(url, options);
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(
-      `${options?.method || "GET"} ${path} failed with ${response.status}: ${body || response.statusText}`
-    );
+  const controller = new AbortController();
+  const existingSignal = options?.signal;
+
+  // Link existing signal if provided
+  if (existingSignal) {
+    if (existingSignal.aborted) {
+      controller.abort(existingSignal.reason);
+    } else {
+      existingSignal.addEventListener("abort", () =>
+        controller.abort(existingSignal.reason)
+      );
+    }
   }
 
-  return response.json();
+  const timeoutId = setTimeout(() => {
+    controller.abort("timeout");
+    console.error(`[API] Request timed out after ${timeoutMs}ms: ${options?.method || "GET"} ${path}`);
+  }, timeoutMs);
+
+  console.log(`[API] ${options?.method || "GET"} ${path}`);
+
+  try {
+    const { timeoutMs: _, ...fetchOptions } = options || {};
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const body = await response.text();
+      const errMsg = `${options?.method || "GET"} ${path} failed with ${response.status}: ${body || response.statusText}`;
+      console.error(`[API] ${errMsg}`);
+      throw new Error(errMsg);
+    }
+
+    const data = await response.json();
+    console.log(`[API] ${options?.method || "GET"} ${path} completed`);
+    return data;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+
+    // Detect abort (timeout or user cancellation)
+    const isAbort =
+      (err instanceof DOMException && err.name === "AbortError") ||
+      err?.name === "AbortError" ||
+      controller.signal.aborted;
+
+    if (isAbort) {
+      if (existingSignal?.aborted) {
+        throw new Error("Request cancelled");
+      }
+      const timeoutErr = new Error(
+        `Request timed out after ${Math.round(timeoutMs / 1000)}s: ${options?.method || "GET"} ${path} — backend may be unresponsive`
+      );
+      console.error(`[API]`, timeoutErr.message);
+      throw timeoutErr;
+    }
+
+    if (err instanceof TypeError) {
+      const connErr = new Error(
+        `Cannot connect to backend at ${API_BASE_URL} — is the server running?`
+      );
+      console.error(`[API]`, connErr.message);
+      throw connErr;
+    }
+
+    throw err;
+  }
 }
 
 // ============================================================================
@@ -164,6 +281,7 @@ export async function scan(rootPath: string, signal?: AbortSignal): Promise<Scan
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_path: rootPath }),
     signal,
+    timeoutMs: LONG_TIMEOUT_MS,
   }).then((data) => ({
     scanId: (data as any).scan_id,
     rootPath: (data as any).root_path,
@@ -236,7 +354,9 @@ export async function scanWithProgress(
  * @returns An array of Finding objects.
  */
 export async function getFindings(scanId: string): Promise<Finding[]> {
-  const data = await apiFetch<any[]>(`/findings?scan_id=${scanId}`);
+  const data = await apiFetch<any[]>(`/findings?scan_id=${scanId}`, {
+    timeoutMs: LONG_TIMEOUT_MS,
+  });
   return data.map((item) => ({
     id: item.id,
     category: item.category,
@@ -254,7 +374,9 @@ export async function getFindings(scanId: string): Promise<Finding[]> {
 export async function getExtensionSummary(
   scanId: string
 ): Promise<ExtensionSummary[]> {
-  const data = await apiFetch<any[]>(`/extensions-summary?scan_id=${scanId}`);
+  const data = await apiFetch<any[]>(`/extensions-summary?scan_id=${scanId}`, {
+    timeoutMs: LONG_TIMEOUT_MS,
+  });
   return data.map((item) => ({
     extension: item.extension,
     fileCount: item.file_count,
@@ -267,7 +389,7 @@ export async function getExtensionSummary(
  * @returns A health status object.
  */
 export async function healthCheck(): Promise<{ status: string }> {
-  return apiFetch<{ status: string }>("/health");
+  return apiFetch<{ status: string }>("/health", { timeoutMs: HEALTH_TIMEOUT_MS });
 }
 
 /**
@@ -284,6 +406,7 @@ export async function saveSnapshot(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scan_id: scanId, root_path: rootPath }),
+    timeoutMs: LONG_TIMEOUT_MS,
   });
   return {
     id: item.id,
@@ -407,7 +530,9 @@ function transformSnapshot(item: any): ComparisonSnapshot {
  * @returns An array of snapshots.
  */
 export async function getSnapshots(): Promise<ComparisonSnapshot[]> {
-  const data = await apiFetch<any[]>("/snapshots");
+  const data = await apiFetch<any[]>("/snapshots", {
+    timeoutMs: LONG_TIMEOUT_MS,
+  });
   return data.map(transformSnapshot);
 }
 
@@ -417,7 +542,9 @@ export async function getSnapshots(): Promise<ComparisonSnapshot[]> {
  * @returns The snapshot data.
  */
 export async function getSnapshot(snapshotId: string): Promise<Snapshot> {
-  const item = await apiFetch<any>(`/snapshots/${snapshotId}`);
+  const item = await apiFetch<any>(`/snapshots/${snapshotId}`, {
+    timeoutMs: LONG_TIMEOUT_MS,
+  });
   return {
     id: item.id,
     scanId: item.scan_id,
@@ -448,6 +575,7 @@ export async function getSnapshot(snapshotId: string): Promise<Snapshot> {
 export async function updateSnapshot(snapshotId: string): Promise<Snapshot> {
   const item = await apiFetch<any>(`/snapshots/${snapshotId}`, {
     method: "PUT",
+    timeoutMs: LONG_TIMEOUT_MS,
   });
   return {
     id: item.id,
@@ -508,6 +636,7 @@ export async function compareDirectories(
       target_path: targetPath,
       deep_scan: deepScan,
     }),
+    timeoutMs: LONG_TIMEOUT_MS,
   });
 
   return {
@@ -537,6 +666,7 @@ export async function saveComparisonSnapshot(
 
   const item = await apiFetch<any>(`/snapshots/comparison?${params}`, {
     method: "POST",
+    timeoutMs: LONG_TIMEOUT_MS,
   });
 
   return transformSnapshot(item);
@@ -550,6 +680,7 @@ export async function updateComparisonSnapshot(
 ): Promise<ComparisonSnapshot> {
   const item = await apiFetch<any>(`/snapshots/comparison/${snapshotId}`, {
     method: "PUT",
+    timeoutMs: LONG_TIMEOUT_MS,
   });
 
   return transformSnapshot(item);
@@ -585,4 +716,108 @@ export function getCategoryDisplayName(category: string): string {
     system_junk: "System Junk",
   };
   return names[category] || category.replace(/_/g, " ");
+}
+
+// ============================================================================
+// Du-Hast-Much API functions
+// ============================================================================
+
+/** Result from a du-hast-much scan */
+export interface DuHastMuchResult {
+  name: string;
+  path: string;
+  size: number;
+  files: number;
+  latest_mtime: number;
+  avg_file_size: number;
+}
+
+/** Response from du-hast-much endpoint */
+export interface DuHastMuchResponse {
+  results: DuHastMuchResult[];
+  total_size: number;
+  total_files: number;
+  elapsed_seconds: number;
+}
+
+/** Request options for du-hast-much scan */
+export interface DuHastMuchRequest {
+  path: string;
+  depth?: number;
+  top?: number;
+  latest?: boolean;
+  exclude?: string[];
+}
+
+/**
+ * Run a du-hast-much scan on a directory.
+ * @param request - The scan options.
+ * @returns DuHastMuchResponse with scan results.
+ */
+export async function runDuHastMuch(
+  request: DuHastMuchRequest
+): Promise<DuHastMuchResponse> {
+  const data = await apiFetch<any>("/du-hast-much", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: request.path,
+      depth: request.depth ?? 1,
+      top: request.top,
+      latest: request.latest ?? false,
+      exclude: request.exclude ?? [],
+    }),
+    timeoutMs: LONG_TIMEOUT_MS,
+  });
+
+  return {
+    results: (data.results || []).map((item: any) => ({
+      name: item.name,
+      path: item.path,
+      size: item.size,
+      files: item.files,
+      latest_mtime: item.latest_mtime,
+      avg_file_size: item.avg_file_size,
+    })),
+    total_size: data.total_size || 0,
+    total_files: data.total_files || 0,
+    elapsed_seconds: data.elapsed_seconds || 0,
+  };
+}
+
+/**
+ * Get stored du-hast-much history from localStorage.
+ */
+export function getDuHastMuchHistory(): DuHastMuchResponse[] {
+  try {
+    const stored = localStorage.getItem("du-hast-much-history");
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Save du-hast-much result to history.
+ */
+export function saveDuHastMuchToHistory(result: DuHastMuchResponse): void {
+  try {
+    const history = getDuHastMuchHistory();
+    // Keep only last 10 scans
+    const updated = [result, ...history].slice(0, 10);
+    localStorage.setItem("du-hast-much-history", JSON.stringify(updated));
+  } catch (err) {
+    console.error("Failed to save du-hast-much history:", err);
+  }
+}
+
+/**
+ * Clear du-hast-much history.
+ */
+export function clearDuHastMuchHistory(): void {
+  try {
+    localStorage.removeItem("du-hast-much-history");
+  } catch (err) {
+    console.error("Failed to clear du-hast-much history:", err);
+  }
 }

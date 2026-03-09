@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { ComparisonItem, ComparisonSummary } from "../api";
 import { formatBytes } from "../api";
 import "./ComparisonResults.css";
@@ -78,6 +78,158 @@ export function ComparisonResults({
     };
     collectAllFolders(tree);
     setExpandedPaths(expanded);
+  };
+
+  const collectFilteredPaths = (items: ComparisonItem[], path = ""): string[] => {
+    const paths: string[] = [];
+    for (const item of items) {
+      const itemPath = path ? `${path}/${item.name}` : item.name;
+      if (item.itemType === "file" && item.status === statusFilter) {
+        paths.push(itemPath);
+      }
+      if (item.children) {
+        paths.push(...collectFilteredPaths(item.children, itemPath));
+      }
+    }
+    return paths;
+  };
+
+  const checkFolderComplete = (item: ComparisonItem): boolean => {
+    if (item.itemType === "file") {
+      return item.status === statusFilter;
+    }
+    if (!item.children || item.children.length === 0) {
+      return false;
+    }
+    return item.children.every(child => checkFolderComplete(child));
+  };
+
+  const consolidatePathsFromTree = (items: ComparisonItem[], path = ""): string[] => {
+    const result: string[] = [];
+    
+    for (const item of items) {
+      const itemPath = path ? `${path}/${item.name}` : item.name;
+      
+      if (item.itemType === "file") {
+        if (item.status === statusFilter) {
+          result.push(itemPath);
+        }
+      } else if (item.itemType === "folder") {
+        if (checkFolderComplete(item)) {
+          result.push(`${itemPath}/**`);
+        } else if (item.children) {
+          result.push(...consolidatePathsFromTree(item.children, itemPath));
+        }
+      }
+    }
+    
+    return result;
+  };
+
+  const consolidateSiblingFiles = (paths: string[]): string[] => {
+    if (paths.length === 0) return [];
+    
+    const completeFolders = new Set<string>();
+    const fileMap = new Map<string, string[]>();
+    
+    for (const p of paths) {
+      if (p.endsWith("/**")) {
+        completeFolders.add(p.slice(0, -3));
+      } else {
+        const lastSlash = p.lastIndexOf("/");
+        const dir = lastSlash >= 0 ? p.substring(0, lastSlash) : "";
+        const file = lastSlash >= 0 ? p.substring(lastSlash + 1) : p;
+        
+        let dominated = false;
+        for (const folder of completeFolders) {
+          if (dir === folder || dir.startsWith(folder + "/")) {
+            dominated = true;
+            break;
+          }
+        }
+        
+        if (!dominated) {
+          if (!fileMap.has(dir)) {
+            fileMap.set(dir, []);
+          }
+          fileMap.get(dir)!.push(file);
+        }
+      }
+    }
+    
+    const result: string[] = [];
+    
+    const sortedFolders = Array.from(completeFolders).sort();
+    for (const folder of sortedFolders) {
+      let dominated = false;
+      for (const other of completeFolders) {
+        if (folder !== other && folder.startsWith(other + "/")) {
+          dominated = true;
+          break;
+        }
+      }
+      if (!dominated) {
+        result.push(`${folder}/**`);
+      }
+    }
+    
+    const sortedDirs = Array.from(fileMap.keys()).sort();
+    for (const dir of sortedDirs) {
+      const files = fileMap.get(dir)!.sort();
+      if (files.length === 1) {
+        result.push(dir ? `${dir}/${files[0]}` : files[0]);
+      } else {
+        result.push(dir ? `${dir}/{${files.join(",")}}` : `{${files.join(",")}}`);
+      }
+    }
+    
+    return result.sort();
+  };
+
+  const filteredPaths = useMemo(() => {
+    if (statusFilter === "all" || statusFilter === "identical") return [];
+    return collectFilteredPaths(tree);
+  }, [tree, statusFilter]);
+
+  const consolidatedPaths = useMemo(() => {
+    if (statusFilter === "all" || statusFilter === "identical") return [];
+    const rawConsolidated = consolidatePathsFromTree(tree);
+    return consolidateSiblingFiles(rawConsolidated);
+  }, [tree, statusFilter]);
+
+  const [copied, setCopied] = useState(false);
+  const [copiedPathIndex, setCopiedPathIndex] = useState<number | null>(null);
+
+  const getFullPath = (relativePath: string): string => {
+    const normalizeBase = (basePath: string) => {
+      const normalized = basePath.replace(/\\/g, "/");
+      return normalized.endsWith("/") ? normalized : normalized + "/";
+    };
+    const base = statusFilter === "extra_in_target" ? targetPath : sourcePath;
+    return normalizeBase(base) + relativePath;
+  };
+
+  const copyPathsToClipboard = async () => {
+    try {
+      const fullPaths = filteredPaths.map(getFullPath);
+      await navigator.clipboard.writeText(fullPaths.join("\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  const copyPathToClipboard = async (path: string, index: number) => {
+    try {
+      const cleanPath = path.endsWith("/**") ? path.slice(0, -3) : path;
+      const fullPath = getFullPath(cleanPath);
+      await navigator.clipboard.writeText(fullPath);
+      setCopiedPathIndex(index);
+      setTimeout(() => setCopiedPathIndex(null), 1500);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
   };
 
   const getStatusIcon = (status: string) => {
@@ -289,6 +441,51 @@ export function ComparisonResults({
         </div>
       </div>
 
+      {statusFilter !== "all" && statusFilter !== "identical" && filteredPaths.length > 0 && (
+        <div className="paths-list-container">
+          <div className="paths-list-header">
+            <span className="paths-list-title">
+              {filteredPaths.length} file{filteredPaths.length !== 1 ? "s" : ""} 
+              {" "}({consolidatedPaths.length} path{consolidatedPaths.length !== 1 ? "s" : ""})
+            </span>
+            <button 
+              className="copy-paths-btn"
+              onClick={copyPathsToClipboard}
+            >
+              {copied ? "✓ Copied!" : "Copy All Paths"}
+            </button>
+          </div>
+          <div className="paths-list">
+            {consolidatedPaths.map((path, i) => {
+              const displayPath = path.endsWith("/**") ? path.slice(0, -3) : path;
+              const isFolder = path.endsWith("/**");
+              return (
+                <div key={i} className="path-entry">
+                  <div className="path-content">
+                    {isFolder ? (
+                      <>
+                        <span className="folder-path">{displayPath}</span>
+                        <span className="folder-suffix">/**</span>
+                        <span className="folder-hint"> (all contents)</span>
+                      </>
+                    ) : (
+                      <span>{path}</span>
+                    )}
+                  </div>
+                  <button
+                    className="copy-path-btn"
+                    onClick={() => copyPathToClipboard(path, i)}
+                    title="Copy path"
+                  >
+                    {copiedPathIndex === i ? "✓" : "📋"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {statusFilter === "all" && (
         <div className="comparison-controls-bar">
           <div className="view-toggles">
@@ -335,7 +532,7 @@ export function ComparisonResults({
         )}
       </div>
 
-      {statusFilter !== "all" && (
+      {statusFilter !== "all" && statusFilter !== "identical" && filteredPaths.length === 0 && (
         <div className="no-filtered-items">
           <span className="empty-icon">📭</span>
           <h3>No Items Match Filter</h3>

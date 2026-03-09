@@ -21,7 +21,11 @@
       "Bash(python -m py_compile:*)",
       "Skill(superpowers:executing-plans)",
       "Skill(superpowers:writing-plans)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(npm run:*)",
+      "Bash(ls:*)",
+      "Bash(python:*)",
+      "Bash(node:*)"
     ]
   }
 }
