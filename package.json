@@ -4,15 +4,12 @@
   "description": "Disk Intelligence - Full stack disk maintenance tool",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"npm:dev:frontend\" \"npm:dev:backend\"",
-    "dev:frontend": "npm --prefix frontend run dev",
-    "dev:backend": "PYTHONPATH=. python3 backend/main.py",
-    "build": "npm --prefix frontend run build",
-    "preview": "npm --prefix frontend run preview",
-    "install-all": "npm --prefix frontend install && pip install -r backend/requirements.txt"
+    "dev": "cd frontend && tauri dev",
+    "build": "cd frontend && tauri build",
+    "install-all": "npm install && cd frontend && npm install"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
-    "cross-env": "^10.1.0"
+    "@tauri-apps/cli": "^2.10.1",
+    "@tauri-apps/plugin-shell": "^2.3.5"
   }
 }
