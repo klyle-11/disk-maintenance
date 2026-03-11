@@ -25,7 +25,13 @@
       "Bash(npm run:*)",
       "Bash(ls:*)",
       "Bash(python:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tauri:*)",
+      "Bash(cargo install:*)",
+      "Bash(cargo check:*)",
+      "Bash(perl:*)",
+      "Bash(diesel print-schema:*)"
     ]
   }
 }
