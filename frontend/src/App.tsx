@@ -1,4 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
+import { ScanControls } from "./components/ScanControls";
+import type { ScanStatus } from './components/ScanControls';
+import { ScanResults } from "./components/ScanResults";
+import { SnapshotGallery } from "./components/SnapshotGallery";
+import { ComparisonResults } from "./components/ComparisonResults";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { SnapshotSidebar } from "./components/SnapshotSidebar";
+import { DuHastMuch } from "./components/DuHastMuch";
 import {
   getFindings,
   getExtensionSummary,
@@ -10,25 +18,12 @@ import {
   saveComparisonSnapshot,
   updateComparisonSnapshot,
   getDuHastMuchHistory,
-  saveDuHastMuchToHistory,
-} from "./api";
-import type {
-  Finding,
-  ScanResponse,
-  ExtensionSummary as ExtSummaryType,
-  Snapshot,
-  ComparisonResponse,
-  ComparisonSnapshot,
-} from "./api";
-import { ScanControls } from "./components/ScanControls";
-import type { ScanStatus } from './components/ScanControls';
-import { ScanResults } from "./components/ScanResults";
-import { SnapshotGallery } from "./components/SnapshotGallery";
-import { ComparisonResults } from "./components/ComparisonResults";
-import { ErrorBoundary } from "./components/ErrorBoundary";
-import { SnapshotStrip } from "./components/SnapshotStrip";
-import { SnapshotSidebar } from "./components/SnapshotSidebar";
-import { DuHastMuch } from "./components/DuHastMuch";
+  type Finding,
+  type ScanResponse,
+  type ExtensionSummary as ExtSummaryType,
+  type ComparisonResponse,
+  type ComparisonSnapshot,
+} from "./api-tauri";
 import "./App.css";
 
 type TabId = "findings" | "extensions";
@@ -176,7 +171,7 @@ function App() {
 
     setIsSavingSnapshot(true);
     try {
-      const snapshot = await saveSnapshot(scanId, scanInfo.rootPath);
+      const snapshot = await saveSnapshot(scanId, scanInfo.rootPath, scanInfo);
       setSnapshots([snapshot, ...snapshots]);
       setCurrentSnapshot(snapshot);
       alert("Snapshot saved successfully!");
@@ -614,7 +609,7 @@ function App() {
                   setSearchQuery={setSearchQuery}
                   loading={loading}
                   filteredFindings={filteredFindings}
-                  scanId={scanId}
+                  scanId={scanId || currentSnapshot?.id || ""}
                   rootPath={scanInfo.rootPath}
                   isSnapshot={currentSnapshot !== null}
                   snapshotId={currentSnapshot?.id}

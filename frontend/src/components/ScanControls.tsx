@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { scanWithProgress, compareDirectories, formatBytes } from "../api";
-import type { ScanResponse, ComparisonResponse } from "../api";
+import { scanWithProgress, compareDirectories, formatBytes } from "../api-tauri";
+import type { ScanResponse, ComparisonResponse } from "../api-tauri";
 import "./ScanControls.css";
 
 export type ScanStatus = "idle" | "scanning" | "completed" | "error" | "comparing";

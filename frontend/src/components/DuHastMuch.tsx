@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory } from "../api";
+import { useState, useEffect } from "react";
+import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory } from "../api-tauri";
 import "./DuHastMuch.css";
 
 interface DuHastMuchProps {
@@ -17,7 +17,6 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
   const [output, setOutput] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentResult, setCurrentResult] = useState<any>(initialResult || null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const formatTimeAgo = (mtime: number): string => {
     if (mtime === 0) return "n/a";
@@ -28,34 +27,6 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
     const days = Math.floor(delta / 86400);
     if (days < 365) return `${days}d ago`;
     return `${Math.floor(days / 365)}y ago`;
-  };
-
-  const handleDirectorySelect = async () => {
-    if (window.electronAPI) {
-      try {
-        const selectedPath = await window.electronAPI.selectDirectory();
-        if (selectedPath) {
-          setPath(selectedPath);
-        }
-      } catch (err) {
-        console.error('Failed to open directory dialog:', err);
-        setError('Failed to open directory selection dialog');
-      }
-    } else {
-      fileInputRef.current?.click();
-    }
-  };
-
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const firstFile = files[0];
-      const fullPath = (firstFile as any).path || firstFile.webkitRelativePath;
-      if (fullPath) {
-        const dirPath = fullPath.substring(0, fullPath.lastIndexOf('\\') || fullPath.lastIndexOf('/'));
-        setPath(dirPath || fullPath);
-      }
-    }
   };
 
   const makeBar = (fraction: number, width: number = 20): string => {
@@ -84,7 +55,7 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
 
   const handleScan = async () => {
     if (!path.trim()) {
-      setError("Please select a directory");
+      setError("Please enter a directory path");
       return;
     }
 
@@ -388,33 +359,17 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
 
       <div className="du-hast-much-controls">
         <div className="control-row">
-          {!window.electronAPI && (
-            <input
-              ref={fileInputRef}
-              type="file"
-              /* @ts-ignore - webkitdirectory is not in TypeScript types */
-              webkitdirectory=""
-              directory=""
-              multiple
-              style={{ display: "none" }}
-              onChange={handleFileInputChange}
-            />
-          )}
-          <button
-            onClick={handleDirectorySelect}
-            disabled={loading}
-            className="select-directory-button"
-          >
-            {path ? "Change Directory" : "Select Directory"}
-          </button>
-          {path && (
-            <div className="selected-path" title={path}>
-              {path}
-            </div>
-          )}
+          <input
+            type="text"
+            placeholder="Enter directory path..."
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            onKeyPress={(e) => e.key === "Enter" && handleScan()}
+            className="path-input"
+          />
           <button
             onClick={handleScan}
-            disabled={loading || !path}
+            disabled={loading}
             className="scan-button"
           >
             {loading ? "Scanning..." : "Scan"}
@@ -473,7 +428,7 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
           <div className="cli-line loading">Scanning...</div>
         )}
         {!loading && output.length === 0 && (
-          <div className="cli-line placeholder">Select a directory and click Scan to see disk usage</div>
+          <div className="cli-line placeholder">Enter a directory path and click Scan to see disk usage</div>
         )}
       </div>
     </div>
