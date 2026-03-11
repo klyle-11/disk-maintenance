@@ -50,6 +50,43 @@
   align-items: center;
 }
 
+.select-directory-button {
+  padding: 0.75rem 1.5rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s;
+  white-space: nowrap;
+}
+
+.select-directory-button:hover:not(:disabled) {
+  background: var(--accent-pale);
+  border-color: var(--accent-primary);
+}
+
+.select-directory-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.selected-path {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  font-size: 1rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Inconsolata', 'Fira Code', monospace;
+}
+
 .path-input {
   flex: 1;
   padding: 0.75rem 1rem;
@@ -346,7 +383,12 @@
   }
 
   .path-input,
-  .scan-button {
+  .scan-button,
+  .select-directory-button {
     width: 100%;
+  }
+
+  .selected-path {
+    flex: 1;
   }
 }
