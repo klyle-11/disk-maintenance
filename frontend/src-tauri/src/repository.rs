@@ -1,22 +1,22 @@
 // Repository module for database operations
 // Provides CRUD operations for snapshots
 
-use crate::database::establish_connection;
-use crate::models::{NewSnapshot, Snapshot, SnapshotData};
-use anyhow::Result;
 use diesel::prelude::*;
-use serde_json;
+use crate::models::{Snapshot, NewSnapshot, SnapshotData};
+use crate::database::establish_connection;
 use tauri::AppHandle;
+use anyhow::Result;
+use serde_json;
 
 use crate::models::snapshots::dsl::*;
 
 // Get all snapshots
 pub fn get_all_snapshots(app: &AppHandle) -> Result<Vec<SnapshotData>> {
     let mut conn = establish_connection(app)?;
-    let results = snapshots.load::<Snapshot>(&mut conn)?;
+    let results = snapshots
+        .load::<Snapshot>(&mut conn)?;
 
-    results
-        .into_iter()
+    results.into_iter()
         .map(|s| convert_snapshot_to_data(s))
         .collect()
 }
@@ -32,7 +32,10 @@ pub fn get_snapshot_by_id(app: &AppHandle, snapshot_id: &str) -> Result<Snapshot
 }
 
 // Create a new snapshot
-pub fn create_snapshot(app: &AppHandle, new_snapshot: NewSnapshot) -> Result<SnapshotData> {
+pub fn create_snapshot(
+    app: &AppHandle,
+    new_snapshot: NewSnapshot,
+) -> Result<SnapshotData> {
     let mut conn = establish_connection(app)?;
 
     diesel::insert_into(snapshots)
@@ -43,7 +46,6 @@ pub fn create_snapshot(app: &AppHandle, new_snapshot: NewSnapshot) -> Result<Sna
 }
 
 // Update an existing snapshot
-#[allow(dead_code)]
 pub fn update_snapshot(
     app: &AppHandle,
     snapshot_id: &str,
@@ -69,7 +71,8 @@ pub fn update_snapshot(
 pub fn delete_snapshot(app: &AppHandle, snapshot_id: &str) -> Result<()> {
     let mut conn = establish_connection(app)?;
 
-    diesel::delete(snapshots.filter(id.eq(snapshot_id))).execute(&mut conn)?;
+    diesel::delete(snapshots.filter(id.eq(snapshot_id)))
+        .execute(&mut conn)?;
 
     Ok(())
 }
@@ -77,8 +80,7 @@ pub fn delete_snapshot(app: &AppHandle, snapshot_id: &str) -> Result<()> {
 // Convert database model to frontend-facing model
 fn convert_snapshot_to_data(snapshot: Snapshot) -> Result<SnapshotData> {
     let findings: Vec<crate::models::Finding> = serde_json::from_str(&snapshot.findings_json)?;
-    let extensions: Vec<crate::models::ExtensionSummary> =
-        serde_json::from_str(&snapshot.extensions_json)?;
+    let extensions: Vec<crate::models::ExtensionSummary> = serde_json::from_str(&snapshot.extensions_json)?;
     let scan_info: crate::models::ScanInfo = serde_json::from_str(&snapshot.scan_info_json)?;
 
     let comparison = if let Some(ref comp_json) = snapshot.comparison_json {
