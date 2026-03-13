@@ -11,7 +11,6 @@ use std::time::{UNIX_EPOCH};
 use ignore::Walk;
 use std::fs;
 use chrono::Utc;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 // In-memory storage for scan results
@@ -65,7 +64,7 @@ pub struct ProgressEvent {
 struct FileCategorizer {
     temp_files: Vec<String>,
     large_files: Vec<String>,
-    duplicates: HashMap<u64, Vec<String>>, // hash -> files
+    _duplicates: HashMap<u64, Vec<String>>, // hash -> files (reserved for future use)
     cache_folders: Vec<String>,
     old_files: Vec<String>,
     system_junk: Vec<String>,
@@ -77,7 +76,7 @@ impl FileCategorizer {
         Self {
             temp_files: Vec::new(),
             large_files: Vec::new(),
-            duplicates: HashMap::new(),
+            _duplicates: HashMap::new(),
             cache_folders: Vec::new(),
             old_files: Vec::new(),
             system_junk: Vec::new(),
@@ -112,7 +111,7 @@ impl FileCategorizer {
         path_str.contains("recycle.bin")
     }
 
-    fn is_old_file(&self, path: &Path, modified_secs: i64) -> bool {
+    fn is_old_file(&self, _path: &Path, modified_secs: i64) -> bool {
         let one_year_ago = Utc::now().timestamp() - (365 * 24 * 60 * 60);
         modified_secs < one_year_ago
     }
@@ -216,7 +215,7 @@ impl FileCategorizer {
 // ============================================================================
 
 pub async fn perform_scan(
-    app: &AppHandle,
+    _app: &AppHandle,
     scan_id: &str,
     root_path: &str,
 ) -> Result<ScanResult> {
@@ -261,7 +260,7 @@ pub async fn perform_scan(
         }
     }
 
-    let elapsed = start_time.elapsed().as_secs_f64();
+    let _elapsed = start_time.elapsed().as_secs_f64();
 
     Ok(ScanResult {
         scan_id: scan_id.to_string(),
@@ -275,7 +274,7 @@ pub async fn perform_scan(
 }
 
 pub async fn perform_scan_with_progress<F>(
-    app: &AppHandle,
+    _app: &AppHandle,
     scan_id: &str,
     root_path: &str,
     progress_callback: F,
@@ -372,7 +371,7 @@ where
 // ============================================================================
 
 pub async fn perform_comparison(
-    app: &AppHandle,
+    _app: &AppHandle,
     comparison_id: &str,
     source_path: &str,
     target_path: &str,

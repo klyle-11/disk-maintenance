@@ -59,10 +59,10 @@ pub async fn save_snapshot(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]  
-pub async fn update_snapshot(app: AppHandle, snapshot_id: String) -> Result<SnapshotData, String> {
+#[tauri::command]
+pub async fn update_snapshot(_app: AppHandle, _snapshot_id: String) -> Result<SnapshotData, String> {
     // For now, this will require a re-scan
-    // In the future, we can implement incremental updates
+    // In future, we can implement incremental updates
     Err("Snapshot updates not yet implemented".to_string())
 }
 
@@ -141,7 +141,7 @@ pub async fn scan_directory_with_progress(
 
 #[tauri::command]
 pub async fn get_findings(
-    app: AppHandle,
+    _app: AppHandle,
     scan_id: String,
 ) -> Result<Vec<Finding>, String> {
     match crate::scanner::get_scan_results(&scan_id).await {
@@ -152,7 +152,7 @@ pub async fn get_findings(
 
 #[tauri::command]
 pub async fn get_extension_summary(
-    app: AppHandle,
+    _app: AppHandle,
     scan_id: String,
 ) -> Result<Vec<ExtensionSummary>, String> {
     match crate::scanner::get_scan_results(&scan_id).await {
@@ -165,7 +165,7 @@ pub async fn get_extension_summary(
 // Comparison Commands
 // ============================================================================
 
-#[tauri::command]  
+#[tauri::command]
 pub async fn compare_directories(
     app: AppHandle,
     source_path: String,
@@ -173,7 +173,6 @@ pub async fn compare_directories(
     deep_scan: bool,
 ) -> Result<ComparisonResult, String> {
     use uuid::Uuid;
-    use chrono::Utc;
 
     let comparison_id = Uuid::new_v4().to_string();
 
@@ -185,12 +184,12 @@ pub async fn compare_directories(
     Ok(comparison_result)
 }
 
-#[tauri::command]  
+#[tauri::command]
 pub async fn save_comparison_snapshot(
-    app: AppHandle,
-    source_path: String,
-    target_path: String,
-    comparison_id: String,
+    _app: AppHandle,
+    _source_path: String,
+    _target_path: String,
+    _comparison_id: String,
 ) -> Result<SnapshotData, String> {
     // For now, return not implemented
     Err("Comparison snapshots not yet implemented".to_string())
@@ -212,14 +211,14 @@ pub async fn health_check() -> Result<HealthStatus, String> {
 // Du-Hast-Much Commands
 // ============================================================================
 
-#[tauri::command]  
+#[tauri::command]
 pub async fn run_du_hast_much(
-    app: AppHandle,
-    path: String,
-    depth: Option<i32>,
-    top: Option<i32>,
-    latest: Option<bool>,
-    exclude: Option<Vec<String>>,
+    _app: AppHandle,
+    _path: String,
+    _depth: Option<i32>,
+    _top: Option<i32>,
+    _latest: Option<bool>,
+    _exclude: Option<Vec<String>>,
 ) -> Result<DuHastMuchResponse, String> {
     // For now, return not implemented
     Err("Du-hast-much not yet implemented".to_string())
@@ -229,8 +228,8 @@ pub async fn run_du_hast_much(
 // Dialog Commands (using Tauri plugin)
 // ============================================================================
 
-#[tauri::command]  
-pub async fn select_directory(app: AppHandle) -> Result<Option<String>, String> {
+#[tauri::command]
+pub async fn select_directory(_app: AppHandle) -> Result<Option<String>, String> {
     // This will use the tauri-plugin-dialog
     // For now, return a placeholder
     Ok(None)
