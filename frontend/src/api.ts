@@ -786,6 +786,67 @@ export async function runDuHastMuch(
 }
 
 /**
+ * Stream du-hast-much results via SSE, calling onResult for each directory as it completes.
+ * Returns final summary when the scan finishes.
+ */
+export function streamDuHastMuch(
+  request: DuHastMuchRequest,
+  onResult: (result: DuHastMuchResult) => void,
+  signal?: AbortSignal
+): Promise<{ totalSize: number; totalFiles: number; elapsedSeconds: number }> {
+  return new Promise((resolve, reject) => {
+    const params = new URLSearchParams({
+      path: request.path,
+      depth: String(request.depth ?? 1),
+      latest: String(request.latest ?? false),
+    });
+    if (request.top != null) params.set("top", String(request.top));
+    if (request.exclude?.length) params.set("exclude", request.exclude.join(","));
+
+    const url = `${API_ENDPOINT}/du-hast-much/stream?${params}`;
+    const eventSource = new EventSource(url);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.event_type === "result") {
+          onResult({
+            name: data.name,
+            path: data.path,
+            size: data.size,
+            files: data.files,
+            latest_mtime: data.latest_mtime,
+            avg_file_size: data.avg_file_size,
+          });
+        } else if (data.event_type === "done") {
+          eventSource.close();
+          resolve({
+            totalSize: data.total_size || 0,
+            totalFiles: data.total_files || 0,
+            elapsedSeconds: data.elapsed_seconds || 0,
+          });
+        }
+      } catch {
+        eventSource.close();
+        reject(new Error("Failed to parse du-hast-much stream event"));
+      }
+    };
+
+    eventSource.onerror = () => {
+      eventSource.close();
+      reject(new Error("du-hast-much stream connection failed"));
+    };
+
+    if (signal) {
+      signal.addEventListener("abort", () => {
+        eventSource.close();
+        reject(new Error("Scan cancelled"));
+      });
+    }
+  });
+}
+
+/**
  * Get stored du-hast-much history from localStorage.
  */
 export function getDuHastMuchHistory(): DuHastMuchResponse[] {

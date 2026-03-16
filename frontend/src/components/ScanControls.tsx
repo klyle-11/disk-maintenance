@@ -107,8 +107,20 @@ export function ScanControls({
     }
   };
 
+  // Abort any in-flight scan on unmount (page reload, navigation away)
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        console.log("[scan] Aborting scan on unmount");
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, []);
+
   const handleCancel = () => {
     if (abortControllerRef.current) {
+      console.log("[scan] Scan cancelled by user");
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setStatus("idle");
@@ -130,6 +142,7 @@ export function ScanControls({
     abortControllerRef.current = new AbortController();
 
     addLog(`Starting scan of: ${rootPath.trim()}`, "info");
+    console.log(`[scan] Scan started: ${rootPath.trim()}`);
 
     try {
       const result = await scanWithProgress(
@@ -146,6 +159,7 @@ export function ScanControls({
       addLog(`Scan completed successfully`, "success");
       addLog(`Found ${result.totalFiles.toLocaleString()} files in ${result.totalFolders.toLocaleString()} folders`, "success");
       addLog(`Total size: ${formatBytes(result.totalSizeBytes)}`, "success");
+      console.log(`[scan] Scan completed: ${result.totalFiles} files, ${result.totalFolders} folders, ${formatBytes(result.totalSizeBytes)}`);
       onScanComplete(result.scanId, result);
     } catch (err) {
       abortControllerRef.current = null;
@@ -158,6 +172,7 @@ export function ScanControls({
       const errorMsg = err instanceof Error ? err.message : "Scan failed";
       setError(errorMsg);
       addLog(`Error: ${errorMsg}`, "error");
+      console.error(`[scan] Scan error: ${errorMsg}`);
     }
   };
 

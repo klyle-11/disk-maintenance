@@ -13,6 +13,7 @@ import os
 # Get paths - assuming we run from backend directory
 BACKEND_DIR = os.getcwd()
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
+# du-hast-much is a sibling project in the workspace (../du-hast-much relative to project root)
 DU_HAST_MUCH_PATH = os.environ.get(
     'DU_HAST_MUCH_PATH',
     os.path.join(PROJECT_ROOT, '..', 'du-hast-much')
@@ -23,9 +24,8 @@ a = Analysis(
     pathex=[BACKEND_DIR, PROJECT_ROOT, DU_HAST_MUCH_PATH],
     binaries=[],
     datas=[
-        (os.path.join(BACKEND_DIR, 'security'), 'backend/security'),
-        (os.path.join(BACKEND_DIR, 'database.py'), 'backend'),
-        (os.path.join(BACKEND_DIR, '__init__.py'), 'backend'),
+        (os.path.join(BACKEND_DIR, 'security'), 'security'),
+        (os.path.join(BACKEND_DIR, 'database.py'), '.'),
     ],
     hiddenimports=[
         'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
@@ -36,9 +36,9 @@ a = Analysis(
         'pydantic', 'pydantic.dataclasses',
         'sqlalchemy', 'sqlalchemy.dialects.sqlite', 'sqlalchemy.orm',
         'du_hast_much',
-        'backend', 'backend.security', 'backend.security.path_validator',
-        'backend.security.input_sanitizer', 'backend.security.secure_logger',
-        'backend.security.headers', 'backend.security.encryption',
+        'security', 'security.path_validator',
+        'security.input_sanitizer', 'security.secure_logger',
+        'security.headers', 'security.encryption',
         'database',
     ],
     hookspath=[],

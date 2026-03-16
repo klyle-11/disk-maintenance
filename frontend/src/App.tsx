@@ -81,11 +81,29 @@ function App() {
     setTheme(newTheme);
   };
 
-  // Check backend health on mount
+  // Check backend health on mount, retry until connected
   useEffect(() => {
-    healthCheck()
-      .then(() => setConnected(true))
-      .catch(() => setConnected(false));
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const check = () => {
+      healthCheck()
+        .then(() => {
+          if (!cancelled) setConnected(true);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setConnected(false);
+            timer = setTimeout(check, 3000);
+          }
+        });
+    };
+    check();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // Load snapshots on mount

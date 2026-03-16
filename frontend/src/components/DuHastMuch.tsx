@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory } from "../api";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { streamDuHastMuch, formatBytes, saveDuHastMuchToHistory, type DuHastMuchResult } from "../api";
 import "./DuHastMuch.css";
 
 interface DuHastMuchProps {
@@ -8,15 +8,25 @@ interface DuHastMuchProps {
   initialResult?: any;
 }
 
+interface ScanMeta {
+  totalSize: number;
+  totalFiles: number;
+  elapsedSeconds: number;
+}
+
 export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHastMuchProps) {
   const [path, setPath] = useState("");
   const [depth, setDepth] = useState(1);
   const [top, setTop] = useState<number | null>(10);
   const [latest, setLatest] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [output, setOutput] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [currentResult, setCurrentResult] = useState<any>(initialResult || null);
+  const [results, setResults] = useState<DuHastMuchResult[]>([]);
+  const [scanMeta, setScanMeta] = useState<ScanMeta | null>(null);
+  const resultsRef = useRef<DuHastMuchResult[]>([]);
+  const outputRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const formatTimeAgo = (mtime: number): string => {
     if (mtime === 0) return "n/a";
@@ -31,240 +41,235 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
 
   const makeBar = (fraction: number, width: number = 20): string => {
     const filled = Math.round(fraction * width);
-    return "█".repeat(filled) + "░".repeat(width - filled);
+    return "\u2588".repeat(filled) + "\u2591".repeat(width - filled);
   };
 
   const formatCell = (content: string, width: number, align: 'left' | 'right' = 'left'): string => {
-    if (align === 'right') {
-      return content.padStart(width);
-    } else {
-      return content.padEnd(width);
-    }
+    return align === 'right' ? content.padStart(width) : content.padEnd(width);
   };
 
-  // Load initial result if provided
+  // Auto-scroll output during streaming
   useEffect(() => {
-    if (initialResult) {
-      setCurrentResult(initialResult);
+    if (loading && outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [results.length, loading]);
+
+  // Load initial result from history
+  useEffect(() => {
+    if (initialResult?.results) {
+      setResults(initialResult.results);
+      resultsRef.current = initialResult.results;
+      setScanMeta({
+        totalSize: initialResult.total_size || 0,
+        totalFiles: initialResult.total_files || 0,
+        elapsedSeconds: initialResult.elapsed_seconds || 0,
+      });
       setPath(initialResult.path || "");
-      // Display the initial result
-      const resultOutput = formatResultAsOutput(initialResult);
-      setOutput(resultOutput);
     }
   }, [initialResult]);
 
+  const handleDirectorySelect = async () => {
+    if (window.electronAPI) {
+      try {
+        const selectedPath = await window.electronAPI.selectDirectory();
+        if (selectedPath) setPath(selectedPath);
+      } catch {
+        setError("Failed to open directory selection dialog");
+      }
+    } else {
+      fileInputRef.current?.click();
+    }
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      // @ts-ignore - webkitRelativePath exists on File
+      const rel = files[0].webkitRelativePath;
+      if (rel) setPath(rel.split("/")[0]);
+    }
+  };
+
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      console.log("[du-hast-much] Scan cancelled by user");
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setLoading(false);
+    }
+  };
+
+  // Abort any in-flight scan on unmount (page reload, navigation away)
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        console.log("[du-hast-much] Aborting scan on unmount");
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, []);
+
   const handleScan = async () => {
     if (!path.trim()) {
-      setError("Please enter a directory path");
+      setError("Please select a directory");
       return;
     }
 
+    // Cancel any existing scan first
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setLoading(true);
     setError(null);
-    setOutput([]);
-
+    setResults([]);
+    setScanMeta(null);
+    resultsRef.current = [];
     onScanStart?.();
-
-    const lines: string[] = [];
-    lines.push("");
-    lines.push(`\x1b[1;38;5;177mdu-hast-much\x1b[0m — scanning \x1b[38;5;147m${path}\x1b[0m`);
-    lines.push("");
-    setOutput([...lines]);
+    console.log(`[du-hast-much] Scan started: ${path.trim()} (depth=${depth}, top=${top}, latest=${latest})`);
 
     try {
-      const response = await runDuHastMuch({
-        path: path.trim(),
-        depth,
-        top: top || undefined,
-        latest,
-      });
+      const summary = await streamDuHastMuch(
+        { path: path.trim(), depth, top: top || undefined, latest },
+        (result) => {
+          resultsRef.current.push(result);
+          setResults([...resultsRef.current]);
+        },
+        controller.signal,
+      );
 
-      if (response.results.length === 0) {
-        lines.push("\x1b[33mNo subdirectories found.\x1b[0m");
-        setOutput([...lines]);
-        return;
-      }
+      abortControllerRef.current = null;
+      setScanMeta(summary);
+      console.log(`[du-hast-much] Scan completed: ${summary.totalFiles} files, ${summary.totalSize} bytes in ${summary.elapsedSeconds.toFixed(1)}s`);
 
-      const totalSize = response.totalSize || 0;
-      const maxSize = response.results[0]?.size || 1;
-
-      lines.push(latest ? "\x1b[1;38;5;147mRecently Modified Directories\x1b[0m" : "\x1b[1;38;5;147mDisk Usage by Directory\x1b[0m");
-
-      if (latest) {
-        lines.push("\x1b[90m┌────┬─────────────────────────────────────────────┬──────────┬────────┬──────────┬──────────────────┐\x1b[0m");
-        lines.push("\x1b[90m│ #  │ Directory                                    │ Size     │ Files  │ Avg Size │ Latest Modified  │\x1b[0m");
-        lines.push("\x1b[90m├────┼─────────────────────────────────────────────┼──────────┼────────┼──────────┼──────────────────┤\x1b[0m");
-      } else {
-        lines.push("\x1b[90m┌────┬─────────────────────────────────────────────┬──────────┬─────────┬────────────┐\x1b[0m");
-        lines.push("\x1b[90m│ #  │ Directory                                    │ Size     │ % Total │ Usage      │\x1b[0m");
-        lines.push("\x1b[90m├────┼─────────────────────────────────────────────┼──────────┼─────────┼────────────┤\x1b[0m");
-      }
-
-      response.results.forEach((result, idx) => {
-        const num = formatCell(String(idx + 1), 4, 'right');
-        const name = result.name.length > 37 ? "..." + result.name.slice(-34) : result.name;
-        const namePadded = formatCell(name, 45, 'left');
-        const sizeRaw = formatBytes(result.size || 0);
-        const sizePadded = formatCell(sizeRaw, 9, 'right');
-        const sizeColor = (result.size || 0) > 1024 * 1024 * 1024 ? "\x1b[1;33m" : "";
-
-        if (latest) {
-          const filesRaw = String(result.files || 0);
-          const filesPadded = formatCell(filesRaw, 8, 'right');
-          const avgSizeRaw = formatBytes(result.avg_file_size || 0);
-          const avgSizePadded = formatCell(avgSizeRaw, 8, 'right');
-          const timeAgoRaw = formatTimeAgo(result.latest_mtime || 0);
-          const timeAgoPadded = formatCell(timeAgoRaw, 16, 'left');
-
-          const isSmallFiles = (result.avg_file_size || 0) < 102400 && (result.files || 0) > 50;
-          const nameColor = isSmallFiles ? "\x1b[1;31m" : "";
-
-          lines.push(`\x1b[90m│\x1b[0m${num}\x1b[90m│\x1b[0m${nameColor}${namePadded}\x1b[0m\x1b[90m│\x1b[0m${sizeColor}${sizePadded}\x1b[0m\x1b[90m│\x1b[0m${filesPadded}\x1b[90m│\x1b[0m${avgSizePadded}\x1b[90m│\x1b[0m${timeAgoPadded}\x1b[90m│\x1b[0m`);
-        } else {
-          const pctRaw = totalSize > 0 ? ((result.size || 0) / totalSize * 100).toFixed(1) : "0.0";
-          const pctWithPercent = pctRaw + "%";
-          const pctPadded = formatCell(pctWithPercent, 8, 'right');
-          const fraction = maxSize > 0 ? (result.size || 0) / maxSize : 0;
-          const bar = makeBar(fraction, 12);
-          const pctColor = parseFloat(pctRaw) > 20 ? "\x1b[1;33m" : "";
-
-          lines.push(`\x1b[90m│\x1b[0m${num}\x1b[90m│\x1b[0m ${namePadded}\x1b[90m│\x1b[0m${sizeColor}${sizePadded}\x1b[0m\x1b[90m│\x1b[0m${pctColor}${pctPadded}\x1b[0m\x1b[90m│\x1b[0m \x1b[38;5;141m${bar}\x1b[0m\x1b[90m│\x1b[0m`);
-        }
-      });
-
-      if (latest) {
-        lines.push("\x1b[90m└────┴─────────────────────────────────────────────┴──────────┴────────┴──────────┴──────────────────┘\x1b[0m");
-      } else {
-        lines.push("\x1b[90m└────┴─────────────────────────────────────────────┴──────────┴─────────┴────────────┘\x1b[0m");
-      }
-      lines.push("");
-
-      const totalSizeFormatted = formatBytes(totalSize);
-      const totalSizePadded = formatCell(totalSizeFormatted, 9, 'right');
-
-      if (latest) {
-        lines.push("\x1b[90m│    │                                             │          │        │          │                  │\x1b[0m");
-        lines.push(`\x1b[90m│\x1b[0m \x1b[1;37mTOTAL\x1b[0m                                           \x1b[90m│\x1b[0m${totalSizePadded}\x1b[90m│\x1b[0m        \x1b[90m│\x1b[0m          \x1b[90m│\x1b[0m                  \x1b[90m│\x1b[0m`);
-        lines.push("\x1b[90m└────┴─────────────────────────────────────────────┴──────────┴────────┴──────────┴──────────────────┘\x1b[0m");
-      } else {
-        lines.push("\x1b[90m│    │                                             │          │         │            │\x1b[0m");
-        lines.push(`\x1b[90m│\x1b[0m \x1b[1;37mTOTAL\x1b[0m                                           \x1b[90m│\x1b[0m${totalSizePadded}\x1b[90m│\x1b[0m 100.0%  \x1b[90m│\x1b[0m            \x1b[90m│\x1b[0m`);
-        lines.push("\x1b[90m└────┴─────────────────────────────────────────────┴──────────┴─────────┴────────────┘\x1b[0m");
-      }
-      lines.push("");
-
-      const totalFiles = response.totalFiles ?? 0;
-      const elapsedSeconds = response.elapsedSeconds ?? 0;
-      lines.push(`\x1b[2;38;5;147mTotal: ${formatBytes(totalSize)} across ${totalFiles.toLocaleString()} files · scanned in ${elapsedSeconds.toFixed(1)}s\x1b[0m`);
-      lines.push("");
-
-      setOutput([...lines]);
-
-      // Save result to history
       const scanResult = {
-        results: response.results,
-        total_size: response.totalSize,
-        total_files: response.totalFiles,
-        elapsed_seconds: response.elapsedSeconds,
+        results: resultsRef.current,
+        total_size: summary.totalSize,
+        total_files: summary.totalFiles,
+        elapsed_seconds: summary.elapsedSeconds,
         path: path.trim(),
         depth,
         top: top || undefined,
         latest,
         timestamp: Date.now(),
       };
-      setCurrentResult(scanResult);
       saveDuHastMuchToHistory(scanResult);
       onScanComplete?.(scanResult);
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : "Scan failed";
-      setError(errMsg);
-      lines.push(`\x1b[1;31mError:\x1b[0m ${errMsg}`);
-      setOutput([...lines]);
+      abortControllerRef.current = null;
+      if (err instanceof Error && err.message === "Scan cancelled") {
+        return; // Don't show error for user-initiated cancellation
+      }
+      const msg = err instanceof Error ? err.message : "Scan failed";
+      console.error(`[du-hast-much] Scan error: ${msg}`);
+      setError(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  const formatResultAsOutput = (result: any): string[] => {
+  // Build ANSI output lines reactively from accumulated results
+  const output = useMemo(() => {
     const lines: string[] = [];
-    lines.push("");
-    lines.push(`\x1b[1;38;5;177mdu-hast-much\x1b[0m — scanning \x1b[38;5;147m${result.path || "Unknown"}\x1b[0m`);
-    lines.push("");
-    lines.push(result.latest ? "\x1b[1;38;5;147mRecently Modified Directories\x1b[0m" : "\x1b[1;38;5;147mDisk Usage by Directory\x1b[0m");
 
+    if (results.length === 0 && !loading) return lines;
+
+    lines.push("");
+    lines.push(`\x1b[1;38;5;177mdu-hast-much\x1b[0m \u2014 ${loading ? "scanning" : "scanned"} \x1b[38;5;147m${path}\x1b[0m`);
+    lines.push("");
+
+    if (results.length === 0) return lines;
+
+    // Sort: frontend owns sort order since streaming delivers results as-discovered
+    const sorted = [...results].sort(
+      latest
+        ? (a, b) => b.latest_mtime - a.latest_mtime
+        : (a, b) => b.size - a.size
+    );
+
+    const displayed = top ? sorted.slice(0, top) : sorted;
+    const totalSize = scanMeta?.totalSize ?? results.reduce((sum, r) => sum + r.size, 0);
+    const maxSize = displayed[0]?.size || 1;
+
+    // Table title
+    lines.push(latest ? "\x1b[1;38;5;147mRecently Modified Directories\x1b[0m" : "\x1b[1;38;5;147mDisk Usage by Directory\x1b[0m");
+
+    // Table header
     if (latest) {
-      lines.push("\x1b[90m┌────┬─────────────────────────────────────────────┬──────────┬────────┬──────────┬──────────────────┐\x1b[0m");
-      lines.push("\x1b[90m│ #  │ Directory                                    │ Size     │ Files  │ Avg Size │ Latest Modified  │\x1b[0m");
-      lines.push("\x1b[90m├────┼─────────────────────────────────────────────┼──────────┼────────┼──────────┼──────────────────┤\x1b[0m");
+      lines.push("\x1b[90m\u250c\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\x1b[0m");
+      lines.push("\x1b[90m\u2502 #  \u2502 Directory                                    \u2502 Size     \u2502 Files  \u2502 Avg Size \u2502 Latest Modified  \u2502\x1b[0m");
+      lines.push("\x1b[90m\u251c\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\x1b[0m");
     } else {
-      lines.push("\x1b[90m┌────┬─────────────────────────────────────────────┬──────────┬─────────┬────────────┐\x1b[0m");
-      lines.push("\x1b[90m│ #  │ Directory                                    │ Size     │ % Total │ Usage      │\x1b[0m");
-      lines.push("\x1b[90m├────┼─────────────────────────────────────────────┼──────────┼─────────┼────────────┤\x1b[0m");
+      lines.push("\x1b[90m\u250c\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\x1b[0m");
+      lines.push("\x1b[90m\u2502 #  \u2502 Directory                                    \u2502 Size     \u2502 % Total \u2502 Usage      \u2502\x1b[0m");
+      lines.push("\x1b[90m\u251c\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\x1b[0m");
     }
 
-    const totalSize = result.total_size || 0;
-    const maxSize = result.results?.[0]?.size || 1;
-
-    result.results?.forEach((item: any, idx: number) => {
+    // Table rows
+    displayed.forEach((result, idx) => {
       const num = formatCell(String(idx + 1), 4, 'right');
-      const name = item.name.length > 37 ? "..." + item.name.slice(-34) : item.name;
+      const name = result.name.length > 37 ? "..." + result.name.slice(-34) : result.name;
       const namePadded = formatCell(name, 45, 'left');
-      const sizeRaw = formatBytes(item.size || 0);
-      const sizePadded = formatCell(sizeRaw, 9, 'right');
-      const sizeColor = (item.size || 0) > 1024 * 1024 * 1024 ? "\x1b[1;33m" : "";
+      const sizePadded = formatCell(formatBytes(result.size || 0), 9, 'right');
+      const sizeColor = (result.size || 0) > 1024 * 1024 * 1024 ? "\x1b[1;33m" : "";
 
-      if (result.latest) {
-        const filesRaw = String(item.files || 0);
-        const filesPadded = formatCell(filesRaw, 8, 'right');
-        const avgSizeRaw = formatBytes(item.avg_file_size || 0);
-        const avgSizePadded = formatCell(avgSizeRaw, 8, 'right');
-        const timeAgoRaw = formatTimeAgo(item.latest_mtime || 0);
-        const timeAgoPadded = formatCell(timeAgoRaw, 16, 'left');
-
-        const isSmallFiles = (item.avg_file_size || 0) < 102400 && (item.files || 0) > 50;
+      if (latest) {
+        const filesPadded = formatCell(String(result.files || 0), 8, 'right');
+        const avgSizePadded = formatCell(formatBytes(result.avg_file_size || 0), 8, 'right');
+        const timeAgoPadded = formatCell(formatTimeAgo(result.latest_mtime || 0), 16, 'left');
+        const isSmallFiles = (result.avg_file_size || 0) < 102400 && (result.files || 0) > 50;
         const nameColor = isSmallFiles ? "\x1b[1;31m" : "";
 
-        lines.push(`\x1b[90m│\x1b[0m${num}\x1b[90m│\x1b[0m${nameColor}${namePadded}\x1b[0m\x1b[90m│\x1b[0m${sizeColor}${sizePadded}\x1b[0m\x1b[90m│\x1b[0m${filesPadded}\x1b[90m│\x1b[0m${avgSizePadded}\x1b[90m│\x1b[0m${timeAgoPadded}\x1b[90m│\x1b[0m`);
+        lines.push(`\x1b[90m\u2502\x1b[0m${num}\x1b[90m\u2502\x1b[0m${nameColor}${namePadded}\x1b[0m\x1b[90m\u2502\x1b[0m${sizeColor}${sizePadded}\x1b[0m\x1b[90m\u2502\x1b[0m${filesPadded}\x1b[90m\u2502\x1b[0m${avgSizePadded}\x1b[90m\u2502\x1b[0m${timeAgoPadded}\x1b[90m\u2502\x1b[0m`);
       } else {
-        const pctRaw = totalSize > 0 ? ((item.size || 0) / totalSize * 100).toFixed(1) : "0.0";
-        const pctWithPercent = pctRaw + "%";
-        const pctPadded = formatCell(pctWithPercent, 8, 'right');
-        const fraction = maxSize > 0 ? (item.size || 0) / maxSize : 0;
+        const pctRaw = totalSize > 0 ? ((result.size || 0) / totalSize * 100).toFixed(1) : "0.0";
+        const pctPadded = formatCell(pctRaw + "%", 8, 'right');
+        const fraction = maxSize > 0 ? (result.size || 0) / maxSize : 0;
         const bar = makeBar(fraction, 12);
         const pctColor = parseFloat(pctRaw) > 20 ? "\x1b[1;33m" : "";
 
-        lines.push(`\x1b[90m│\x1b[0m${num}\x1b[90m│\x1b[0m ${namePadded}\x1b[90m│\x1b[0m${sizeColor}${sizePadded}\x1b[0m\x1b[90m│\x1b[0m${pctColor}${pctPadded}\x1b[0m\x1b[90m│\x1b[0m \x1b[38;5;141m${bar}\x1b[0m\x1b[90m│\x1b[0m`);
+        lines.push(`\x1b[90m\u2502\x1b[0m${num}\x1b[90m\u2502\x1b[0m ${namePadded}\x1b[90m\u2502\x1b[0m${sizeColor}${sizePadded}\x1b[0m\x1b[90m\u2502\x1b[0m${pctColor}${pctPadded}\x1b[0m\x1b[90m\u2502\x1b[0m \x1b[38;5;141m${bar}\x1b[0m\x1b[90m\u2502\x1b[0m`);
       }
     });
 
+    // Table bottom border
     if (latest) {
-      lines.push("\x1b[90m└────┴─────────────────────────────────────────────┴──────────┴────────┴──────────┴──────────────────┘\x1b[0m");
+      lines.push("\x1b[90m\u2514\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\x1b[0m");
     } else {
-      lines.push("\x1b[90m└────┴─────────────────────────────────────────────┴──────────┴─────────┴────────────┘\x1b[0m");
+      lines.push("\x1b[90m\u2514\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\x1b[0m");
     }
     lines.push("");
 
-    const totalSizeFormatted = formatBytes(totalSize);
-    const totalSizePadded = formatCell(totalSizeFormatted, 9, 'right');
-
+    // TOTAL row
+    const totalSizePadded = formatCell(formatBytes(totalSize), 9, 'right');
     if (latest) {
-      lines.push("\x1b[90m│    │                                             │          │        │          │                  │\x1b[0m");
-      lines.push(`\x1b[90m│\x1b[0m \x1b[1;37mTOTAL\x1b[0m                                           \x1b[90m│\x1b[0m${totalSizePadded}\x1b[90m│\x1b[0m        \x1b[90m│\x1b[0m          \x1b[90m│\x1b[0m                  \x1b[90m│\x1b[0m`);
-      lines.push("\x1b[90m└────┴─────────────────────────────────────────────┴──────────┴────────┴──────────┴──────────────────┘\x1b[0m");
+      lines.push("\x1b[90m\u2502    \u2502                                             \u2502          \u2502        \u2502          \u2502                  \u2502\x1b[0m");
+      lines.push(`\x1b[90m\u2502\x1b[0m \x1b[1;37mTOTAL\x1b[0m                                           \x1b[90m\u2502\x1b[0m${totalSizePadded}\x1b[90m\u2502\x1b[0m        \x1b[90m\u2502\x1b[0m          \x1b[90m\u2502\x1b[0m                  \x1b[90m\u2502\x1b[0m`);
+      lines.push("\x1b[90m\u2514\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\x1b[0m");
     } else {
-      lines.push("\x1b[90m│    │                                             │          │         │            │\x1b[0m");
-      lines.push(`\x1b[90m│\x1b[0m \x1b[1;37mTOTAL\x1b[0m                                           \x1b[90m│\x1b[0m${totalSizePadded}\x1b[90m│\x1b[0m 100.0%  \x1b[90m│\x1b[0m            \x1b[90m│\x1b[0m`);
-      lines.push("\x1b[90m└────┴─────────────────────────────────────────────┴──────────┴─────────┴────────────┘\x1b[0m");
+      lines.push("\x1b[90m\u2502    \u2502                                             \u2502          \u2502         \u2502            \u2502\x1b[0m");
+      lines.push(`\x1b[90m\u2502\x1b[0m \x1b[1;37mTOTAL\x1b[0m                                           \x1b[90m\u2502\x1b[0m${totalSizePadded}\x1b[90m\u2502\x1b[0m 100.0%  \x1b[90m\u2502\x1b[0m            \x1b[90m\u2502\x1b[0m`);
+      lines.push("\x1b[90m\u2514\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2534\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\x1b[0m");
     }
     lines.push("");
 
-    const totalFiles = result.total_files || 0;
-    const elapsedSeconds = result.elapsed_seconds || 0;
-    lines.push(`\x1b[2;38;5;147mTotal: ${formatBytes(totalSize)} across ${totalFiles.toLocaleString()} files · scanned in ${elapsedSeconds.toFixed(1)}s\x1b[0m`);
+    // Summary line
+    if (scanMeta) {
+      lines.push(`\x1b[2;38;5;147mTotal: ${formatBytes(totalSize)} across ${scanMeta.totalFiles.toLocaleString()} files \u00b7 scanned in ${scanMeta.elapsedSeconds.toFixed(1)}s\x1b[0m`);
+    } else if (loading) {
+      const runningTotal = results.reduce((sum, r) => sum + r.size, 0);
+      const runningFiles = results.reduce((sum, r) => sum + r.files, 0);
+      lines.push(`\x1b[2;38;5;147mScanning\u2026 ${results.length} directories \u00b7 ${formatBytes(runningTotal)} \u00b7 ${runningFiles.toLocaleString()} files\x1b[0m`);
+    }
     lines.push("");
 
     return lines;
-  };
+  }, [results, scanMeta, loading, path, latest, top]);
 
   const renderAnsiLine = (line: string) => {
     const parts: JSX.Element[] = [];
@@ -282,11 +287,7 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
       }
 
       if (currentText) {
-        parts.push(
-          <span key={key++} style={currentStyle}>
-            {currentText}
-          </span>
-        );
+        parts.push(<span key={key++} style={currentStyle}>{currentText}</span>);
         currentText = "";
       }
 
@@ -305,26 +306,22 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
           const colors = ["#555", "#f55", "#5f5", "#ff5", "#55f", "#f5f", "#5ff", "#fff"];
           currentStyle = { ...currentStyle, color: colors[code - 90] };
         } else if (code === 38 && codes.length > 2 && codes[1] === 5) {
-          // 256-color mode: ESC[38;5;{n}m
           const color256 = codes[2];
-          // Map 256-color codes to actual glowing periwinkle colors
           const colorMap: Record<number, string> = {
-            141: "#8b7ec8", // Glowing periwinkle for bars
-            147: "#9b8ed8", // Bright glowing periwinkle
-            177: "#a89ce4", // Light glowing periwinkle
-            183: "#b8a4f0", // Extra bright glowing periwinkle
-            189: "#c8b4f8", // Ultra bright glowing periwinkle
+            141: "#8b7ec8",
+            147: "#9b8ed8",
+            177: "#a89ce4",
+            183: "#b8a4f0",
+            189: "#c8b4f8",
           };
           if (colorMap[color256]) {
             currentStyle = { ...currentStyle, color: colorMap[color256], fontWeight: "bold" };
           } else {
-            // Default fallback for other 256-color codes
             if (color256 < 16) {
               const basicColors = ["black", "maroon", "green", "olive", "navy", "purple", "teal", "silver",
                                    "gray", "red", "lime", "yellow", "blue", "magenta", "cyan", "white"];
               currentStyle = { ...currentStyle, color: basicColors[color256] };
             } else if (color256 >= 232) {
-              // Grayscale
               const gray = Math.round((color256 - 232) * 10 + 8);
               currentStyle = { ...currentStyle, color: `rgb(${gray}, ${gray}, ${gray})` };
             }
@@ -340,95 +337,96 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
     }
 
     if (currentText) {
-      parts.push(
-        <span key={key++} style={currentStyle}>
-          {currentText}
-        </span>
-      );
+      parts.push(<span key={key++} style={currentStyle}>{currentText}</span>);
     }
 
     return parts.length > 0 ? parts : line;
   };
 
+  const pathLabel = path
+    ? (path.length > 40 ? "\u2026" + path.slice(-39) : path)
+    : "select folder";
+
   return (
     <div className="du-hast-much">
-      <div className="du-hast-much-header">
-        <h2>du-hast-much</h2>
-        <span className="du-hast-much-subtitle">Disk usage analyzer with CLI output</span>
-      </div>
+      <div className="dhm-toolbar">
+        <h2 className="dhm-title">du-hast-much</h2>
 
-      <div className="du-hast-much-controls">
-        <div className="control-row">
+        <span
+          className="dhm-path"
+          onClick={handleDirectorySelect}
+          title={path || "Select a folder to scan"}
+        >
+          {pathLabel}
+        </span>
+
+        <label className="dhm-control">
+          <span>depth</span>
           <input
-            type="text"
-            placeholder="Enter directory path..."
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            onKeyPress={(e) => e.key === "Enter" && handleScan()}
-            className="path-input"
+            type="number"
+            min="1"
+            max="10"
+            value={depth}
+            onChange={(e) => setDepth(parseInt(e.target.value) || 1)}
           />
-          <button
-            onClick={handleScan}
-            disabled={loading}
-            className="scan-button"
-          >
-            {loading ? "Scanning..." : "Scan"}
-          </button>
-        </div>
+        </label>
 
-        <div className="control-options">
-          <label className="control-option">
-            <span>Depth:</span>
-            <input
-              type="number"
-              min="1"
-              max="10"
-              value={depth}
-              onChange={(e) => setDepth(parseInt(e.target.value) || 1)}
-              className="number-input"
-            />
-          </label>
+        <label className="dhm-control">
+          <span>top</span>
+          <input
+            type="number"
+            min="1"
+            value={top || ""}
+            onChange={(e) => setTop(parseInt(e.target.value) || null)}
+            placeholder="all"
+          />
+        </label>
 
-          <label className="control-option">
-            <span>Top N:</span>
-            <input
-              type="number"
-              min="1"
-              value={top || ""}
-              onChange={(e) => setTop(parseInt(e.target.value) || null)}
-              placeholder="All"
-              className="number-input"
-            />
-          </label>
+        <label className="dhm-control dhm-checkbox">
+          <input
+            type="checkbox"
+            checked={latest}
+            onChange={(e) => setLatest(e.target.checked)}
+          />
+          <span>latest</span>
+        </label>
 
-          <label className="control-option checkbox">
-            <input
-              type="checkbox"
-              checked={latest}
-              onChange={(e) => setLatest(e.target.checked)}
-            />
-            <span>Sort by Latest Modified</span>
-          </label>
-        </div>
+        {loading ? (
+          <span className="dhm-action" onClick={handleCancel}>
+            stop
+          </span>
+        ) : (
+          <span className="dhm-action" onClick={handleScan}>
+            scan
+          </span>
+        )}
       </div>
 
-      {error && (
-        <div className="du-hast-much-error">
-          {error}
-        </div>
+      {!window.electronAPI && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          /* @ts-ignore - webkitdirectory is not in TypeScript types */
+          webkitdirectory=""
+          directory=""
+          style={{ display: "none" }}
+          onChange={handleFileInputChange}
+        />
       )}
 
-      <div className="du-hast-much-output">
+      {error && <div className="du-hast-much-error">{error}</div>}
+
+      <div className="du-hast-much-output" ref={outputRef}>
         {output.map((line, idx) => (
           <div key={idx} className="cli-line">
             {renderAnsiLine(line)}
           </div>
         ))}
-        {loading && output.length === 0 && (
-          <div className="cli-line loading">Scanning...</div>
+        {loading && results.length === 0 && (
+          <div className="cli-line loading">Scanning\u2026</div>
         )}
-        {!loading && output.length === 0 && (
-          <div className="cli-line placeholder">Enter a directory path and click Scan to see disk usage</div>
+        {!loading && results.length === 0 && !scanMeta && (
+          <div className="cli-line placeholder">Select a folder and scan to see disk usage</div>
         )}
       </div>
     </div>

@@ -8,7 +8,7 @@ To run:
     2. Run server: uvicorn main:app --reload --port 8000
 """
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -25,23 +25,13 @@ import platform
 from collections import defaultdict
 from pathlib import Path
 
-import sys
-
-# Support both development and PyInstaller-bundled modes
-if getattr(sys, 'frozen', False):
-    # Running as bundled executable - modules are already included
-    _bundle_dir = sys._MEIPASS
-else:
-    # Development mode - add du-hast-much to path
-    sys.path.insert(0, r"C:\Users\khali\csprojects\du-hast-much")
-
 from database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
 from du_hast_much import scan_directory, format_size
 
-from backend.security.path_validator import PathValidator, InvalidPathError, create_default_validator
-from backend.security.input_sanitizer import InputSanitizer, ValidationError
-from backend.security.secure_logger import SecureLogger
-from backend.security.headers import add_security_headers
+from security.path_validator import PathValidator, InvalidPathError, create_default_validator
+from security.input_sanitizer import InputSanitizer, ValidationError
+from security.secure_logger import SecureLogger
+from security.headers import add_security_headers
 
 logger = SecureLogger(__name__)
 
@@ -69,10 +59,8 @@ app = FastAPI(title="Disk Intelligence API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:8001",
-        "http://127.0.0.1:8001",
+        "http://localhost:5176",
+        "http://127.0.0.1:5176",
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
@@ -1017,7 +1005,7 @@ async def health_check():
 
 
 @app.get("/api/scan/stream")
-async def scan_stream(root_path: str):
+async def scan_stream(root_path: str, request: Request):
     """Stream scan progress via Server-Sent Events."""
     # SECURITY: Validate and sanitize path input (CRITICAL-001, CRITICAL-006)
     try:
@@ -1038,6 +1026,7 @@ async def scan_stream(root_path: str):
     async def event_generator():
         scan_id = str(uuid.uuid4())
         started_at = datetime.now()
+        logger.info(f"[scan/stream] Scan started: {root_path} (id={scan_id})")
 
         progress_queue = asyncio.Queue()
 
@@ -1050,48 +1039,58 @@ async def scan_stream(root_path: str):
 
         scan_task = asyncio.create_task(scanner_task())
 
-        # Stream progress events
-        while not scan_task.done():
-            try:
-                progress_data = await asyncio.wait_for(
-                    progress_queue.get(), timeout=0.1
-                )
-                progress_data["scan_id"] = scan_id
-                progress_data["event_type"] = "progress"
-                yield f"data: {json.dumps(progress_data)}\n\n"
-            except asyncio.TimeoutError:
-                continue
+        try:
+            # Stream progress events
+            while not scan_task.done():
+                if await request.is_disconnected():
+                    logger.info(f"[scan/stream] Client disconnected, cancelling scan {scan_id}")
+                    scan_task.cancel()
+                    return
 
-        # Get scan results
-        files, folders = await scan_task
-        completed_at = datetime.now()
+                try:
+                    progress_data = await asyncio.wait_for(
+                        progress_queue.get(), timeout=0.1
+                    )
+                    progress_data["scan_id"] = scan_id
+                    progress_data["event_type"] = "progress"
+                    yield f"data: {json.dumps(progress_data)}\n\n"
+                except asyncio.TimeoutError:
+                    continue
 
-        # Store scan data
-        total_files = len(files)
-        total_folders = len(folders)
-        total_size = sum(f["size_bytes"] for f in files)
+            # Get scan results
+            files, folders = await scan_task
+            completed_at = datetime.now()
 
-        scan_data = ScanData()
-        scan_data.files = files
-        scan_data.folders = folders
-        scan_data.scan_info = ScanResponse(
-            scan_id=scan_id,
-            root_path=root_path,
-            started_at=started_at.isoformat(),
-            completed_at=completed_at.isoformat(),
-            total_files=total_files,
-            total_folders=total_folders,
-            total_size_bytes=total_size,
-        )
-        scans[scan_id] = scan_data
+            # Store scan data
+            total_files = len(files)
+            total_folders = len(folders)
+            total_size = sum(f["size_bytes"] for f in files)
 
-        # Send completion event
-        completion_data = {
-            "scan_id": scan_id,
-            "event_type": "complete",
-            "scan_response": scan_data.scan_info.dict(),
-        }
-        yield f"data: {json.dumps(completion_data)}\n\n"
+            scan_data = ScanData()
+            scan_data.files = files
+            scan_data.folders = folders
+            scan_data.scan_info = ScanResponse(
+                scan_id=scan_id,
+                root_path=root_path,
+                started_at=started_at.isoformat(),
+                completed_at=completed_at.isoformat(),
+                total_files=total_files,
+                total_folders=total_folders,
+                total_size_bytes=total_size,
+            )
+            scans[scan_id] = scan_data
+
+            # Send completion event
+            completion_data = {
+                "scan_id": scan_id,
+                "event_type": "complete",
+                "scan_response": scan_data.scan_info.dict(),
+            }
+            logger.info(f"[scan/stream] Scan completed: {scan_id} ({total_files} files)")
+            yield f"data: {json.dumps(completion_data)}\n\n"
+        except asyncio.CancelledError:
+            scan_task.cancel()
+            logger.info(f"[scan/stream] Scan cancelled: {scan_id}")
 
     return StreamingResponse(
         event_generator(),
@@ -1604,6 +1603,102 @@ async def run_du_hast_much(request: DuHastMuchRequest):
         total_size=total_size,
         total_files=total_files,
         elapsed_seconds=elapsed,
+    )
+
+
+@app.get("/api/du-hast-much/stream")
+async def stream_du_hast_much(
+    path: str,
+    request: Request,
+    depth: int = 1,
+    top: Optional[int] = None,
+    latest: bool = False,
+    exclude: str = "",
+):
+    """Stream du-hast-much results via SSE as each directory completes."""
+    import queue as thread_queue
+
+    try:
+        safe_path = input_sanitizer.sanitize_scan_path(path)
+        validated_path = path_validator.validate_and_sanitize(safe_path)
+        root_path = str(validated_path)
+    except (ValidationError, InvalidPathError) as e:
+        logger.error(f"Path validation failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid path: {str(e)}")
+
+    if not os.path.exists(root_path):
+        raise HTTPException(status_code=400, detail=f"Path does not exist: {root_path}")
+    if not os.path.isdir(root_path):
+        raise HTTPException(status_code=400, detail=f"Not a directory: {root_path}")
+
+    exclude_list = [e.strip() for e in exclude.split(",") if e.strip()] if exclude else []
+
+    async def event_generator():
+        result_queue = thread_queue.Queue()
+        files_scanned = [0]
+        cancelled = [False]
+        logger.info(f"[du-hast-much/stream] Scan started: {root_path} (depth={depth})")
+
+        def on_result(result):
+            if not cancelled[0]:
+                result_queue.put(result)
+
+        def on_progress(info):
+            files_scanned[0] = info.get("files_scanned", 0)
+
+        loop = asyncio.get_running_loop()
+        start = time.time()
+
+        scan_task = asyncio.ensure_future(loop.run_in_executor(
+            None,
+            lambda: scan_directory(
+                root_path,
+                depth=depth,
+                on_progress=on_progress,
+                exclude=exclude_list,
+                on_result=on_result,
+            ),
+        ))
+
+        try:
+            while not scan_task.done():
+                if await request.is_disconnected():
+                    cancelled[0] = True
+                    scan_task.cancel()
+                    logger.info(f"[du-hast-much/stream] Client disconnected, cancelling scan of {root_path}")
+                    return
+
+                try:
+                    result = result_queue.get_nowait()
+                    yield f"data: {json.dumps({'event_type': 'result', **result})}\n\n"
+                except thread_queue.Empty:
+                    await asyncio.sleep(0.05)
+
+            # Drain any remaining results
+            while not result_queue.empty():
+                result = result_queue.get_nowait()
+                yield f"data: {json.dumps({'event_type': 'result', **result})}\n\n"
+
+            elapsed = time.time() - start
+            all_results = scan_task.result()
+            total_size = sum(r["size"] for r in all_results)
+            total_files = files_scanned[0]
+
+            logger.info(f"[du-hast-much/stream] Scan completed: {root_path} ({total_files} files, {elapsed:.1f}s)")
+            yield f"data: {json.dumps({'event_type': 'done', 'total_size': total_size, 'total_files': total_files, 'elapsed_seconds': elapsed})}\n\n"
+        except asyncio.CancelledError:
+            cancelled[0] = True
+            scan_task.cancel()
+            logger.info(f"[du-hast-much/stream] Scan cancelled: {root_path}")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 

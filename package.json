@@ -4,15 +4,11 @@
   "description": "Disk Intelligence - Full stack disk maintenance tool",
   "private": true,
   "scripts": {
-    "dev": "cd frontend && tauri dev",
-    "build": "cd frontend && tauri build",
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
     "install-all": "npm install && cd frontend && npm install",
     "dist": "npm --prefix frontend run dist",
     "dist:win": "npm --prefix frontend run dist:win",
     "dist:mac": "npm --prefix frontend run dist:mac"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2.10.1",
-    "@tauri-apps/plugin-shell": "^2.3.5"
   }
 }
