@@ -9,7 +9,10 @@
     "dev:backend": "python3 backend/main.py",
     "build": "npm --prefix frontend run build",
     "preview": "npm --prefix frontend run preview",
-    "install-all": "npm --prefix frontend install && pip install -r backend/requirements.txt"
+    "install-all": "npm --prefix frontend install && pip install -r backend/requirements.txt",
+    "dist": "npm --prefix frontend run dist",
+    "dist:win": "npm --prefix frontend run dist:win",
+    "dist:mac": "npm --prefix frontend run dist:mac"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

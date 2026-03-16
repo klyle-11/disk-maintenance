@@ -25,10 +25,17 @@ import platform
 from collections import defaultdict
 from pathlib import Path
 
-from database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
 import sys
 
-sys.path.insert(0, r"C:\Users\khali\csprojects\du-hast-much")
+# Support both development and PyInstaller-bundled modes
+if getattr(sys, 'frozen', False):
+    # Running as bundled executable - modules are already included
+    _bundle_dir = sys._MEIPASS
+else:
+    # Development mode - add du-hast-much to path
+    sys.path.insert(0, r"C:\Users\khali\csprojects\du-hast-much")
+
+from database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
 from du_hast_much import scan_directory, format_size
 
 from backend.security.path_validator import PathValidator, InvalidPathError, create_default_validator

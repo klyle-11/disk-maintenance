@@ -1,65 +1,39 @@
-# Root .gitignore for disk-maintenance
-
-# Node (project root)
+# Dependencies
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+frontend/node_modules/
+backend/venv/
 
-# Frontend (Vite / React / Electron)
-/frontend/node_modules/
-/frontend/dist/
-/frontend/.vite/
-/frontend/.cache/
-/frontend/.parcel-cache/
-
-# Build / distribution
-/dist/
-/build/
-/out/
-/release/
-/release-builds/
-
-# Environment files
-.env
-.env.local
-.env.*.local
+# Build artifacts
+frontend/dist/
+backend/dist/
+backend/build/
+release/
 
 # Python
-/backend/__pycache__/
-__pycache__/
-*.py[cod]
+backend/__pycache__/
+backend/security/__pycache__/
+backend/tests/__pycache__/
+*.pyc
 *.pyo
-*.pyd
-venv/
-.venv/
-env/
-ENV/
-.python-version
-*.sqlite3
+
+# Database
 *.db
-disk_intelligence.db
-.pytest_cache/
-.mypy_cache/
 
-# Logs
-*.log
-coverage/
+# Lock files
+package-lock.json
+frontend/package-lock.json
 
-# Editor directories and files
-.vscode/
+# IDE
 .idea/
-*.sublime-project
-*.sublime-workspace
+.vscode/
 *.swp
+*.swo
 
 # OS files
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Electron
-*.asar
+# Environment
+.env
+.env.local

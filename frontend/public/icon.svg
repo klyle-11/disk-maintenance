@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e1e2e"/>
+      <stop offset="100%" style="stop-color:#313244"/>
+    </linearGradient>
+    <linearGradient id="disk" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#89b4fa"/>
+      <stop offset="100%" style="stop-color:#74c7ec"/>
+    </linearGradient>
+  </defs>
+  <!-- Background rounded square -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Hard drive body -->
+  <rect x="96" y="180" width="320" height="180" rx="20" fill="url(#disk)" opacity="0.9"/>
+  <!-- Drive platter circle -->
+  <circle cx="220" cy="270" r="60" fill="none" stroke="#1e1e2e" stroke-width="8" opacity="0.6"/>
+  <circle cx="220" cy="270" r="20" fill="#1e1e2e" opacity="0.6"/>
+  <!-- Activity light -->
+  <circle cx="380" cy="320" r="12" fill="#a6e3a1"/>
+  <!-- Magnifying glass (analysis) -->
+  <circle cx="340" cy="170" r="50" fill="none" stroke="#f5c2e7" stroke-width="10"/>
+  <line x1="375" y1="205" x2="410" y2="240" stroke="#f5c2e7" stroke-width="10" stroke-linecap="round"/>
+</svg>

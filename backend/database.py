@@ -7,9 +7,30 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import json
+import os
+import sys
 
-# SQLite database file
-DATABASE_URL = "sqlite:///./disk_intelligence.db"
+
+def _get_db_path() -> str:
+    """Get the database file path, appropriate for dev or production."""
+    if getattr(sys, 'frozen', False):
+        # Production: store in user's app data directory
+        if sys.platform == 'win32':
+            base = os.environ.get('APPDATA', os.path.expanduser('~'))
+        elif sys.platform == 'darwin':
+            base = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support')
+        else:
+            base = os.environ.get('XDG_DATA_HOME', os.path.join(os.path.expanduser('~'), '.local', 'share'))
+        app_dir = os.path.join(base, 'DiskIntelligence')
+        os.makedirs(app_dir, exist_ok=True)
+        return os.path.join(app_dir, 'disk_intelligence.db')
+    else:
+        # Development: use the backend directory
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'disk_intelligence.db')
+
+
+DATABASE_PATH = _get_db_path()
+DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
 
 engine = create_engine(
     DATABASE_URL,
