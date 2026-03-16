@@ -16,6 +16,7 @@ from typing import Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 import os
+import sys
 import uuid
 import logging
 import asyncio
@@ -25,19 +26,18 @@ import platform
 from collections import defaultdict
 from pathlib import Path
 
-import sys
-
 # Support both development and PyInstaller-bundled modes
 if getattr(sys, 'frozen', False):
     # Running as bundled executable - modules are already included
     _bundle_dir = sys._MEIPASS
 else:
-    # Development mode - add du-hast-much to path
-    sys.path.insert(0, r"C:\Users\khali\csprojects\du-hast-much")
+    # Add project root to path for imports
+    # This allows 'from backend.security...' imports to work
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, project_root)
 
-from database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
-from du_hast_much import scan_directory, format_size
-
+from backend.database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
+from backend.du_hast_much import scan_directory, format_size
 from backend.security.path_validator import PathValidator, InvalidPathError, create_default_validator
 from backend.security.input_sanitizer import InputSanitizer, ValidationError
 from backend.security.secure_logger import SecureLogger
@@ -71,6 +71,12 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
+        "http://localhost:5176",
+        "http://127.0.0.1:5176",
         "http://localhost:8001",
         "http://127.0.0.1:8001",
     ],

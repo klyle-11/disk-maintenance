@@ -12,18 +12,14 @@ import os
 
 # Get paths - assuming we run from backend directory
 BACKEND_DIR = os.getcwd()
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
-DU_HAST_MUCH_PATH = os.environ.get(
-    'DU_HAST_MUCH_PATH',
-    os.path.join(PROJECT_ROOT, '..', 'du-hast-much')
-)
 
 a = Analysis(
     ['main.py'],
-    pathex=[BACKEND_DIR, PROJECT_ROOT, DU_HAST_MUCH_PATH],
+    pathex=[BACKEND_DIR],
     binaries=[],
     datas=[
         (os.path.join(BACKEND_DIR, 'security'), 'backend/security'),
+        (os.path.join(BACKEND_DIR, 'du_hast_much.py'), 'backend'),
         (os.path.join(BACKEND_DIR, 'database.py'), 'backend'),
         (os.path.join(BACKEND_DIR, '__init__.py'), 'backend'),
     ],

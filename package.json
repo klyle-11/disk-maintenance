@@ -4,8 +4,10 @@
   "description": "Disk Intelligence - Full stack disk maintenance tool",
   "private": true,
   "scripts": {
-    "dev": "cd frontend && tauri dev",
-    "build": "cd frontend && tauri build",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "python3 backend/main.py",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
     "install-all": "npm install && cd frontend && npm install",
     "dist": "npm --prefix frontend run dist",
     "dist:win": "npm --prefix frontend run dist:win",

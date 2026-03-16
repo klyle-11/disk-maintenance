@@ -30,9 +30,6 @@ REM Clean previous build
 if exist "dist" rmdir /s /q dist
 if exist "build" rmdir /s /q build
 
-REM Set the du-hast-much path
-set DU_HAST_MUCH_PATH=%~dp0\..\..\du-hast-much
-
 REM Run PyInstaller
 echo Running PyInstaller...
 pyinstaller disk-intelligence.spec --clean
