@@ -10,13 +10,18 @@
     "dev": "concurrently \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
     "dev:electron": "cross-env NODE_ENV=development electron .",
+    "dev:tauri": "tauri dev",
     "build": "vite build",
+    "build:tauri": "tauri build",
     "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

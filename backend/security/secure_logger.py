@@ -14,7 +14,7 @@ Security Features:
 
 Redaction Patterns:
 - File paths: /home/user/Documents → /home/***/Documents
-- Windows paths: C:\Users\john\file.txt → C:\Users\***\file.txt
+- Windows paths: C:\\Users\\john\\file.txt → C:\\Users\\***\\file.txt
 - Usernames: Always redacted to ***
 - Sensitive directories: .ssh, .aws, etc. always redacted
 """
@@ -23,7 +23,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 from datetime import datetime
 import json
 
