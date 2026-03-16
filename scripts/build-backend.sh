@@ -29,9 +29,6 @@ python3 -m pip install -r requirements.txt
 # Clean previous build
 rm -rf dist build
 
-# Set the du-hast-much path
-export DU_HAST_MUCH_PATH="$(dirname "$0")/../../du-hast-much"
-
 # Run PyInstaller
 echo "Running PyInstaller..."
 python3 -m PyInstaller disk-intelligence.spec --clean

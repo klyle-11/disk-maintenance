@@ -3,17 +3,12 @@
     "allow": [
       "Bash(cd:*)",
       "Bash(npm install:*)",
-      "Bash(find:*)",
-      "Bash(grep:*)",
-      "Bash(C:/Users/khali/csprojects/disk-maintenance/backend/venv/Scripts/python.exe -m pip list 2>&1 | grep -i -E \"du.hast|rich\")",
-      "Bash(C:/Users/khali/csprojects/disk-maintenance/backend/venv/Scripts/python.exe -m pip install -e C:/Users/khali/csprojects/du-hast-much 2>&1)",
-      "Bash(C:/Users/khali/csprojects/disk-maintenance/backend/venv/Scripts/python.exe -c \"import du_hast_much; print\\(du_hast_much.__file__\\)\" 2>&1)",
-      "Bash(netstat:*)",
-      "Bash(tasklist:*)",
-      "Bash(taskkill:*)",
-      "Bash(curl:*)",
-      "Bash(C:/Users/khali/csprojects/disk-maintenance/backend/venv/Scripts/python.exe -c \"\nimport urllib.request\ntry:\n    resp = urllib.request.urlopen\\('http://127.0.0.1:8001/api/health', timeout=3\\)\n    print\\(f'Status: {resp.status}'\\)\n    print\\(f'Body: {resp.read\\(\\).decode\\(\\)}'\\)\n    print\\(f'Headers: {dict\\(resp.headers\\)}'\\)\nexcept Exception as e:\n    print\\(f'Error: {e}'\\)\n\" 2>&1)",
-      "Bash(C:/Users/khali/csprojects/disk-maintenance/backend/venv/Scripts/python.exe -c \"\nimport urllib.request\nreq = urllib.request.Request\\('http://127.0.0.1:8001/api/health'\\)\nreq.add_header\\('Origin', 'http://localhost:5176'\\)\ntry:\n    resp = urllib.request.urlopen\\(req, timeout=3\\)\n    print\\(f'Status: {resp.status}'\\)\n    print\\(f'CORS header: {resp.headers.get\\(\\\\\"Access-Control-Allow-Origin\\\\\", \\\\\"MISSING\\\\\"\\)}'\\)\nexcept Exception as e:\n    print\\(f'Error: {e}'\\)\n\" 2>&1)"
+      "Bash(npx tauri:*)",
+      "Bash(cargo install:*)",
+      "Bash(cargo check:*)",
+      "Bash(perl:*)",
+      "Bash(diesel print-schema:*)",
+      "Bash(ls:*)"
     ]
   }
 }

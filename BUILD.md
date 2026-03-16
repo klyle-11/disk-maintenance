@@ -7,7 +7,6 @@ This document describes how to build and package Disk Intelligence for distribut
 ### Common
 - Node.js 18+
 - Python 3.10+
-- du-hast-much module in sibling directory
 
 ### Windows
 - Visual Studio Build Tools (for native dependencies)
@@ -141,7 +140,6 @@ By default, builds are unsigned. For distribution, you'll need to:
 ### PyInstaller Issues
 - Clean build cache: `pyinstaller --clean`
 - Check hidden imports in `disk-intelligence.spec`
-- Verify `du-hast-much` is accessible
 
 ### Electron Builder Issues
 - Clean: `rm -rf frontend/node_modules frontend/dist release`

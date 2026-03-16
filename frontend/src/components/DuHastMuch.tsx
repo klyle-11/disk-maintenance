@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { streamDuHastMuch, formatBytes, saveDuHastMuchToHistory, type DuHastMuchResult } from "../api";
+import { useState, useEffect, useRef } from "react";
+import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory } from "../api";
 import "./DuHastMuch.css";
 
 interface DuHastMuchProps {
@@ -16,6 +16,7 @@ interface ScanMeta {
 
 export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHastMuchProps) {
   const [path, setPath] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [depth, setDepth] = useState(1);
   const [top, setTop] = useState<number | null>(10);
   const [latest, setLatest] = useState(false);
@@ -70,14 +71,19 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
   }, [initialResult]);
 
   const handleDirectorySelect = async () => {
+    // Use native Electron dialog if available
     if (window.electronAPI) {
       try {
         const selectedPath = await window.electronAPI.selectDirectory();
-        if (selectedPath) setPath(selectedPath);
-      } catch {
-        setError("Failed to open directory selection dialog");
+        if (selectedPath) {
+          setPath(selectedPath);
+        }
+      } catch (err) {
+        console.error('Failed to open directory dialog:', err);
+        setError('Failed to open directory selection dialog');
       }
     } else {
+      // Fall back to HTML5 file input for browser/Tauri environment
       fileInputRef.current?.click();
     }
   };
@@ -85,31 +91,17 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      // @ts-ignore - webkitRelativePath exists on File
-      const rel = files[0].webkitRelativePath;
-      if (rel) setPath(rel.split("/")[0]);
-    }
-  };
-
-  const handleCancel = () => {
-    if (abortControllerRef.current) {
-      console.log("[du-hast-much] Scan cancelled by user");
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-      setLoading(false);
-    }
-  };
-
-  // Abort any in-flight scan on unmount (page reload, navigation away)
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        console.log("[du-hast-much] Aborting scan on unmount");
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
+      // Get the path from the first file
+      const firstFile = files[0];
+      // Extract directory path from the file path
+      const fullPath = (firstFile as any).path || firstFile.webkitRelativePath;
+      if (fullPath) {
+        // Get the directory path (remove the file name)
+        const dirPath = fullPath.substring(0, fullPath.lastIndexOf('\\') || fullPath.lastIndexOf('/'));
+        setPath(dirPath || fullPath);
       }
-    };
-  }, []);
+    }
+  };
 
   const handleScan = async () => {
     if (!path.trim()) {
@@ -349,57 +341,84 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
 
   return (
     <div className="du-hast-much">
-      <div className="dhm-toolbar">
-        <h2 className="dhm-title">du-hast-much</h2>
+      <div className="du-hast-much-header">
+        <div>
+          <h2>du-hast-much</h2>
+          <span className="du-hast-much-subtitle">Disk usage analyzer with CLI output</span>
+        </div>
 
-        <span
-          className="dhm-path"
-          onClick={handleDirectorySelect}
-          title={path || "Select a folder to scan"}
-        >
-          {pathLabel}
-        </span>
+        <div className="du-hast-much-controls">
+          {/* Hidden file input for directory picker */}
+          {!window.electronAPI && (
+            <input
+              ref={fileInputRef}
+              type="file"
+              /* @ts-ignore - webkitdirectory is not in TypeScript types */
+              webkitdirectory=""
+              directory=""
+              multiple
+              style={{ display: "none" }}
+              onChange={handleFileInputChange}
+            />
+          )}
 
-        <label className="dhm-control">
-          <span>depth</span>
-          <input
-            type="number"
-            min="1"
-            max="10"
-            value={depth}
-            onChange={(e) => setDepth(parseInt(e.target.value) || 1)}
-          />
-        </label>
+          <div className="control-row">
+            <button
+              onClick={handleDirectorySelect}
+              className="directory-picker-button"
+              disabled={loading}
+            >
+              {path ? "Change Directory" : "Select Directory"}
+            </button>
+            {path && (
+              <span className="selected-path" title={path}>
+                {path}
+              </span>
+            )}
+            <button
+              onClick={handleScan}
+              disabled={loading || !path}
+              className="scan-button"
+            >
+              {loading ? "Scanning..." : "Scan"}
+            </button>
+          </div>
 
-        <label className="dhm-control">
-          <span>top</span>
-          <input
-            type="number"
-            min="1"
-            value={top || ""}
-            onChange={(e) => setTop(parseInt(e.target.value) || null)}
-            placeholder="all"
-          />
-        </label>
+          <div className="control-options">
+            <label className="control-option">
+              <span>Depth:</span>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={depth}
+                onChange={(e) => setDepth(parseInt(e.target.value) || 1)}
+                className="number-input"
+              />
+            </label>
 
-        <label className="dhm-control dhm-checkbox">
-          <input
-            type="checkbox"
-            checked={latest}
-            onChange={(e) => setLatest(e.target.checked)}
-          />
-          <span>latest</span>
-        </label>
+            <label className="control-option">
+              <span>Top:</span>
+              <input
+                type="number"
+                min="1"
+                value={top || ""}
+                onChange={(e) => setTop(parseInt(e.target.value) || null)}
+                placeholder="All"
+                className="number-input"
+              />
+            </label>
 
-        {loading ? (
-          <span className="dhm-action" onClick={handleCancel}>
-            stop
-          </span>
-        ) : (
-          <span className="dhm-action" onClick={handleScan}>
-            scan
-          </span>
-        )}
+            <label className="control-option checkbox">
+              <input
+                type="checkbox"
+                checked={latest}
+                onChange={(e) => setLatest(e.target.checked)}
+              />
+              <span>Latest</span>
+            </label>
+          </div>
+        </div>
       </div>
 
       {!window.electronAPI && (
@@ -425,8 +444,8 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
         {loading && results.length === 0 && (
           <div className="cli-line loading">Scanning\u2026</div>
         )}
-        {!loading && results.length === 0 && !scanMeta && (
-          <div className="cli-line placeholder">Select a folder and scan to see disk usage</div>
+        {!loading && output.length === 0 && (
+          <div className="cli-line placeholder">Select a directory and click Scan to see disk usage</div>
         )}
       </div>
     </div>

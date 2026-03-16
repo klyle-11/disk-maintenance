@@ -16,6 +16,7 @@ from typing import Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 import os
+import sys
 import uuid
 import logging
 import asyncio
@@ -25,13 +26,22 @@ import platform
 from collections import defaultdict
 from pathlib import Path
 
-from database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
-from du_hast_much import scan_directory, format_size
+# Support both development and PyInstaller-bundled modes
+if getattr(sys, 'frozen', False):
+    # Running as bundled executable - modules are already included
+    _bundle_dir = sys._MEIPASS
+else:
+    # Add project root to path for imports
+    # This allows 'from backend.security...' imports to work
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, project_root)
 
-from security.path_validator import PathValidator, InvalidPathError, create_default_validator
-from security.input_sanitizer import InputSanitizer, ValidationError
-from security.secure_logger import SecureLogger
-from security.headers import add_security_headers
+from backend.database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
+from backend.du_hast_much import scan_directory, format_size
+from backend.security.path_validator import PathValidator, InvalidPathError, create_default_validator
+from backend.security.input_sanitizer import InputSanitizer, ValidationError
+from backend.security.secure_logger import SecureLogger
+from backend.security.headers import add_security_headers
 
 logger = SecureLogger(__name__)
 
@@ -59,8 +69,16 @@ app = FastAPI(title="Disk Intelligence API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
         "http://localhost:5176",
         "http://127.0.0.1:5176",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
