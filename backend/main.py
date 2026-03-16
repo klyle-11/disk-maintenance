@@ -1398,9 +1398,9 @@ async def compare_directories(request: ComparisonRequest):
 
     comparison_id = str(uuid.uuid4())
 
-    # Run comparison
+    # Run comparison in a thread so it doesn't block the event loop
     comparator = FolderComparator(source_path, target_path, request.deep_scan)
-    tree, summary = comparator.compare()
+    tree, summary = await asyncio.to_thread(comparator.compare)
 
     return ComparisonResponse(
         comparison_id=comparison_id,
@@ -1724,9 +1724,39 @@ async def stream_du_hast_much(
 # MAIN
 # ============================================================================
 
+def kill_stale_backend(port: int) -> None:
+    """Find and kill any process already listening on the given port."""
+    import subprocess
+    try:
+        if platform.system() == "Windows":
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", "TCP"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if f"127.0.0.1:{port}" in line and "LISTENING" in line:
+                    pid = int(line.strip().split()[-1])
+                    if pid != os.getpid():
+                        logger.info(f"Killing stale backend on port {port} (PID {pid})")
+                        subprocess.run(["taskkill", "/F", "/PID", str(pid)], timeout=5)
+        else:
+            result = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}"],
+                capture_output=True, text=True, timeout=5
+            )
+            for pid_str in result.stdout.strip().splitlines():
+                pid = int(pid_str)
+                if pid != os.getpid():
+                    logger.info(f"Killing stale backend on port {port} (PID {pid})")
+                    os.kill(pid, 9)
+    except Exception as e:
+        logger.warning(f"Could not kill stale backend on port {port}: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
 
+    kill_stale_backend(8001)
     uvicorn.run(app, host="127.0.0.1", port=8001)
 
 # TODO: Implement incremental scanning using Windows filesystem journals (USN Journal)

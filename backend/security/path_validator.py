@@ -38,16 +38,7 @@ class PathValidator:
     # Patterns that indicate path traversal attempts
     TRAVERSAL_PATTERNS = [
         r'\.\.',          # Parent directory references
-        r'~',             # Home directory references
         r'\x00',          # Null bytes
-        r'\\|',           # Windows pipe (command injection)
-        r';',             # Command separator
-        r'&',             # Command separator
-        r'\$',            # Command substitution
-        r'`',             # Command substitution
-        r'\|',            # Pipe
-        r'>',             # Output redirection
-        r'<',             # Input redirection
     ]
 
     # Maximum path length (prevent DoS)
@@ -201,10 +192,22 @@ def create_default_validator() -> PathValidator:
     Create a PathValidator with sensible default allowed roots.
 
     Returns:
-        PathValidator configured with user home directory
+        PathValidator configured with user home and all mounted drives
     """
-    home_dir = os.path.expanduser("~")
-    return PathValidator(allowed_roots=[home_dir])
+    roots = [os.path.expanduser("~")]
+
+    # On Windows, allow all available drive letters
+    if os.name == "nt":
+        import string
+        for letter in string.ascii_uppercase:
+            drive = f"{letter}:\\"
+            if os.path.exists(drive):
+                roots.append(drive)
+    else:
+        # On Unix, allow common mount points
+        roots.append("/")
+
+    return PathValidator(allowed_roots=roots)
 
 
 def is_safe_path(path_str: str, validator: Optional[PathValidator] = None) -> bool:

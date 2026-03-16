@@ -5,7 +5,9 @@
   "private": true,
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:win": "concurrently \"npm run dev:backend:win\" \"npm run dev:frontend\"",
     "dev:backend": "python3 backend/main.py",
+    "dev:backend:win": "python backend/main.py",
     "dev:frontend": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
     "install-all": "npm install && cd frontend && npm install",

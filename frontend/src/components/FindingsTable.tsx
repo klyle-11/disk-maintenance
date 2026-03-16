@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import {
   formatBytes,
   getCategoryDisplayName,
@@ -79,9 +79,8 @@ export function FindingsTable({ findings }: FindingsTableProps) {
         </thead>
         <tbody>
           {sortedFindings.map((finding) => (
-            <>
+            <React.Fragment key={finding.id}>
               <tr
-                key={finding.id}
                 className="finding-row"
                 onClick={() => setExpandedId(expandedId === finding.id ? null : finding.id)}
               >
@@ -117,7 +116,7 @@ export function FindingsTable({ findings }: FindingsTableProps) {
                   </td>
                 </tr>
               )}
-            </>
+            </React.Fragment>
           ))}
         </tbody>
       </table>

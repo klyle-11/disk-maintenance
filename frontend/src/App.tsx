@@ -560,16 +560,15 @@ function App() {
 
       <main className="app-main">
         <div className="content-container">
-        {/* Always show ScanControls for quick access to scanning/comparing */}
-        {scanStatus === "idle" && (
-          <ScanControls
-            onScanComplete={handleScanComplete}
-            onComparisonComplete={handleComparisonComplete}
-            status={scanStatus}
-            setStatus={setScanStatus}
-            scanInfo={scanInfo}
-          />
-        )}
+        {/* Single ScanControls instance - never unmounts during scan */}
+        <ScanControls
+          onScanComplete={handleScanComplete}
+          onComparisonComplete={handleComparisonComplete}
+          status={scanStatus}
+          setStatus={setScanStatus}
+          scanInfo={scanInfo}
+          onNavigateBack={scanStatus === "idle" ? undefined : handleNavigateToDuHastMuch}
+        />
 
         {/* Du-hast-much view */}
         {mainView === "du-hast-much" && scanStatus === "idle" && (
@@ -602,16 +601,6 @@ function App() {
         {/* Scan results view */}
         {(mainView === "scan-results" || scanStatus !== "idle") && (
           <>
-            {(scanStatus !== "idle" || currentSnapshot !== null) && (
-              <ScanControls
-                onScanComplete={handleScanComplete}
-                onComparisonComplete={handleComparisonComplete}
-                status={scanStatus}
-                setStatus={setScanStatus}
-                scanInfo={scanInfo}
-                onNavigateBack={handleNavigateToDuHastMuch}
-              />
-            )}
 
             {(scanId || currentSnapshot) && scanInfo && (
               <ErrorBoundary>

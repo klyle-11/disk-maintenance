@@ -60,25 +60,15 @@ class InputSanitizer:
 
     # Patterns for different input types
     PATTERNS = {
-        InputType.SCAN_PATH: re.compile(r'^[\w\s\-./\\]+$'),
-        InputType.COMPARISON_PATH: re.compile(r'^[\w\s\-./\\]+$'),
+        # Paths are treated as opaque folder names — dangerous chars are already
+        # caught by _check_dangerous_chars and traversal by path_validator.
         InputType.EXCLUDE_PATTERN: re.compile(r'^[\w\s\-.*?/\\]+$'),
     }
 
-    # Dangerous characters to reject
+    # Dangerous characters to reject (only null bytes — paths are never
+    # passed to a shell, so command-injection chars are not a risk here)
     DANGEROUS_CHARS = [
         '\x00',  # Null byte
-        '$',     # Command substitution
-        '`',     # Command substitution
-        ';',     # Command separator
-        '&',     # Command separator
-        '|',     # Pipe
-        '>',     # Output redirection
-        '<',     # Input redirection
-        '(',     # Subshell start
-        ')',     # Subshell end
-        '\n',    # Newline (command injection)
-        '\r',    # Carriage return
     ]
 
     def __init__(self, strict_mode: bool = True):

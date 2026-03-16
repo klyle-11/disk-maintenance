@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory } from "../api";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory, streamDuHastMuch, type DuHastMuchResult } from "../api";
 import "./DuHastMuch.css";
 
 interface DuHastMuchProps {
@@ -26,7 +26,6 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
   const [scanMeta, setScanMeta] = useState<ScanMeta | null>(null);
   const resultsRef = useRef<DuHastMuchResult[]>([]);
   const outputRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const formatTimeAgo = (mtime: number): string => {
@@ -420,18 +419,6 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
           </div>
         </div>
       </div>
-
-      {!window.electronAPI && (
-        <input
-          ref={fileInputRef}
-          type="file"
-          /* @ts-ignore - webkitdirectory is not in TypeScript types */
-          webkitdirectory=""
-          directory=""
-          style={{ display: "none" }}
-          onChange={handleFileInputChange}
-        />
-      )}
 
       {error && <div className="du-hast-much-error">{error}</div>}
 

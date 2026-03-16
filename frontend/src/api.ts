@@ -176,8 +176,8 @@ export interface ComparisonSnapshot extends Snapshot {
 /** Default request timeout in milliseconds (10 seconds) */
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-/** Extended timeout for long-running operations (120 seconds) */
-const LONG_TIMEOUT_MS = 120_000;
+/** Extended timeout for long-running operations (10 minutes) */
+const LONG_TIMEOUT_MS = 600_000;
 
 /** Short timeout for quick connectivity checks (5 seconds) */
 const HEALTH_TIMEOUT_MS = 5_000;
