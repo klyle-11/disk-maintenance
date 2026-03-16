@@ -23,7 +23,7 @@ import {
   type ExtensionSummary as ExtSummaryType,
   type ComparisonResponse,
   type ComparisonSnapshot,
-} from "./api-tauri";
+} from "./api";
 import "./App.css";
 
 type TabId = "findings" | "extensions";

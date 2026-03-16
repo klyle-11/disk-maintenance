@@ -2,8 +2,8 @@ import { useState } from "react";
 import {
   formatBytes,
   getCategoryDisplayName,
-} from "../api-tauri";
-import type { Finding } from "../api-tauri";
+} from "../api";
+import type { Finding } from "../api";
 import "./FindingsTable.css";
 
 type SortField = "category" | "totalBytes";

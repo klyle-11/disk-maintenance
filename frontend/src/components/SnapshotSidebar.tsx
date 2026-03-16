@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { ComparisonSnapshot } from "../api-tauri";
+import type { ComparisonSnapshot } from "../api";
 import "./SnapshotSidebar.css";
 
 interface SnapshotSidebarProps {

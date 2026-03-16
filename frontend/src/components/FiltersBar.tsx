@@ -1,4 +1,4 @@
-import { getCategoryDisplayName } from "../api-tauri";
+import { getCategoryDisplayName } from "../api";
 import "./FiltersBar.css";
 
 interface FiltersBarProps {

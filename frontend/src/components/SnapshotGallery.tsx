@@ -1,5 +1,5 @@
-import type { ComparisonSnapshot } from "../api-tauri";
-import { formatBytes } from "../api-tauri";
+import type { ComparisonSnapshot } from "../api";
+import { formatBytes } from "../api";
 import "./SnapshotGallery.css";
 
 interface SnapshotGalleryProps {

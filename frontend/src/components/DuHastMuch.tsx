@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory } from "../api-tauri";
+import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory } from "../api";
 import "./DuHastMuch.css";
 
 interface DuHastMuchProps {

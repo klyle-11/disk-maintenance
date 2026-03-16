@@ -1,5 +1,5 @@
-import { formatBytes } from "../api-tauri";
-import type { ExtensionSummary as ExtSummary } from "../api-tauri";
+import { formatBytes } from "../api";
+import type { ExtensionSummary as ExtSummary } from "../api";
 import "./ExtensionSummary.css";
 
 interface ExtensionSummaryProps {

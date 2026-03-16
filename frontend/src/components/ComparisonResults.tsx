@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
-import type { ComparisonItem, ComparisonSummary } from "../api-tauri";
-import { formatBytes } from "../api-tauri";
+import type { ComparisonItem, ComparisonSummary } from "../api";
+import { formatBytes } from "../api";
 import "./ComparisonResults.css";
 
 type StatusFilter = "all" | "identical" | "modified" | "missing_from_target" | "extra_in_target";

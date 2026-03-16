@@ -1,7 +1,7 @@
 import { FiltersBar } from "./FiltersBar";
 import { FindingsTable } from "./FindingsTable";
 import { ExtensionSummary } from "./ExtensionSummary";
-import type { Finding, ExtensionSummary as ExtSummaryType } from "../api-tauri";
+import type { Finding, ExtensionSummary as ExtSummaryType } from "../api";
 
 type TabId = "findings" | "extensions";
 
