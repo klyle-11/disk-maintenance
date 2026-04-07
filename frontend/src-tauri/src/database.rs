@@ -27,7 +27,7 @@ pub fn establish_connection(app: &AppHandle) -> Result<SqliteConnection> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let database_url = format!("sqlite:{}", db_path.display());
+    let database_url = db_path.to_string_lossy().to_string();
     let mut conn = SqliteConnection::establish(&database_url)
         .map_err(|e| anyhow::anyhow!("Failed to connect to database: {}", e))?;
 
