@@ -210,11 +210,23 @@ class ComparisonResponse(BaseModel):
 # IN-MEMORY STORAGE (per scan)
 # ============================================================================
 
+# Files at least this big are remembered individually (for duplicate-file
+# candidates). Everything else only feeds folder and extension totals, so
+# memory scales with folder count rather than file count.
+LARGE_FILE_THRESHOLD = 1024 * 1024  # 1 MB
+
 
 class ScanData:
     def __init__(self):
-        self.files: list[dict] = []
-        self.folders: dict[str, dict] = {}  # path -> folder info
+        # path -> {"path", "total_size", "file_count", "last_modified", "last_accessed"}
+        # Timestamps are epoch floats (0.0 = nothing seen yet).
+        self.folders: dict[str, dict] = {}
+        # extension -> [file_count, total_bytes]
+        self.extensions: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+        # (path, apparent_size) for files >= LARGE_FILE_THRESHOLD
+        self.large_files: list[tuple[str, int]] = []
+        self.total_files = 0
+        self.total_size = 0
         self.scan_info: Optional[ScanResponse] = None
 
 
@@ -224,28 +236,33 @@ scans: dict[str, ScanData] = {}
 # IGNORE LIST (hard-coded for MVP)
 # ============================================================================
 
-# Platform-specific system paths to ignore
-IGNORE_PATHS = []
+# Absolute paths skipped along with everything beneath them. Matched as whole
+# path prefixes, so "/Library" skips /Library but not ~/Library.
+IGNORE_PREFIXES: list[str] = []
+# Folder names skipped wherever they appear. Matched against the exact name.
+IGNORE_NAMES: list[str] = []
 
 if platform.system() == "Windows":
-    IGNORE_PATHS.extend(
+    IGNORE_PREFIXES.extend(
         [
             "C:\\Windows",
             "C:\\Program Files",
             "C:\\Program Files (x86)",
             "C:\\ProgramData",
-            "$Recycle.Bin",
-            "System Volume Information",
         ]
     )
 elif platform.system() == "Darwin":  # macOS
-    IGNORE_PATHS.extend(
+    IGNORE_PREFIXES.extend(
         [
             "/System",
             "/Applications",
             "/Library",
             "/Users/Shared",
             "/private",
+        ]
+    )
+    IGNORE_NAMES.extend(
+        [
             ".Trashes",
             ".fseventsd",
             ".Spotlight-V100",
@@ -253,7 +270,7 @@ elif platform.system() == "Darwin":  # macOS
         ]
     )
 elif platform.system() == "Linux":
-    IGNORE_PATHS.extend(
+    IGNORE_PREFIXES.extend(
         [
             "/usr",
             "/bin",
@@ -266,16 +283,43 @@ elif platform.system() == "Linux":
     )
 
 # Common system folders to ignore on all platforms
-IGNORE_PATHS.extend(
+IGNORE_NAMES.extend(
     [
         "$Recycle.Bin",
         "System Volume Information",
         "RECYCLER",
-        ".DS_Store",
-        "Thumbs.db",
-        "desktop.ini",
     ]
 )
+
+# macOS and Windows file systems are case-insensitive by default.
+_CASE_INSENSITIVE_FS = platform.system() in ("Darwin", "Windows")
+
+
+def _fold_path(path: str) -> str:
+    """Normalize separators (and case, where the FS ignores it) for matching."""
+    path = path.replace("\\", "/").rstrip("/")
+    return path.lower() if _CASE_INSENSITIVE_FS else path
+
+
+_IGNORE_PREFIXES_FOLDED = tuple(_fold_path(p) for p in IGNORE_PREFIXES)
+_IGNORE_NAMES_FOLDED = frozenset(n.lower() for n in IGNORE_NAMES)
+
+
+def should_ignore(path: str) -> bool:
+    """True if `path` is an ignored system location or an ignored folder name."""
+    folded = _fold_path(path)
+    if folded.rsplit("/", 1)[-1].lower() in _IGNORE_NAMES_FOLDED:
+        return True
+    return any(
+        folded == prefix or folded.startswith(prefix + "/")
+        for prefix in _IGNORE_PREFIXES_FOLDED
+    )
+
+
+def disk_usage_bytes(st: os.stat_result) -> int:
+    """Bytes actually allocated on disk (like `du`), falling back to st_size."""
+    blocks = getattr(st, "st_blocks", None)
+    return blocks * 512 if blocks is not None else st.st_size
 
 CACHE_FOLDER_PATTERNS = [
     "node_modules",
@@ -325,240 +369,150 @@ CACHE_FOLDER_PATTERNS = [
 
 class DiskScanner:
     """
-    Recursively scans a directory and collects file/folder metadata.
+    Recursively scans a directory and aggregates per-folder and per-extension
+    totals. Individual files are only kept when they're large enough to matter
+    for duplicate detection.
+
+    Sizes are on-disk bytes from lstat (symlinks are not followed), and a
+    hard-linked file is counted once per scan.
     """
 
     def __init__(self, root_path: str, progress_callback=None):
         self.root_path = root_path
-        self.files: list[dict] = []
-        self.folders: dict[str, dict] = {}
+        self.data = ScanData()
         self.progress_callback = progress_callback
         self.start_time = None
+        self._seen_inodes: set[tuple[int, int]] = set()
+        self._file_count = 0
+        self._byte_count = 0
 
-    def should_ignore(self, path: str) -> bool:
-        """Check if path should be ignored."""
-        normalized = normalize_path_for_comparison(path)
-        for ignore in IGNORE_PATHS:
-            # Normalize ignore path for comparison
-            ignore_normalized = normalize_path_for_comparison(ignore)
-            if ignore_normalized in normalized:
-                return True
-        return False
-
-    def scan(self) -> tuple[list[dict], dict[str, dict]]:
-        """
-        Scan the root path and return (files, folders).
-        """
-        logger.info(f"Starting scan of: {self.root_path}")
-
-        # Initialize folder for root
-        self.folders[self.root_path] = {
-            "path": self.root_path,
-            "total_size": 0,
-            "file_count": 0,
-            "last_modified": None,
-            "last_accessed": None,
-        }
-
+    def _walk(self):
+        """Yield each directory after its files have been tallied."""
+        self._add_folder(self.root_path)
         try:
             for root, dirs, files in os.walk(self.root_path, topdown=True):
-                # Filter out ignored directories
-                dirs[:] = [
-                    d for d in dirs if not self.should_ignore(os.path.join(root, d))
-                ]
-
-                # Initialize folder entry
-                if root not in self.folders:
-                    self.folders[root] = {
-                        "path": root,
-                        "total_size": 0,
-                        "file_count": 0,
-                        "last_modified": None,
-                        "last_accessed": None,
-                    }
-
+                dirs[:] = [d for d in dirs if not should_ignore(os.path.join(root, d))]
+                self._add_folder(root)
                 for filename in files:
-                    try:
-                        file_path = os.path.join(root, filename)
-                        stat = os.stat(file_path)
-
-                        file_info = {
-                            "path": file_path,
-                            "size_bytes": stat.st_size,
-                            "extension": os.path.splitext(filename)[1].lower(),
-                            "created_at": datetime.fromtimestamp(
-                                stat.st_ctime
-                            ).isoformat(),
-                            "modified_at": datetime.fromtimestamp(
-                                stat.st_mtime
-                            ).isoformat(),
-                            "accessed_at": datetime.fromtimestamp(
-                                stat.st_atime
-                            ).isoformat(),
-                            "parent_dir": root,
-                        }
-                        self.files.append(file_info)
-
-                        # Update folder stats
-                        self._update_folder_stats(root, stat)
-
-                    except (PermissionError, OSError) as e:
-                        logger.debug(f"Skipping file {filename}: {e}")
-                        continue
-
+                    self._add_file(root, filename)
+                yield root
         except PermissionError as e:
             logger.warning(f"Permission denied for {self.root_path}: {e}")
 
-        # Propagate folder sizes up the tree
+    def _finish(self) -> ScanData:
         self._propagate_folder_sizes()
-
+        self._seen_inodes.clear()
+        root = self.data.folders[self.root_path]
+        self.data.total_files = root["file_count"]
+        self.data.total_size = root["total_size"]
         logger.info(
-            f"Scan complete: {len(self.files)} files, {len(self.folders)} folders"
+            f"Scan complete: {self.data.total_files} files, {len(self.data.folders)} folders"
         )
-        return self.files, self.folders
+        return self.data
 
-    async def scan_async(self) -> tuple[list[dict], dict[str, dict]]:
+    def scan(self) -> ScanData:
+        """Scan the root path and return the aggregated scan data."""
+        logger.info(f"Starting scan of: {self.root_path}")
+        for _ in self._walk():
+            pass
+        return self._finish()
+
+    async def scan_async(self) -> ScanData:
         """Async scan with progress callbacks."""
         self.start_time = time.time()
         logger.info(f"Starting async scan of: {self.root_path}")
 
-        self.folders[self.root_path] = {
-            "path": self.root_path,
-            "total_size": 0,
-            "file_count": 0,
-            "last_modified": None,
-            "last_accessed": None,
-        }
-
-        file_count = 0
         last_emit = time.time()
-        total_bytes = 0
+        last_count = 0
 
-        try:
-            for root, dirs, files in os.walk(self.root_path, topdown=True):
-                dirs[:] = [
-                    d for d in dirs if not self.should_ignore(os.path.join(root, d))
-                ]
+        for root in self._walk():
+            # Emit progress every 50 files or every 1 second
+            now = time.time()
+            if self._file_count - last_count >= 50 or (now - last_emit) >= 1.0:
+                if self.progress_callback:
+                    elapsed = now - self.start_time
+                    depth = root.count(os.sep) - self.root_path.count(os.sep)
+                    progress = min(95, int(20 + (depth * 5)))
 
-                if root not in self.folders:
-                    self.folders[root] = {
-                        "path": root,
-                        "total_size": 0,
-                        "file_count": 0,
-                        "last_modified": None,
-                        "last_accessed": None,
-                    }
-
-                for filename in files:
-                    try:
-                        file_path = os.path.join(root, filename)
-                        stat = os.stat(file_path)
-
-                        file_info = {
-                            "path": file_path,
-                            "size_bytes": stat.st_size,
-                            "extension": os.path.splitext(filename)[1].lower(),
-                            "created_at": datetime.fromtimestamp(
-                                stat.st_ctime
-                            ).isoformat(),
-                            "modified_at": datetime.fromtimestamp(
-                                stat.st_mtime
-                            ).isoformat(),
-                            "accessed_at": datetime.fromtimestamp(
-                                stat.st_atime
-                            ).isoformat(),
-                            "parent_dir": root,
+                    await self.progress_callback(
+                        {
+                            "files_scanned": self._file_count,
+                            "folders_scanned": len(self.data.folders),
+                            "bytes_scanned": self._byte_count,
+                            "current_path": root,
+                            "progress_percent": progress,
+                            "elapsed_seconds": elapsed,
+                            "message": f"Scanning: {root}",
                         }
-                        self.files.append(file_info)
-                        self._update_folder_stats(root, stat)
+                    )
+                    last_emit = now
+                    last_count = self._file_count
+                    await asyncio.sleep(0)  # Yield control
 
-                        file_count += 1
-                        total_bytes += stat.st_size
+        return self._finish()
 
-                    except (PermissionError, OSError) as e:
-                        logger.debug(f"Skipping file {filename}: {e}")
-                        continue
+    def _add_folder(self, path: str):
+        if path not in self.data.folders:
+            self.data.folders[path] = {
+                "path": path,
+                "total_size": 0,
+                "file_count": 0,
+                "last_modified": 0.0,
+                "last_accessed": 0.0,
+            }
 
-                # Emit progress every 50 files or every 1 second
-                now = time.time()
-                if file_count % 50 == 0 or (now - last_emit) >= 1.0:
-                    if self.progress_callback:
-                        elapsed = now - self.start_time
-                        depth = root.count(os.sep) - self.root_path.count(os.sep)
-                        progress = min(95, int(20 + (depth * 5)))
+    def _add_file(self, root: str, filename: str):
+        file_path = os.path.join(root, filename)
+        try:
+            st = os.lstat(file_path)
+        except (PermissionError, OSError) as e:
+            logger.debug(f"Skipping file {filename}: {e}")
+            return
 
-                        await self.progress_callback(
-                            {
-                                "files_scanned": len(self.files),
-                                "folders_scanned": len(self.folders),
-                                "bytes_scanned": total_bytes,
-                                "current_path": root,
-                                "progress_percent": progress,
-                                "elapsed_seconds": elapsed,
-                                "message": f"Scanning: {root}",
-                            }
-                        )
-                        last_emit = now
-                        await asyncio.sleep(0)  # Yield control
-
-        except PermissionError as e:
-            logger.warning(f"Permission denied for {self.root_path}: {e}")
-
-        self._propagate_folder_sizes()
-        logger.info(
-            f"Async scan complete: {len(self.files)} files, {len(self.folders)} folders"
-        )
-        return self.files, self.folders
-
-    def _update_folder_stats(self, folder_path: str, stat):
-        """Update folder statistics with file info."""
-        folder = self.folders[folder_path]
-        folder["total_size"] += stat.st_size
+        folder = self.data.folders[root]
         folder["file_count"] += 1
+        self._file_count += 1
 
-        mtime = datetime.fromtimestamp(stat.st_mtime)
-        atime = datetime.fromtimestamp(stat.st_atime)
+        # Count a hard-linked file's bytes only once per scan.
+        if st.st_nlink > 1:
+            key = (st.st_dev, st.st_ino)
+            if key in self._seen_inodes:
+                return
+            self._seen_inodes.add(key)
 
-        if folder["last_modified"] is None or mtime > datetime.fromisoformat(
-            folder["last_modified"]
-        ):
-            folder["last_modified"] = mtime.isoformat()
-        if folder["last_accessed"] is None or atime > datetime.fromisoformat(
-            folder["last_accessed"]
-        ):
-            folder["last_accessed"] = atime.isoformat()
+        size = disk_usage_bytes(st)
+        folder["total_size"] += size
+        self._byte_count += size
+        if st.st_mtime > folder["last_modified"]:
+            folder["last_modified"] = st.st_mtime
+        if st.st_atime > folder["last_accessed"]:
+            folder["last_accessed"] = st.st_atime
+
+        ext = self.data.extensions[os.path.splitext(filename)[1].lower()]
+        ext[0] += 1
+        ext[1] += size
+
+        if st.st_size >= LARGE_FILE_THRESHOLD:
+            self.data.large_files.append((file_path, st.st_size))
 
     def _propagate_folder_sizes(self):
         """Propagate sizes from child folders to parents."""
+        folders = self.data.folders
         # Sort folders by depth (deepest first)
         sorted_folders = sorted(
-            self.folders.keys(), key=lambda p: p.count(os.sep), reverse=True
+            folders.keys(), key=lambda p: p.count(os.sep), reverse=True
         )
 
         for folder_path in sorted_folders:
             parent = os.path.dirname(folder_path)
-            if parent in self.folders and parent != folder_path:
-                self.folders[parent]["total_size"] += self.folders[folder_path][
-                    "total_size"
-                ]
-                self.folders[parent]["file_count"] += self.folders[folder_path][
-                    "file_count"
-                ]
-
-                # Update last modified/accessed
-                child = self.folders[folder_path]
-                par = self.folders[parent]
-
-                if child["last_modified"] and (
-                    par["last_modified"] is None
-                    or child["last_modified"] > par["last_modified"]
-                ):
+            if parent in folders and parent != folder_path:
+                child = folders[folder_path]
+                par = folders[parent]
+                par["total_size"] += child["total_size"]
+                par["file_count"] += child["file_count"]
+                if child["last_modified"] > par["last_modified"]:
                     par["last_modified"] = child["last_modified"]
-
-                if child["last_accessed"] and (
-                    par["last_accessed"] is None
-                    or child["last_accessed"] > par["last_accessed"]
-                ):
+                if child["last_accessed"] > par["last_accessed"]:
                     par["last_accessed"] = child["last_accessed"]
 
 
@@ -578,9 +532,9 @@ class Analyzer:
     RECENT_DAYS_THRESHOLD = 7
     TOP_N_LARGE = 20
 
-    def __init__(self, files: list[dict], folders: dict[str, dict]):
-        self.files = files
-        self.folders = folders
+    def __init__(self, scan_data: ScanData):
+        self.scan_data = scan_data
+        self.folders = scan_data.folders
         self.findings: list[Finding] = []
         self.finding_id = 0
 
@@ -635,7 +589,7 @@ class Analyzer:
             if not info["last_modified"]:
                 continue
 
-            last_mod = datetime.fromisoformat(info["last_modified"])
+            last_mod = datetime.fromtimestamp(info["last_modified"])
             days_old = (now - last_mod).days
 
             if days_old > self.OLD_DAYS_THRESHOLD:
@@ -753,11 +707,9 @@ class Analyzer:
         # Group by (filename, size)
         by_key: dict[tuple[str, int], list[str]] = defaultdict(list)
 
-        for file in self.files:
-            filename = os.path.basename(file["path"])
-            size = file["size_bytes"]
+        for path, size in self.scan_data.large_files:
             if size > 1024 * 1024:  # Only >1MB files
-                by_key[(filename, size)].append(file["path"])
+                by_key[(os.path.basename(path), size)].append(path)
 
         # Report duplicates
         for (filename, size), paths in by_key.items():
@@ -785,7 +737,7 @@ class Analyzer:
             if not info["last_accessed"]:
                 continue
 
-            last_access = datetime.fromisoformat(info["last_accessed"])
+            last_access = datetime.fromtimestamp(info["last_accessed"])
             days_since_access = (now - last_access).days
 
             if days_since_access > self.OLD_DAYS_THRESHOLD:
@@ -802,18 +754,11 @@ class Analyzer:
 
     def get_extension_summary(self) -> list[ExtensionSummary]:
         """Get summary of files by extension."""
-        by_ext: dict[str, dict] = defaultdict(lambda: {"count": 0, "size": 0})
-
-        for file in self.files:
-            ext = file["extension"] or "(no extension)"
-            by_ext[ext]["count"] += 1
-            by_ext[ext]["size"] += file["size_bytes"]
-
         summaries = [
             ExtensionSummary(
-                extension=ext, file_count=data["count"], total_bytes=data["size"]
+                extension=ext or "(no extension)", file_count=count, total_bytes=size
             )
-            for ext, data in by_ext.items()
+            for ext, (count, size) in self.scan_data.extensions.items()
         ]
 
         # Sort by total size descending
@@ -859,15 +804,7 @@ class FolderComparator:
         index = {}
         for root, dirs, files in os.walk(root_path, topdown=True):
             # Skip ignored directories (cross-platform)
-            dirs[:] = [
-                d
-                for d in dirs
-                if not any(
-                    normalize_path_for_comparison(ignore)
-                    in normalize_path_for_comparison(os.path.join(root, d))
-                    for ignore in IGNORE_PATHS
-                )
-            ]
+            dirs[:] = [d for d in dirs if not should_ignore(os.path.join(root, d))]
 
             for filename in files:
                 try:
@@ -1091,25 +1028,19 @@ async def scan_stream(root_path: str, request: Request):
                     continue
 
             # Get scan results
-            files, folders = await scan_task
+            scan_data = await scan_task
             completed_at = datetime.now()
 
             # Store scan data
-            total_files = len(files)
-            total_folders = len(folders)
-            total_size = sum(f["size_bytes"] for f in files)
-
-            scan_data = ScanData()
-            scan_data.files = files
-            scan_data.folders = folders
+            total_files = scan_data.total_files
             scan_data.scan_info = ScanResponse(
                 scan_id=scan_id,
                 root_path=root_path,
                 started_at=started_at.isoformat(),
                 completed_at=completed_at.isoformat(),
                 total_files=total_files,
-                total_folders=total_folders,
-                total_size_bytes=total_size,
+                total_folders=len(scan_data.folders),
+                total_size_bytes=scan_data.total_size,
             )
             scans[scan_id] = scan_data
 
@@ -1160,28 +1091,19 @@ async def start_scan(request: ScanRequest):
     started_at = datetime.now()
 
     # Perform scan
-    scanner = DiskScanner(root_path)
-    files, folders = scanner.scan()
+    scan_data = DiskScanner(root_path).scan()
 
     completed_at = datetime.now()
 
-    # Calculate totals
-    total_files = len(files)
-    total_folders = len(folders)
-    total_size = sum(f["size_bytes"] for f in files)
-
     # Store scan data
-    scan_data = ScanData()
-    scan_data.files = files
-    scan_data.folders = folders
     scan_data.scan_info = ScanResponse(
         scan_id=scan_id,
         root_path=root_path,
         started_at=started_at.isoformat(),
         completed_at=completed_at.isoformat(),
-        total_files=total_files,
-        total_folders=total_folders,
-        total_size_bytes=total_size,
+        total_files=scan_data.total_files,
+        total_folders=len(scan_data.folders),
+        total_size_bytes=scan_data.total_size,
     )
     scans[scan_id] = scan_data
 
@@ -1202,7 +1124,7 @@ async def get_findings(
     scan_data = scans[scan_id]
 
     # Run analysis
-    analyzer = Analyzer(scan_data.files, scan_data.folders)
+    analyzer = Analyzer(scan_data)
     findings = analyzer.analyze()
 
     # Apply filters
@@ -1223,7 +1145,7 @@ async def get_extensions_summary(scan_id: str) -> list[ExtensionSummary]:
         raise HTTPException(status_code=404, detail=f"Scan not found: {scan_id}")
 
     scan_data = scans[scan_id]
-    analyzer = Analyzer(scan_data.files, scan_data.folders)
+    analyzer = Analyzer(scan_data)
     return analyzer.get_extension_summary()
 
 
@@ -1243,7 +1165,7 @@ async def save_snapshot(request: SnapshotRequest, db: Session = Depends(get_db))
     scan_data = scans[scan_id]
 
     # Get findings and extensions
-    analyzer = Analyzer(scan_data.files, scan_data.folders)
+    analyzer = Analyzer(scan_data)
     findings = analyzer.analyze()
     extensions = analyzer.get_extension_summary()
 
@@ -1314,15 +1236,14 @@ async def update_snapshot(snapshot_id: str, db: Session = Depends(get_db)):
     new_scan_id = str(uuid.uuid4())
     started_at = datetime.now()
 
-    scanner = DiskScanner(root_path)
-    files, folders = scanner.scan()
+    scan_data = DiskScanner(root_path).scan()
 
     completed_at = datetime.now()
 
     # Calculate totals
-    total_files = len(files)
-    total_folders = len(folders)
-    total_size = sum(f["size_bytes"] for f in files)
+    total_files = scan_data.total_files
+    total_folders = len(scan_data.folders)
+    total_size = scan_data.total_size
 
     # Create new scan info
     scan_info = ScanResponse(
@@ -1336,7 +1257,7 @@ async def update_snapshot(snapshot_id: str, db: Session = Depends(get_db)):
     )
 
     # Get findings and extensions
-    analyzer = Analyzer(files, folders)
+    analyzer = Analyzer(scan_data)
     findings = analyzer.analyze()
     extensions = analyzer.get_extension_summary()
 

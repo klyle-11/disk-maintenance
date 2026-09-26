@@ -12,6 +12,7 @@ only touches entries marked auto-safe).
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import plistlib
@@ -669,8 +670,10 @@ def _install_schtasks(args, log: str) -> str | None:
     # flash a console window every run. So write a small .pyw launcher that
     # sets up the import path and logging, and run it with pythonw.exe.
     script = _task_script_path()
+    hours = min(23, max(1, round(args.every)))
     with open(script, "w", encoding="utf-8") as f:
         f.write(
+            f"# every_hours={hours}\n"
             "import os, sys\n"
             f"sys.path.insert(0, {_backend_dir()!r})\n"
             "os.environ['NO_COLOR'] = '1'\n"
@@ -681,7 +684,6 @@ def _install_schtasks(args, log: str) -> str | None:
     pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     if not os.path.exists(pythonw):
         pythonw = sys.executable
-    hours = min(23, max(1, round(args.every)))
     res = subprocess.run(
         ["schtasks", "/Create", "/F", "/TN", TASK_NAME, "/SC", "HOURLY", "/MO", str(hours),
          "/TR", f'"{pythonw}" "{script}"'],
@@ -729,6 +731,7 @@ def cmd_guard(args) -> int:
     free = free_bytes()
     level = "ok" if free >= args.warn else "critical" if free < args.critical else "low"
     actions: list[str] = []
+    recovered = 0
 
     if level != "ok" and args.auto:
         before = free_bytes()
@@ -744,6 +747,7 @@ def cmd_guard(args) -> int:
                     remove_tree(j.path)
                     actions.append(j.path)
         free = free_bytes()
+        recovered = max(0, free - before)
         if actions:
             _notify("Disk Intelligence",
                     f"Low disk: cleaned caches, recovered {r.human_size(free - before)}. Free: {r.human_size(free)}")
@@ -759,7 +763,8 @@ def cmd_guard(args) -> int:
     elif level == "low" and not actions:
         _notify("Disk space low", f"{r.human_size(free)} free. Run: di caches / di clean ~/dev")
 
-    _log({"free": free, "level": level, "cleaned": actions, "ballast_released": released})
+    _log({"free": free, "level": level, "cleaned": actions, "recovered": recovered,
+          "ballast_released": released})
 
     print(f"  free: {r.BOLD}{r.human_size(free)}{r.RESET}  level: {level}"
           f"  {r.DIM}(warn < {r.human_size(args.warn)}, critical < {r.human_size(args.critical)}){r.RESET}")
@@ -770,6 +775,86 @@ def cmd_guard(args) -> int:
     if args.history:
         _print_history(args.history)
     return 0 if level == "ok" else 1
+
+
+def guard_status() -> dict:
+    """
+    Whether guard is scheduled, how it is configured, and what its runs have
+    done lately. Read-only and quick; the `di` summary shows it.
+    """
+    status: dict = {"installed": False, "loaded": None, "every_hours": None, "auto": False,
+                    "dev": [], "last_run": None, "actions": [], "errored": False}
+    argv: list[str] = []
+    if sys.platform == "darwin":
+        try:
+            with open(_plist_path(), "rb") as f:
+                plist = plistlib.load(f)
+            status["installed"] = True
+            argv = plist.get("ProgramArguments", [])
+            status["every_hours"] = plist.get("StartInterval", 0) / 3600 or None
+            res = subprocess.run(["launchctl", "print", f"gui/{os.getuid()}/{LAUNCH_LABEL}"],
+                                 capture_output=True, text=True, timeout=3, check=False)
+            status["loaded"] = res.returncode == 0
+        except (OSError, ValueError, plistlib.InvalidFileException, subprocess.SubprocessError):
+            pass
+    elif sys.platform == "win32":
+        try:
+            res = subprocess.run(["schtasks", "/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"],
+                                 capture_output=True, text=True, timeout=5, check=False, **_NO_WINDOW)
+            status["installed"] = status["loaded"] = res.returncode == 0
+            with open(_task_script_path(), encoding="utf-8") as f:
+                lines = f.read().strip().splitlines()
+            argv = ast.literal_eval(lines[-1][len("main("):-1])      # main([...])
+            if lines[0].startswith("# every_hours="):
+                status["every_hours"] = float(lines[0].split("=", 1)[1])
+        except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            res = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=3, check=False)
+            line = next((l for l in res.stdout.splitlines()
+                         if "diskcli guard" in l and not l.lstrip().startswith("#")), None)
+            if line:
+                status["installed"] = status["loaded"] = True
+                argv = line.split()
+                hours = line.split()[1]
+                status["every_hours"] = float(hours[2:]) if hours.startswith("*/") else None
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    status["auto"] = "--auto" in argv
+    status["dev"] = [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "--dev"]
+
+    # Guard's own runs (the summary also writes readings here, tagged with a source).
+    week_ago = time.time() - 7 * 86400
+    try:
+        with open(os.path.join(_app_dir(), "guard.jsonl"), encoding="utf-8") as f:
+            lines = f.readlines()[-500:]
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            e = json.loads(line)
+            ts = time.mktime(time.strptime(e["ts"], "%Y-%m-%dT%H:%M:%S"))
+        except (ValueError, KeyError):
+            continue
+        if e.get("source"):
+            continue
+        e["when"] = ts
+        status["last_run"] = e
+        if ts >= week_ago and (e.get("cleaned") or e.get("ballast_released")):
+            status["actions"].append(e)
+    status["actions"] = status["actions"][-3:][::-1]
+
+    # A traceback after the last normal report line in guard.log means the latest run crashed.
+    try:
+        with open(os.path.join(_app_dir(), "guard.log"), encoding="utf-8", errors="replace") as f:
+            tail = f.readlines()[-200:]
+        crash = max((i for i, l in enumerate(tail) if l.startswith("Traceback")), default=-1)
+        report = max((i for i, l in enumerate(tail) if l.lstrip().startswith("free:")), default=-1)
+        status["errored"] = crash > report
+    except OSError:
+        pass
+    return status
 
 
 def _print_history(n: int) -> None:

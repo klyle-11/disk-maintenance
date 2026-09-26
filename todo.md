@@ -9,15 +9,15 @@ The app's scanner is wrong and heavy in ways that matter for a disk tool. These 
 Measured on `~/dev` (522k files, M1, 8 GB): `du` 12.2s · `di` walker 19.7s / 25 MB ·
 app scanner 20.9s / ~450 MB. Disk metadata I/O is the speed floor, not Python.
 
-- [ ] **1. The app can't see `~/Library`.** `DiskScanner.should_ignore` (`backend/main.py`)
+- [x] **1. The app can't see `~/Library`.** `DiskScanner.should_ignore` (`backend/main.py`)
       does a lowercase *substring* match against `IGNORE_PATHS`, so `/Library` hides
       `~/Library` and `/private` hides `~/dev/private-notes` (both confirmed). `~/Library` is
       where "System Data" lives. Match exact absolute prefixes / exact folder names instead.
       *Small fix; do it now even if the Tauri port goes ahead.*
-- [ ] **2. Sizes are too high.** It `os.stat`s (follows symlinks) and counts hard-linked files
+- [x] **2. Sizes are too high.** It `os.stat`s (follows symlinks) and counts hard-linked files
       more than once: 20.2 GB for `~/dev` vs 17.2 GB (`di`) and 18.6 GB (`du`). Use `lstat`,
       dedupe `(dev, inode)`, and use `st_blocks` for real on-disk size.
-- [ ] **3. Memory use.** It keeps a dict with 3 ISO date strings per file: ~450 MB for 500k
+- [x] **3. Memory use.** It keeps a dict with 3 ISO date strings per file: ~450 MB for 500k
       files, GBs for a home-folder scan on an 8 GB Mac, which pushes it into swap (itself
       "System Data"). Keep per-folder totals + top-N largest files instead, like
       `diskcli/walker.py` (25 MB). That covers every current finding.

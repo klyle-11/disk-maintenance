@@ -60,12 +60,16 @@ scan/recent/growth/reclaim, and the app's tips panel (it only shows tips for the
 
 ## The `di` command line
 
-`di help` lists commands; `di help <command>` shows every option.
+`di` (or `di help`) opens with a quick summary: main disk, other connected drives, memory and swap with the
+biggest memory users, and recent changes (free-space trend, latest baseline diff, big files changed this week).
+It reads OS counters and the Spotlight index, never walks the disk, so it takes under a second. `di summary --json`
+gives the same data for scripts. `di help` then lists commands; `di help <command>` shows every option.
 
 ### Finding what uses space
 
 | Command | What it does |
 |---|---|
+| `di summary` | Disk, drives, memory and recent changes at a glance (what bare `di` shows) |
 | `di scan [path] -d 2` | Rank folders by size, with a bar, share, recent bytes and last-touched time |
 | `di recent [path] --days 7` | What was written recently, by folder and by file (no baseline needed) |
 | `di snapshot [path]` | Record a baseline |

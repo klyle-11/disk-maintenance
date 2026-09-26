@@ -14,6 +14,7 @@ import sys
 
 from . import commands
 from . import maint
+from . import summary
 from . import tips
 from . import render as r
 
@@ -163,6 +164,10 @@ set DI_TIPS=0 to silence the occasional tip after a command.
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_tips)
 
+    p = sub.add_parser("summary", help="disk, memory, drives and recent changes at a glance (also shown by bare di)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_summary)
+
     p = sub.add_parser("help", help="show help for di or one of its commands")
     p.add_argument("topic", nargs="?", default=None, metavar="command")
     p.set_defaults(func=None)
@@ -209,8 +214,29 @@ def cmd_tips(args) -> int:
     return 0
 
 
+def cmd_summary(args) -> int:
+    if args.json:
+        print(json.dumps(summary.collect(), indent=2))
+    else:
+        summary.print_summary()
+    return 0
+
+
+def _print_commands(parser: argparse.ArgumentParser) -> None:
+    """One line per command, for under the summary."""
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    print()
+    print(f"  {r.BOLD}Commands{r.RESET}")
+    for action in sub._choices_actions:
+        print(f"  {action.dest:<10} {r.DIM}{action.help}{r.RESET}")
+    print()
+    r.note("  di help <command> for options · di --help for examples")
+
+
 def cmd_help(parser: argparse.ArgumentParser, topic: str | None) -> int:
     if not topic:
+        summary.print_summary()
+        print()
         parser.print_help()
         return 0
     sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
@@ -239,7 +265,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if not getattr(args, "command", None):
-        parser.print_help()
+        summary.print_summary()
+        _print_commands(parser)
         return 0
     if args.command == "help":
         return cmd_help(parser, args.topic)
