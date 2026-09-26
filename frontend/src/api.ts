@@ -52,12 +52,38 @@ function validateLocalhostUrl(url: string): void {
  * Base URL for the API, configurable via VITE_API_BASE_URL env var.
  * SECURITY: Validates that the URL is localhost-only (CRITICAL-003, CRITICAL-005)
  */
-const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8001";
-validateLocalhostUrl(rawApiBaseUrl);
+const DEFAULT_API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8001";
+validateLocalhostUrl(DEFAULT_API_BASE_URL);
 
-export const API_BASE_URL = rawApiBaseUrl;
+/**
+ * The build-time default. Kept as a named export for tests and as the value
+ * used until Electron reports where the backend actually landed.
+ */
+export const API_BASE_URL = DEFAULT_API_BASE_URL;
 
-const API_ENDPOINT = `${API_BASE_URL}/api`;
+/**
+ * The live base URL. The backend does not always get port 8001 — if something
+ * else already holds it, Electron starts the backend on the next free port and
+ * tells us which. Baking the port in at build time was why a busy port turned
+ * into "the backend didn't start".
+ */
+let activeApiBaseUrl = DEFAULT_API_BASE_URL;
+
+/** Point the client at a different backend. Rejects anything non-localhost. */
+export function setApiBaseUrl(url: string): void {
+  if (!url || url === activeApiBaseUrl) return;
+  validateLocalhostUrl(url);
+  activeApiBaseUrl = url.replace(/\/$/, "");
+  console.info(`[API] backend base URL set to ${activeApiBaseUrl}`);
+}
+
+export function getApiBaseUrl(): string {
+  return activeApiBaseUrl;
+}
+
+/** Resolved per call so a port change takes effect without a reload. */
+const apiUrl = (path: string): string => `${activeApiBaseUrl}/api${path}`;
 
 // ============================================================================
 // Types
@@ -190,7 +216,7 @@ async function apiFetch<T>(
   path: string,
   options?: RequestInit & { timeoutMs?: number }
 ): Promise<T> {
-  const url = `${API_ENDPOINT}${path}`;
+  const url = apiUrl(path);
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const controller = new AbortController();
@@ -255,7 +281,7 @@ async function apiFetch<T>(
 
     if (err instanceof TypeError) {
       const connErr = new Error(
-        `Cannot connect to backend at ${API_BASE_URL} — is the server running?`
+        `Cannot connect to backend at ${activeApiBaseUrl} — is the server running?`
       );
       console.error(`[API]`, connErr.message);
       throw connErr;
@@ -306,7 +332,7 @@ export async function scanWithProgress(
   signal?: AbortSignal
 ): Promise<ScanResponse> {
   return new Promise((resolve, reject) => {
-    const url = `${API_ENDPOINT}/scan/stream?root_path=${encodeURIComponent(rootPath)}`;
+    const url = apiUrl(`/scan/stream?root_path=${encodeURIComponent(rootPath)}`);
     const eventSource = new EventSource(url);
 
     eventSource.onmessage = (event) => {
@@ -390,6 +416,29 @@ export async function getExtensionSummary(
  */
 export async function healthCheck(): Promise<{ status: string }> {
   return apiFetch<{ status: string }>("/health", { timeoutMs: HEALTH_TIMEOUT_MS });
+}
+
+export interface SpaceTip {
+  id: string;
+  title: string;
+  body: string;
+  command: string;
+  /** True when the tip applies to this machine (tool installed, folder present, disk low). */
+  relevant: boolean;
+}
+
+export interface SpaceTips {
+  freeBytes: number;
+  lowSpace: boolean;
+  tips: SpaceTip[];
+}
+
+/**
+ * Tips for keeping freed space from filling back up (shared with `di tips`).
+ */
+export async function getSpaceTips(): Promise<SpaceTips> {
+  const data = await apiFetch<any>("/tips");
+  return { freeBytes: data.free_bytes, lowSpace: data.low_space, tips: data.tips };
 }
 
 /**
@@ -803,7 +852,7 @@ export function streamDuHastMuch(
     if (request.top != null) params.set("top", String(request.top));
     if (request.exclude?.length) params.set("exclude", request.exclude.join(","));
 
-    const url = `${API_ENDPOINT}/du-hast-much/stream?${params}`;
+    const url = apiUrl(`/du-hast-much/stream?${params}`);
     const eventSource = new EventSource(url);
 
     eventSource.onmessage = (event) => {

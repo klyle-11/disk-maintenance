@@ -6,6 +6,4 @@ uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 sqlalchemy>=2.0.0
 
-# Local workspace dependency — install as editable:
-#   pip install -e ../../../du-hast-much  (or wherever du-hast-much lives)
-du-hast-much>=0.1.0
+# du-hast-much is vendored as backend/du_hast_much.py; no package needed.

@@ -13,7 +13,14 @@
     "install-all": "npm install && cd frontend && npm install",
     "dist": "npm --prefix frontend run dist",
     "dist:win": "npm --prefix frontend run dist:win",
-    "dist:mac": "npm --prefix frontend run dist:mac"
+    "dist:mac": "npm --prefix frontend run dist:mac",
+    "di": "./di",
+    "di:win": "di.cmd",
+    "verify": "./scripts/verify-package.sh",
+    "package:mac": "./scripts/package.sh"
+  },
+  "dependencies": {
+    "concurrently": "^9.2.1"
   }
 }
 

@@ -1,0 +1,117 @@
+.space-tips {
+  margin: 16px 0;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  font-size: 13px;
+}
+
+.space-tips.is-low {
+  border-color: var(--warning);
+}
+
+.space-tips-header {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.space-tips-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.space-tips-free {
+  color: var(--text-muted);
+}
+
+.space-tips.is-low .space-tips-free {
+  color: var(--warning);
+}
+
+.space-tips-chevron {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+.space-tips-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.space-tips-list li {
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.space-tips-list li.is-other {
+  opacity: 0.7;
+}
+
+.space-tips-tip-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.space-tips-list p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  flex: 1;
+}
+
+.space-tips-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.space-tips-command:hover {
+  border-color: var(--accent-primary);
+}
+
+.space-tips-command code {
+  flex: 1;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.space-tips-command span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.space-tips-more {
+  margin: 0 16px 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-primary);
+  font: inherit;
+  cursor: pointer;
+}

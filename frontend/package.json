@@ -52,14 +52,18 @@
       {
         "from": "../backend/dist/",
         "to": "backend",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "signAndEditExecutable": false
@@ -74,12 +78,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "category": "public.app-category.utilities",
       "hardenedRuntime": true,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "entitlements": "../backend/entitlements.plist",
+      "entitlementsInherit": "../backend/entitlements.plist"
     },
     "dmg": {
       "contents": [
@@ -94,6 +103,8 @@
           "path": "/Applications"
         }
       ]
-    }
+    },
+    "afterPack": "build/after-pack.cjs",
+    "asar": true
   }
 }

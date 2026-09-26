@@ -7,6 +7,8 @@ import { ComparisonResults } from "./components/ComparisonResults";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SnapshotSidebar } from "./components/SnapshotSidebar";
 import { DuHastMuch } from "./components/DuHastMuch";
+import { BackendStatus } from "./components/BackendStatus";
+import { SpaceTips } from "./components/SpaceTips";
 import {
   getFindings,
   getExtensionSummary,
@@ -18,12 +20,14 @@ import {
   saveComparisonSnapshot,
   updateComparisonSnapshot,
   getDuHastMuchHistory,
+  setApiBaseUrl,
   type Finding,
   type ScanResponse,
   type ExtensionSummary as ExtSummaryType,
   type ComparisonResponse,
   type ComparisonSnapshot,
 } from "./api";
+import type { BackendStatus as BackendStatusType } from "./electron.d";
 import "./App.css";
 
 type TabId = "findings" | "extensions";
@@ -39,6 +43,7 @@ function App() {
 
   // Connection state
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [backendStatus, setBackendStatus] = useState<BackendStatusType | null>(null);
 
   // Scan state
   const [scanId, setScanId] = useState<string | null>(null);
@@ -77,11 +82,51 @@ function App() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
+  // Tag the document with the host platform so CSS can reserve space for
+  // the macOS traffic lights only when needed.
+  useEffect(() => {
+    const platform = window.electronAPI?.platform;
+    if (platform) {
+      document.documentElement.setAttribute("data-platform", platform);
+    }
+  }, []);
+
   const handleThemeChange = (newTheme: Theme) => {
     setTheme(newTheme);
   };
 
-  // Check backend health on mount, retry until connected
+  // Follow the backend supervisor in the main process. It knows the port the
+  // backend actually landed on, which is not always 8001, and why it failed
+  // when it did.
+  useEffect(() => {
+    let cancelled = false;
+
+    const apply = (status: BackendStatusType | null) => {
+      if (cancelled || !status) return;
+      setBackendStatus(status);
+      if (status.baseUrl) {
+        try {
+          setApiBaseUrl(status.baseUrl);
+        } catch (err) {
+          console.error("[Backend] refused base URL:", err);
+        }
+      }
+      // 'ready' means the supervisor's own health probe passed; the renderer
+      // still confirms for itself below.
+      if (status.state !== "ready") setConnected(false);
+    };
+
+    window.electronAPI?.getBackendStatus().then(apply).catch(() => {});
+    const unsubscribe = window.electronAPI?.onBackendStatus(apply);
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
+
+  // Confirm the backend answers us directly, and keep retrying while it does
+  // not. Backs off once connected so an idle app is not polling constantly.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let cancelled = false;
@@ -89,13 +134,14 @@ function App() {
     const check = () => {
       healthCheck()
         .then(() => {
-          if (!cancelled) setConnected(true);
+          if (cancelled) return;
+          setConnected(true);
+          timer = setTimeout(check, 15000);
         })
         .catch(() => {
-          if (!cancelled) {
-            setConnected(false);
-            timer = setTimeout(check, 3000);
-          }
+          if (cancelled) return;
+          setConnected(false);
+          timer = setTimeout(check, 2000);
         });
     };
     check();
@@ -104,27 +150,45 @@ function App() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [backendStatus?.baseUrl]);
 
-  // Load snapshots on mount
+  const handleRetryBackend = async () => {
+    setConnected(null);
+    const status = await window.electronAPI?.retryBackend();
+    if (status) setBackendStatus(status);
+  };
+
+  // Load snapshots once the backend is actually reachable. Firing this on
+  // mount raced the backend: the request went out before we knew which port
+  // the backend had landed on, failed, and was never retried — which is what
+  // left the app looking empty and broken after a slow start.
   useEffect(() => {
+    if (!connected) return;
+
+    let cancelled = false;
     const loadSnapshots = async () => {
       setIsLoadingSnapshots(true);
       setSnapshotsError(null);
       console.log("[Snapshots] Loading saved snapshots...");
       try {
         const loadedSnapshots = await getSnapshots();
+        if (cancelled) return;
         console.log(`[Snapshots] Loaded ${loadedSnapshots.length} snapshots`);
         setSnapshots(loadedSnapshots);
       } catch (err) {
+        if (cancelled) return;
         console.error("[Snapshots] Failed to load snapshots:", err);
         setSnapshotsError(err instanceof Error ? err.message : "Failed to load snapshots");
       } finally {
-        setIsLoadingSnapshots(false);
+        if (!cancelled) setIsLoadingSnapshots(false);
       }
     };
     loadSnapshots();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connected]);
 
   // Load latest du-hast-much scan on mount
   useEffect(() => {
@@ -487,6 +551,8 @@ function App() {
   const handleNavigateToDuHastMuch = () => {
     setMainView("du-hast-much");
     setScanId(null);
+    setScanInfo(null);
+    setScanStatus("idle");
     setComparisonResult(null);
     setCurrentSnapshot(null);
     setComparisonSnapshotId(null);
@@ -550,9 +616,13 @@ function App() {
             <option value="dark-sepia">Dark Sepia</option>
           </select>
           <div className="connection-status">
-            {connected === null && <span className="status checking">Checking...</span>}
             {connected === true && <span className="status connected">Connected</span>}
-            {connected === false && <span className="status disconnected">Disconnected</span>}
+            {connected !== true && backendStatus?.state === "error" && (
+              <span className="status disconnected">Backend unavailable</span>
+            )}
+            {connected !== true && backendStatus?.state !== "error" && (
+              <span className="status checking">Starting…</span>
+            )}
           </div>
         </div>
         </div>
@@ -560,6 +630,12 @@ function App() {
 
       <main className="app-main">
         <div className="content-container">
+        <BackendStatus
+          status={backendStatus}
+          connected={connected}
+          onRetry={handleRetryBackend}
+        />
+
         {/* Single ScanControls instance - never unmounts during scan */}
         <ScanControls
           onScanComplete={handleScanComplete}
@@ -567,7 +643,7 @@ function App() {
           status={scanStatus}
           setStatus={setScanStatus}
           scanInfo={scanInfo}
-          onNavigateBack={scanStatus === "idle" ? undefined : handleNavigateToDuHastMuch}
+          onNavigateBack={mainView === "du-hast-much" ? undefined : handleNavigateToDuHastMuch}
         />
 
         {/* Du-hast-much view */}
@@ -595,6 +671,8 @@ function App() {
               onScanComplete={handleDuHastMuchComplete}
               initialResult={latestDuHastMuch}
             />
+
+            {connected === true && <SpaceTips />}
           </>
         )}
 
