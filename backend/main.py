@@ -38,6 +38,7 @@ else:
 
 from backend.database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
 from backend.du_hast_much import scan_directory, format_size
+from backend.diskcli.tips import tips_payload
 from backend.security.path_validator import PathValidator, InvalidPathError, create_default_validator
 from backend.security.input_sanitizer import InputSanitizer, ValidationError
 from backend.security.secure_logger import SecureLogger
@@ -63,23 +64,31 @@ def sanitize_string(s: str) -> str:
     return s.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
 
 
+# Default port. The launcher may move the backend to the next free one, so
+# nothing downstream should assume this value.
+DEFAULT_PORT = 8001
+
+
+def _local_origins() -> list[str]:
+    """
+    Allowed origins: the Vite dev servers, plus the port range the launcher
+    searches. Still localhost-only (CRITICAL-003); the packaged app loads from
+    file:// and sends no Origin header at all.
+    """
+    ports = list(range(5173, 5180)) + list(range(DEFAULT_PORT, DEFAULT_PORT + 20))
+    return [
+        f"http://{host}:{port}"
+        for port in ports
+        for host in ("localhost", "127.0.0.1")
+    ]
+
+
 app = FastAPI(title="Disk Intelligence API", version="1.0.0")
 
 # SECURITY: Lock down CORS to localhost only (CRITICAL-003)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-        "http://localhost:5175",
-        "http://127.0.0.1:5175",
-        "http://localhost:5176",
-        "http://127.0.0.1:5176",
-        "http://localhost:8001",
-        "http://127.0.0.1:8001",
-    ],
+    allow_origins=_local_origins(),
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
@@ -1022,6 +1031,12 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/tips")
+async def get_tips():
+    """Space-keeping tips (shared with `di tips`), relevant ones first."""
+    return tips_payload()
+
+
 @app.get("/api/scan/stream")
 async def scan_stream(root_path: str, request: Request):
     """Stream scan progress via Server-Sent Events."""
@@ -1753,11 +1768,44 @@ def kill_stale_backend(port: int) -> None:
         logger.warning(f"Could not kill stale backend on port {port}: {e}")
 
 
+def _parse_args():
+    """Port comes from --port, then BACKEND_PORT, then the default."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Disk Intelligence backend")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("BACKEND_PORT", DEFAULT_PORT)),
+        help=f"port to listen on (default: {DEFAULT_PORT})",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="interface to bind")
+    parser.add_argument(
+        "--kill-stale",
+        action="store_true",
+        help="kill any process already listening on the port before binding",
+    )
+    # Ignore anything unknown rather than dying: the launcher may pass flags a
+    # newer or older build does not recognise.
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        logger.warning(f"Ignoring unrecognised arguments: {unknown}")
+    return args
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    kill_stale_backend(8001)
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    _args = _parse_args()
+
+    # Only reclaim the port when explicitly asked. Doing this unconditionally
+    # meant a second launch would kill the backend the first window was still
+    # using; the launcher now picks a free port instead.
+    if _args.kill_stale:
+        kill_stale_backend(_args.port)
+
+    logger.info(f"Starting Disk Intelligence backend on {_args.host}:{_args.port}")
+    uvicorn.run(app, host=_args.host, port=_args.port)
 
 # TODO: Implement incremental scanning using Windows filesystem journals (USN Journal)
 # TODO: Add more sophisticated ignore rules with regex patterns

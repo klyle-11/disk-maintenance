@@ -17,6 +17,22 @@
   border-bottom: 1px solid var(--border-light);
   flex-shrink: 0;
   height: 48px;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+/* Reserve space for the macOS traffic lights (hiddenInset titlebar). */
+[data-platform="darwin"] .app-header {
+  padding-left: 88px;
+}
+
+.app-header button,
+.app-header select,
+.app-header input,
+.app-header .app-title,
+.app-header .connection-status {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .app-header h1 {

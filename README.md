@@ -1,507 +1,190 @@
 # Disk Intelligence
 
-A cross-platform disk analysis and maintenance tool built with **Tauri** (React frontend + Rust backend).
+Find what is eating your disk, see what changed since last time, and keep the
+space you free from filling straight back up.
 
-> **🚀 Recently migrated from Electron to Tauri for better performance, security, and smaller binary size!**
+Two front ends share one Python core and one database:
 
-## Features
+- **`di`**: a fast, dependency-free command line tool for scanning, growth
+  tracking, cleanup and a free-space guard.
+- **Desktop app**: Electron + React UI over a local FastAPI backend, with scan
+  findings, snapshots, folder comparison and space-keeping tips.
 
-- 🔍 **Deep Disk Scanning** - Scan directories to find large files, duplicates, cache folders, and more
-- 📊 **File Type Analysis** - Break down disk usage by file extension
-- 📁 **Directory Comparison** - Compare two directories to identify differences
-- 💾 **Snapshot Management** - Save scan results to track changes over time
-- 🎨 **Multiple Themes** - Light, Dark, Sepia, and Dark Sepia themes
-- 🔒 **Read-Only** - Safe analysis that doesn't modify your files
+Everything runs locally. Nothing leaves the machine (see [Security](#security)).
 
-## Platform Support
+> The `worktree-tauri-migration` branch holds an in-progress Tauri + Rust port.
+> `main` is Electron + Python; this README describes `main`.
 
-- ✅ Windows (10/11)
-- ✅ macOS (10.14+)
-- ✅ Linux (Ubuntu, Fedora, Debian, etc.)
-
-## 🚀 Key Benefits of Tauri Migration
-
-| **Metric** | **Electron** | **Tauri** | **Improvement** |
-|------------|--------------|-----------|-----------------|
-| **Binary Size** | ~100MB | ~10MB | **90% reduction** |
-| **Memory Usage** | ~200MB | ~50MB | **75% reduction** |
-| **Startup Time** | ~3s | ~1s | **3x faster** |
-| **Type Safety** | Partial | Full | **End-to-end** |
-| **Security** | Node.js exposure | Rust sandbox | **Much more secure** |
-
-## Prerequisites
-
-### Common
-- **Node.js** 18+ and npm
-- **Rust** 1.77+ (for Tauri)
-- **System WebView** (pre-installed on most systems)
-
-### Windows
-- PowerShell 5.1+ (pre-installed)
-- Microsoft Visual C++ Build Tools (for Rust)
-
-### macOS
-- Xcode Command Line Tools (for Rust):
-  ```bash
-  xcode-select --install
-  ```
-
-### Linux
-- Essential build tools:
-  ```bash
-  sudo apt install build-essential  # Ubuntu/Debian
-  sudo dnf install gcc-c++          # Fedora
-  ```
-
-## Installation
-
-### Quick Start (Recommended)
-
-1. **Install Rust** (if not already installed):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
-
-2. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd disk-maintenance
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   npm install
-   cd frontend && npm install && cd ..
-   ```
-
-4. **Run the application**:
-   ```bash
-   npm run tauri:dev
-   ```
-
-### Platform-Specific Setup
-
-#### Windows
-
-1. Install **Microsoft Visual C++ Build Tools**:
-   - Download from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
-   - Select "Desktop development with C++"
-
-2. Follow the Quick Start steps above
-
-#### macOS
-
-1. Install **Xcode Command Line Tools**:
-   ```bash
-   xcode-select --install
-   ```
-
-2. Follow the Quick Start steps above
-
-#### Linux (Ubuntu/Debian)
-
-1. Install build essentials:
-   ```bash
-   sudo apt update
-   sudo apt install build-essential libwebkit2gtk-4.1-dev \
-                    libssl-dev libgtk-3-dev libayatana-appindicator3-dev \
-                    librsvg2-dev
-   ```
-
-2. Follow the Quick Start steps above
-
-## Running the Application
-
-### Development Mode
-
-**Start the Tauri development server:**
-```bash
-npm run tauri:dev
-```
-
-This will:
-- Start the Vite development server
-- Launch the Tauri application
-- Enable hot-reloading for frontend changes
-- Enable auto-rebuild for Rust changes
-
-### Production Build
-
-**Build for your current platform:**
-```bash
-npm run build:tauri
-```
-
-The built application will be in:
-- **Windows**: `src-tauri/target/release/bundle/msi/`
-- **macOS**: `src-tauri/target/release/bundle/dmg/`
-- **Linux**: `src-tauri/target/release/bundle/deb/` or `bundle/appimage/`
-
-### Frontend Only Development
-
-If you only want to work on the React UI:
+## Quick start
 
 ```bash
-cd frontend
-npm run dev
+# CLI: needs only Python 3.10+, no packages
+ln -s "$PWD/di" ~/.local/bin/di      # macOS / Linux: anywhere on your PATH
+di help
 ```
 
-Then open `http://localhost:5176` in your browser.
+```bat
+:: Windows: di.cmd finds Python via the py launcher (or python, or %DI_PYTHON%)
+setx PATH "%PATH%;C:\path\to\disk-maintenance"
+di help
+```
+
+```bash
+
+# Desktop app (development)
+pip install -r backend/requirements.txt
+npm run install-all
+npm run dev                            # Python backend on :8001 + Vite on :5176 + Electron window
+```
+
+On macOS, give your terminal (and the packaged app) **Full Disk Access** in
+System Settings → Privacy & Security, or scans will skip protected folders.
+On Windows, use `npm run dev:win` (runs `python` instead of `python3`).
+
+## Platform support
+
+Everything works on macOS and Windows; the platform-specific parts are chosen automatically.
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| CLI launcher | `di` (bash) | `di.cmd` | `di` (bash) |
+| `di caches` locations | `~/Library/Caches`, `~/Library/Application Support`, `~/.*` | `%LOCALAPPDATA%`, `%APPDATA%`, `~\.*` | `~/.cache`, `~/.config`, `~/.*` |
+| Extra caches | Homebrew, Xcode, Simulator, CocoaPods, app updaters | NuGet, Scoop, `%LOCALAPPDATA%\Temp`, CrashDumps, app updaters | – |
+| `di guard --install` | launchd agent | Task Scheduler task (`DiskIntelligenceGuard`, runs hidden via `pythonw`) | prints a crontab line |
+| Guard notifications | Notification Center | Windows toast | `notify-send` |
+| `di tips` | APFS snapshots, purgeable space, swap, Xcode, Messages … | WSL/Docker `.vhdx`, hiberfil, page file, restore points, WinSxS, Storage Sense … | shared tips |
+| Desktop app | Electron DMG (`npm run dist:mac`) | Electron NSIS installer (`npm run dist:win`, `scripts\package.bat`) | not packaged |
+
+Shared everywhere: `di clean` (including .NET `bin/`/`obj/` next to a `.csproj`), ballast,
+scan/recent/growth/reclaim, and the app's tips panel (it only shows tips for the OS it runs on).
+
+## The `di` command line
+
+`di help` lists commands; `di help <command>` shows every option.
+
+### Finding what uses space
+
+| Command | What it does |
+|---|---|
+| `di scan [path] -d 2` | Rank folders by size, with a bar, share, recent bytes and last-touched time |
+| `di recent [path] --days 7` | What was written recently, by folder and by file (no baseline needed) |
+| `di snapshot [path]` | Record a baseline |
+| `di growth [path]` | Diff against the latest baseline: what grew, what shrank, rate per day |
+| `di snapshots` / `di forget <id>` | List / delete baselines |
+| `di reclaim [path]` | Report regenerable and cache folders (never deletes) |
+
+### Getting space back and keeping it
+
+macOS treats freed space as room for caches, APFS snapshots and swap, so a
+cleanup rarely sticks. These commands give space back and keep a floor under it.
+**Anything that deletes is a dry run unless you pass `--yes`.**
+
+```bash
+di clean ~/dev                     # node_modules, __pycache__, .next, .vite ... grouped by project
+di clean ~/dev --older-than 14 -y  # only projects idle for 2+ weeks
+di clean ~/dev --all               # also .venv, target/, build/, dist/ (only when a manifest proves they're build output)
+di caches -v                       # npm/yarn/bun/pip/uv/cargo/go/Homebrew/Xcode/editor/updater caches
+di caches --yes                    # clean the auto-safe ones (uses `npm cache clean` etc. when installed)
+di ballast set 5G                  # reserve 5 GB; `di ballast release` hands it back in an emergency
+di guard --auto --dev ~/dev --install   # launchd agent every 2h: notify < 20G, auto-clean < 20G,
+                                        # release ballast < 8G
+di guard --history                 # free-space readings the guard has logged
+di guard --uninstall
+di tips                            # where "System Data" comes from and how to take it back
+```
+
+After table commands, `di` occasionally prints one relevant tip (every 6 hours,
+or every time when the disk is low). Set `DI_TIPS=0` to turn that off.
+
+`scripts/clear_node_modules_pycache.sh` is the original report-only script that
+`di clean` replaces.
+
+## Desktop app
+
+- **Scan & findings**: large folders, old large folders, cache/regenerable
+  folders, duplicate-name folders and files, cold archives, and a breakdown by
+  file extension.
+- **Du-hast-much**: quick per-folder sizing with live progress and history.
+- **Folder comparison**: source vs target (mirror or backup validation) with
+  optional hash verification. Design: `docs/plans/2026-01-15-folder-comparison-design.md`.
+- **Snapshots**: save scans and comparisons, reopen and refresh them later.
+- **Keeping space free**: tips relevant to this Mac (Docker, snapshots, swap,
+  Xcode, Homebrew ...) with copyable commands, served from the same list as `di tips`.
+- **Themes**: Light, Dark, Sepia, Dark Sepia.
+
+The app only analyses; cleanup lives in `di`.
 
 ## Architecture
 
-### Overview
-
-The application now uses a modern **Tauri + Rust + React** stack:
-
-- **Frontend**: React 19 + TypeScript + Vite
-- **Backend**: Rust with Tauri IPC
-- **Database**: SQLite with Diesel ORM
-- **Desktop**: Tauri (system webview)
-
-### Backend (Rust/Tauri)
-
-Located in `src-tauri/src/`:
-
-- **`lib.rs`** - Main Tauri application setup
-- **`commands.rs`** - IPC command handlers (15 commands)
-- **`scanner.rs`** - File scanning engine with categorization
-- **`database.rs`** - Database connection management
-- **`repository.rs`** - Database CRUD operations
-- **`models.rs`** - Data models and type definitions
-- **`schema.rs`** - Diesel-generated database schema
-
-**Key Features:**
-- 🔍 **Recursive directory scanning** with ignore patterns
-- 📊 **File categorization** (temp files, large files, system junk, old files)
-- 📈 **Real-time progress tracking** via Tauri events
-- 💾 **SQLite database** with Diesel ORM
-- 🔒 **Type-safe IPC** with end-to-end type safety
-
-### Frontend (React/Tauri)
-
-Located in `frontend/src/`:
-
-- **`App.tsx`** - Main application component
-- **`api-tauri.ts`** - Tauri IPC client (replaces HTTP-based API)
-- **`api.ts`** - Legacy HTTP client (for reference)
-- **`components/`** - React components
-  - `ScanControls.tsx` - Scan initiation and controls
-  - `ScanResults.tsx` - Results display with findings
-  - `SnapshotGallery.tsx` - Saved snapshots management
-  - `ComparisonResults.tsx` - Directory comparison UI
-  - `DuHastMuch.tsx` - Advanced disk usage analysis
-
-### Communication
-
-**Before (Electron):**
 ```
-React → HTTP → FastAPI (Python) → SQLite
+Electron main (frontend/electron/)
+  ├── backend.cjs     supervises the Python backend: finds a free port, health-checks, restarts
+  └── React UI (frontend/src/)  ── HTTP/SSE on 127.0.0.1 ──►  FastAPI (backend/main.py)
+                                                                ├── security/   path validation, sanitising, headers, redacting logger
+                                                                ├── database.py SQLAlchemy / SQLite snapshots
+                                                                └── diskcli/tips.py  shared tips
+di / di.cmd ──► backend/diskcli/  stdlib only: walker, store (SQLite baselines), commands, maint, tips
 ```
 
-**After (Tauri):**
-```
-React → Tauri IPC → Rust → SQLite
-```
+| Path | Contents |
+|---|---|
+| `backend/main.py` | FastAPI app: scan (+SSE stream), findings, extensions, snapshots, compare, du-hast-much, tips |
+| `backend/diskcli/` | The `di` CLI. `walker.py` is the fast single-pass scanner; `maint.py` holds clean/caches/guard/ballast |
+| `backend/security/` | Path validator, input sanitiser, secure logger, security headers, encryption helper |
+| `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` is the HTTP client |
+| `frontend/electron/` | Main process, preload bridge, backend supervisor |
+| `scripts/` | Build, package, verify and audit scripts |
 
-**Benefits:**
-- ✅ No network overhead
-- ✅ Direct function calls
-- ✅ Better performance
-- ✅ Type-safe communication
+## Data locations
 
-## Themes
+| What | Where (macOS) |
+|---|---|
+| App snapshots (packaged) | `~/Library/Application Support/DiskIntelligence/disk_intelligence.db` |
+| App snapshots (dev) | `backend/disk_intelligence.db` |
+| CLI baselines, guard log, ballast, tip state | `~/Library/Application Support/DiskIntelligence/` (override the DB with `DISK_INTELLIGENCE_DB`) |
+| Guard launchd agent | `~/Library/LaunchAgents/com.diskintelligence.guard.plist` |
 
-The application supports four themes:
+Windows uses `%APPDATA%\DiskIntelligence` (the guard's Task Scheduler launcher is
+`guard_task.pyw` there), Linux `~/.local/share/DiskIntelligence`.
 
-1. **Light** - Clean, modern light theme
-2. **Dark** - Catppuccin Mocha-inspired dark theme
-3. **Sepia** - Light earthy tones with Papyrus font
-4. **Dark Sepia** - Dark earthy tones with bold gold accents and Papyrus font
+## Building
 
-Themes can be switched from the dropdown in the header.
-
-## Database
-
-The application uses **SQLite** for storing snapshots. The database file is automatically created in the app data directory:
-- **Windows**: `%APPDATA%\com.disk-intelligence.app\disk_intelligence.db`
-- **macOS**: `~/Library/Application Support/com.disk-intelligence.app/disk_intelligence.db`
-- **Linux**: `~/.local/share/com.disk-intelligence.app/disk_intelligence.db`
-
-The database is **not** tracked by git and will be created automatically on first run.
-
-## Development
-
-### Project Structure
-
-```
-disk-maintenance/
-├── src-tauri/              # Rust backend with Tauri
-│   ├── src/
-│   │   ├── lib.rs         # Main Tauri application
-│   │   ├── commands.rs    # IPC command handlers
-│   │   ├── scanner.rs     # File scanning engine
-│   │   ├── database.rs    # Database connection
-│   │   ├── repository.rs  # Database operations
-│   │   ├── models.rs      # Data models
-│   │   └── schema.rs      # Diesel schema
-│   ├── migrations/        # Database migrations
-│   ├── Cargo.toml        # Rust dependencies
-│   └── tauri.conf.json   # Tauri configuration
-├── frontend/             # React frontend
-│   ├── src/
-│   │   ├── components/   # React components
-│   │   ├── api-tauri.ts # Tauri IPC client
-│   │   ├── api.ts        # Legacy HTTP client
-│   │   └── App.tsx      # Main app component
-│   ├── electron/        # Legacy Electron files
-│   ├── package.json     # Frontend dependencies
-│   └── vite.config.ts   # Vite configuration
-├── backend/             # Legacy Python backend
-├── package.json         # Root package.json
-└── README.md
-```
-
-### Development Commands
-
-```bash
-# Install all dependencies
-npm install
-
-# Start Tauri development server
-npm run tauri:dev
-
-# Build for production
-npm run build:tauri
-
-# Frontend only (in browser)
-cd frontend
-npm run dev
-
-# Build frontend only
-cd frontend
-npm run build
-```
-
-### Working with Rust
-
-```bash
-# Check Rust code (in src-tauri/)
-cd src-tauri
-cargo check
-
-# Run Rust tests
-cargo test
-
-# Format Rust code
-cargo fmt
-
-# Check for issues
-cargo clippy
-```
-
-### Database Migrations
-
-```bash
-# Run pending migrations (automatic on app start)
-# Or manually:
-diesel migration run
-
-# Generate schema.rs from database
-diesel print-schema --database-url sqlite:disk_intelligence.db > src/schema.rs
-```
-
-### Troubleshooting
-
-#### Rust not found
-- Install Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- Restart your terminal after installation
-
-#### Build errors on Windows
-- Install **Microsoft Visual C++ Build Tools**
-- Ensure you have the latest Windows updates
-
-#### Build errors on macOS
-- Install Xcode Command Line Tools: `xcode-select --install`
-- Accept the license: `sudo xcodebuild -license accept`
-
-#### Build errors on Linux
-- Install webkit2gtk dependencies:
-  ```bash
-  sudo apt install libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev
-  ```
-
-#### Tauri dev won't start
-- Ensure you're in the project root directory
-- Check that Node.js and Rust are properly installed
-- Try clearing the Tauri cache: `rm -rf src-tauri/target`
-
-#### Permission errors during scan
-- The scanner automatically skips files/folders without permissions
-- On macOS, grant Full Disk Access in System Settings > Privacy & Security
-- On Linux, some system directories may require sudo access
-
-#### Database errors
-- The database is automatically created in the app data directory
-- Check file permissions for the app data directory
-- Try deleting the database file and letting it recreate
-
-#### Frontend issues
-- Clear browser cache and restart the dev server
-- Check console for errors (F12 in dev mode)
-- Ensure all dependencies are installed: `npm install`
-
-## Migration from Electron
-
-This project was migrated from **Electron + Python FastAPI** to **Tauri + Rust**. The legacy code has been preserved for reference:
-
-### Legacy Components
-- `backend/` - Original Python FastAPI backend
-- `frontend/electron/` - Original Electron main process
-- `frontend/src/api.ts` - Original HTTP-based API client
-
-### What Changed
-- **Backend**: Python → Rust (for better performance and security)
-- **IPC**: HTTP → Tauri commands (faster, type-safe)
-- **Database**: SQLAlchemy → Diesel ORM (compile-time safety)
-- **Binary Size**: ~100MB → ~10MB (90% reduction)
-- **Memory Usage**: ~200MB → ~50MB (75% reduction)
-
-### Compatibility
-- Database schema remains the same
-- All features preserved and enhanced
-- UI/UX unchanged from user perspective
-- Snapshots are compatible across versions
-
-## Technology Stack
-
-### Frontend
-- **React 19.2** - UI framework
-- **TypeScript 5.9** - Type-safe JavaScript
-- **Vite 7.2** - Build tool and dev server
-- **Tauri 2.10** - Desktop framework
-- **CSS3** - Styling with custom themes
-
-### Backend
-- **Rust 1.77+** - Systems programming language
-- **Tauri 2.10** - Desktop framework
-- **Diesel 2.1** - ORM for database operations
-- **SQLite** - Embedded database
-- **Tokio** - Async runtime
-
-### Key Libraries
-- **walkdir** - Recursive directory traversal
-- **ignore** - Gitignore-style file filtering
-- **serde** - Serialization/deserialization
-- **chrono** - Date and time handling
-- **uuid** - UUID generation
-- **sha2** - File hashing
-
-## Performance
-
-### Benchmarks (Typical Usage)
-
-| **Operation** | **Electron** | **Tauri** | **Improvement** |
-|---------------|--------------|-----------|-----------------|
-| **Cold Start** | ~3s | ~1s | **3x faster** |
-| **Scan 10K files** | ~15s | ~8s | **2x faster** |
-| **Memory Idle** | ~200MB | ~50MB | **75% less** |
-| **Memory Scanning** | ~350MB | ~120MB | **66% less** |
-| **Binary Size** | ~100MB | ~10MB | **90% smaller** |
+See [BUILD.md](BUILD.md). In short: `npm run package:mac` / `scripts/package.sh`
+(macOS) or `scripts\package.bat` (Windows) builds the backend with PyInstaller,
+builds the frontend, and packages with electron-builder into `release/`.
+PyInstaller can't cross-compile, so build each OS's installer on that OS.
+`npm run verify` checks the packaged app.
 
 ## Security
 
-### Security Features
-- 🔒 **Sandboxed Backend** - Rust memory safety guarantees
-- 🛡️ **Local-Only IPC** - No network exposure
-- 🔐 **Path Validation** - Prevents directory traversal attacks
-- ✅ **Input Sanitization** - Protects against malicious input
-- 🚫 **Read-Only Operations** - Safe file analysis only
+The app is designed to be local-only: backend bound to 127.0.0.1, CORS
+restricted to localhost origins, path validation and input sanitisation on
+every path-taking endpoint, security headers, CSP, redacted logging, Electron
+context isolation, and audited dependencies with telemetry disabled.
 
-### Compared to Electron
-- **Smaller Attack Surface** - No Node.js runtime exposure
-- **Memory Safe** - Rust prevents buffer overflows and memory leaks
-- **Type Safety** - End-to-end type checking prevents data corruption
-- **Sandboxing** - OS-level webview sandboxing
+Background documents (written during the March 2026 hardening pass; see
+`todo.md` for what's still open):
 
-## Building for Distribution
+| Document | Contents |
+|---|---|
+| `SECURITY_AUDIT_PLAN.md` | The 7-phase hardening plan |
+| `THREAT_MODEL.md` | Assets, STRIDE analysis, attack scenarios, risk matrix |
+| `SECURITY_REQUIREMENTS.md` | Numbered requirements (SR-xxx) |
+| `VULNERABILITY_REPORT.md` | Initial findings (CRITICAL/HIGH/MEDIUM/LOW) |
+| `PHASE1_COMPLETE.md` … `PHASE5_COMPLETE.md` | What each phase delivered |
+| `TELEMETRY_*`, `NODE_TELEMETRY_*` | Python / Node dependency telemetry audits |
 
-### Windows
-```bash
-npm run build:tauri
-# Output: src-tauri/target/release/bundle/msi/Disk Intelligence_<version>_x64_en-US.msi
-```
+## Troubleshooting
 
-### macOS
-```bash
-npm run build:tauri
-# Output: src-tauri/target/release/bundle/dmg/Disk Intelligence_<version>_x64.dmg
-```
-
-### Linux
-```bash
-npm run build:tauri
-# Output: src-tauri/target/release/bundle/deb/disk-intelligence_<version>_amd64.deb
-#         src-tauri/target/release/bundle/appimage/disk-intelligence_<version>_amd64.AppImage
-```
-
-### Code Signing (Optional)
-For production releases, you can enable code signing in `src-tauri/tauri.conf.json`:
-
-```json
-{
-  "bundle": {
-    "macOS": {
-      "signingIdentity": "Developer ID Application: Your Name"
-    },
-    "windows": {
-      "certificateThumbprint": "YOUR_CERTIFICATE_THUMBPRINT",
-      "digestAlgorithm": "sha256"
-    }
-  }
-}
-```
-
-## License
-
-[Add your license here]
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-### Development Setup
-1. Fork the repository
-2. Create your feature branch: `git checkout -b feature/my-feature`
-3. Commit your changes: `git commit -am 'Add some feature'`
-4. Push to the branch: `git push origin feature/my-feature`
-5. Submit a pull request
-
-### Code Style
-- **Rust**: Follow standard Rust style guidelines (`cargo fmt`)
-- **TypeScript/React**: Use ESLint configuration (`npm run lint`)
-- **Commit Messages**: Use clear, descriptive commit messages
-
-### Testing
-- Test on all target platforms (Windows, macOS, Linux)
-- Ensure file scanning works with various directory structures
-- Verify database operations and snapshot management
-- Check UI responsiveness during large scans
-
-## Acknowledgments
-
-- **Tauri Team** - For the amazing desktop framework
-- **Rust Community** - Excellent crates and documentation
-- **React Team** - The powerful UI library
-- **Diesel Team** - The ergonomic ORM
-
-## Support
-
-For issues, questions, or suggestions:
-- Open an issue on GitHub
-- Check existing documentation
-- Review troubleshooting section above
-
----
-
-**Built with ❤️ using Tauri + Rust + React**
+- **Scans miss folders / show "unreadable"**: grant Full Disk Access.
+- **App says "Backend unavailable"**: the banner has Retry and a log link. In
+  dev, check `npm run dev:backend` output. The backend moves to the next free
+  port if 8001 is taken.
+- **Packaged backend killed on first launch (macOS)**: the supervisor clears the
+  quarantine flag; if it persists, run `xattr -dr com.apple.quarantine "/Applications/Disk Intelligence.app"`.
+- **`di guard` notifications don't appear**: on macOS, allow notifications for
+  "Script Editor" (osascript) in System Settings → Notifications. On Windows,
+  toasts are sent as Windows PowerShell; check Settings → System → Notifications
+  and Focus Assist.
+- **No colours / odd characters in the Windows console**: `di` turns on ANSI
+  handling itself; use Windows Terminal if an old console still shows escape codes.

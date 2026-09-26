@@ -5,10 +5,11 @@ Bundles the FastAPI backend into a standalone executable.
 
 Usage:
     cd backend
-    pyinstaller disk-intelligence.spec
+    pyinstaller disk-intelligence.spec --clean
 """
 
 import os
+import sys
 
 # Get paths - assuming we run from backend directory
 BACKEND_DIR = os.getcwd()
@@ -22,6 +23,7 @@ a = Analysis(
         (os.path.join(BACKEND_DIR, 'du_hast_much.py'), 'backend'),
         (os.path.join(BACKEND_DIR, 'database.py'), 'backend'),
         (os.path.join(BACKEND_DIR, '__init__.py'), 'backend'),
+        (os.path.join(BACKEND_DIR, 'diskcli'), 'backend/diskcli'),
     ],
     hiddenimports=[
         'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
@@ -36,6 +38,7 @@ a = Analysis(
         'security.input_sanitizer', 'security.secure_logger',
         'security.headers', 'security.encryption',
         'database',
+        'diskcli', 'diskcli.tips', 'diskcli.store',
     ],
     hookspath=[],
     hooksconfig={},
@@ -53,14 +56,28 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX is off deliberately. On macOS it invalidates the code signature,
+    # which makes Gatekeeper kill the binary on launch; on Windows it is a
+    # reliable way to get flagged by antivirus. The size saving is not worth
+    # a backend that will not start.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    # Keep the console subsystem so stdout/stderr reach the launcher and end
+    # up in the log. With console=False the process is silent, which is why a
+    # failure to start used to produce no diagnostics at all.
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
-    entitlements_file=None,
+    # Entitlements matter on macOS: the app runs under a hardened runtime, and
+    # the backend has to read files all over the disk to do its job.
+    entitlements_file=(
+        os.path.join(BACKEND_DIR, 'entitlements.plist')
+        if sys.platform == 'darwin'
+        and os.path.exists(os.path.join(BACKEND_DIR, 'entitlements.plist'))
+        else None
+    ),
     icon=None,
 )

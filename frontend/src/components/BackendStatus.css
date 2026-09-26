@@ -1,0 +1,108 @@
+.backend-status {
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #d9d9e3);
+  background: var(--panel-bg, #f7f7fa);
+  font-size: 13px;
+}
+
+.backend-status.is-error {
+  border-color: #d4796b;
+  background: color-mix(in srgb, #d4796b 10%, var(--panel-bg, #f7f7fa));
+}
+
+.backend-status-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.backend-status-icon {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-weight: 700;
+  background: var(--accent-soft, #e3e3ec);
+  color: var(--text-secondary, #55555f);
+}
+
+.backend-status.is-error .backend-status-icon {
+  background: #d4796b;
+  color: #fff;
+}
+
+.backend-status-icon.spin {
+  animation: backend-status-spin 1s linear infinite;
+}
+
+@keyframes backend-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backend-status-icon.spin {
+    animation: none;
+  }
+}
+
+.backend-status-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.backend-status-detail {
+  color: var(--text-secondary, #55555f);
+  overflow-wrap: anywhere;
+}
+
+.backend-status-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.backend-status-actions button {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #d9d9e3);
+  background: var(--button-bg, #fff);
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.backend-status-actions button:hover:not(:disabled) {
+  background: var(--button-hover-bg, #ececf2);
+}
+
+.backend-status-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.backend-status-actions button.ghost {
+  background: transparent;
+}
+
+.backend-status-log {
+  margin: 12px 0 0;
+  padding: 10px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--code-bg, #1e1e28);
+  color: var(--code-fg, #dcdce4);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,5 @@
+# Keep launchers runnable on their own OS regardless of checkout settings.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+di    text eol=lf
+*.sh  text eol=lf

@@ -1,29 +1,37 @@
 #!/bin/bash
-# Full build and package for macOS
-# Creates a .dmg installer in the release/ directory
-# Run from the project root: ./scripts/package.sh
+# Full build and package for macOS.
+# Creates a .dmg in release/. Run from anywhere: ./scripts/package.sh
+set -euo pipefail
 
-set -e
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "============================================"
 echo " Packaging Disk Intelligence for macOS"
 echo "============================================"
 echo ""
 
-# Step 1: Build the Python backend
-echo "[Step 1/3] Building Python backend..."
-"$(dirname "$0")/build-backend.sh"
+echo "[Step 1/4] Building Python backend..."
+"$ROOT/scripts/build-backend.sh"
 
-# Step 2: Install frontend dependencies
 echo ""
-echo "[Step 2/3] Installing frontend dependencies..."
-cd "$(dirname "$0")/../frontend"
+echo "[Step 2/4] Installing frontend dependencies..."
+cd "$ROOT/frontend"
 npm install
 
-# Step 3: Build frontend and create Electron installer
 echo ""
-echo "[Step 3/3] Building frontend and creating installer..."
+echo "[Step 3/4] Building frontend and creating installer..."
+# Without a Developer ID, fall back to ad-hoc signing. Apple Silicon refuses
+# to run an unsigned app at all, so this is not optional. Set CSC_NAME to sign
+# with a real identity instead.
+if [ -z "${CSC_NAME:-}" ]; then
+  export CSC_IDENTITY_AUTO_DISCOVERY=false
+  echo "  (no CSC_NAME set — using an ad-hoc signature)"
+fi
 npm run dist:mac
+
+echo ""
+echo "[Step 4/4] Verifying the packaged backend..."
+"$ROOT/scripts/verify-package.sh"
 
 echo ""
 echo "============================================"
