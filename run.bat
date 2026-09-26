@@ -51,7 +51,7 @@ timeout /t 3 /nobreak >nul
 
 echo [4/4] Starting Electron frontend...
 cd frontend
-call npm run dev
+call npm run dev:win
 
 REM When frontend closes, cleanup
 echo.

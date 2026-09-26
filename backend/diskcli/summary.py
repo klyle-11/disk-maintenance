@@ -426,7 +426,8 @@ def _os_label() -> str:
     if sys.platform == "darwin":
         return f"macOS {platform.mac_ver()[0]}"
     if sys.platform == "win32":
-        return f"Windows {platform.release()}"
+        # Windows 11 still reports version 10.0; older Pythons say "10". Build 22000+ is 11.
+        return "Windows 11" if sys.getwindowsversion().build >= 22000 else f"Windows {platform.release()}"
     return f"{platform.system()} {platform.release()}"
 
 

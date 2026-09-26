@@ -13,6 +13,7 @@ import os
 import sys
 
 from . import commands
+from . import insights
 from . import maint
 from . import summary
 from . import tips
@@ -109,6 +110,15 @@ set DI_TIPS=0 to silence the occasional tip after a command.
     p.add_argument("id")
     p.add_argument("--db", default=None)
     p.set_defaults(func=commands.cmd_forget)
+
+    p = sub.add_parser("insights", help="everything worth knowing about one folder (also: di <path>, e.g. di .)")
+    p.add_argument("path", nargs="?", default=".", help="folder to look at (default: current folder)")
+    p.add_argument("-d", "--depth", type=int, default=12, help="how deep to look for duplicate and old folders")
+    p.add_argument("-n", "--top", type=int, default=15, help="numbered rows per section")
+    p.add_argument("-m", "--min-bytes", type=_size_arg, default=1 * MB, metavar="SIZE",
+                   help="ignore junk and cache folders smaller than this")
+    p.add_argument("--days", type=float, default=30.0, help="window for the NEW column")
+    p.set_defaults(func=insights.cmd_insights)
 
     p = sub.add_parser("reclaim", help="find caches and rebuildable folders worth deleting")
     _add_common(p, depth_default=4)
@@ -248,7 +258,7 @@ def cmd_help(parser: argparse.ArgumentParser, topic: str | None) -> int:
 
 
 # Commands whose output is a table for a person, where a trailing tip fits.
-_TIP_AFTER = {"scan", "recent", "growth", "reclaim", "clean", "caches"}
+_TIP_AFTER = {"insights", "scan", "recent", "growth", "reclaim", "clean", "caches"}
 
 
 def _maybe_tip(args) -> None:
@@ -262,11 +272,17 @@ def _maybe_tip(args) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    argv = sys.argv[1:] if argv is None else argv
+    # `di .` / `di ~/proj`: a path where a command would go means insights for it.
+    commands_by_name = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices
+    if (argv and argv[0] not in commands_by_name and not argv[0].startswith("-")
+            and os.path.isdir(os.path.expanduser(argv[0]))):
+        argv = ["insights", *argv]
     args = parser.parse_args(argv)
 
     if not getattr(args, "command", None):
-        summary.print_summary()
         _print_commands(parser)
+        summary.print_summary()
         return 0
     if args.command == "help":
         return cmd_help(parser, args.topic)

@@ -7,9 +7,11 @@ import os
 import sys
 import time
 
+from . import maint
+from . import picker
 from . import render as r
 from . import store
-from .walker import ScanError, find_recent_files, scan, DEFAULT_EXCLUDES
+from .walker import ScanError, cloud_hint, find_recent_files, scan, DEFAULT_EXCLUDES
 
 # Folder names that are regenerable: safe-ish to delete, and usually the
 # reason a project directory is enormous.
@@ -89,7 +91,33 @@ def _print_table(rows, total: int, root: str, show_recent: bool, days: float):
         line += f"  {r.human_count(node.files):>7}"
         line += f"  {r.DIM}{r.human_age(node.newest_mtime):>9}{r.RESET}"
         line += f"  {r.truncate_path(node.path, path_width, root)}"
+        if node.cloud:
+            line += f"  {r.CYAN}☁ {node.cloud}{r.RESET}"
         print(line)
+
+
+def _cloud_tops(result) -> list:
+    """Outermost scanned folders inside a cloud sync folder."""
+    def outermost(n) -> bool:
+        parent = result.nodes.get(os.path.dirname(n.path)) if n.path != result.root else None
+        return parent is None or not parent.cloud
+
+    return sorted((n for n in result.nodes.values() if n.cloud and n.cloud_bytes and outermost(n)),
+                  key=lambda n: -n.cloud_bytes)
+
+
+def _print_cloud_note(result) -> None:
+    tops = _cloud_tops(result)
+    if not tops:
+        return
+    total = sum(n.cloud_bytes for n in tops)
+    providers = sorted({n.cloud for n in tops})
+    print()
+    print(f"  {r.CYAN}☁{r.RESET} {r.BOLD}{r.human_size(total)}{r.RESET} are downloaded cloud files "
+          f"({', '.join(providers)}) {r.DIM}— still in the cloud, so the provider can free them here:{r.RESET}")
+    for p in providers:
+        r.note(f"    {p}: {cloud_hint(p)}")
+    r.note("    cloud-only files are not counted in any size above")
 
 
 def _tag_folder(name: str) -> str | None:
@@ -125,6 +153,8 @@ def cmd_scan(args) -> int:
                     "files": n.files,
                     "recent_bytes": n.recent_bytes,
                     "newest_mtime": n.newest_mtime,
+                    "cloud": n.cloud,
+                    "cloud_bytes": n.cloud_bytes,
                 }
                 for n in sorted(result.nodes.values(), key=lambda n: -n.size)
                 if n.depth <= args.depth and n.size >= args.min_bytes
@@ -147,6 +177,8 @@ def cmd_scan(args) -> int:
         if args.depth > 1:
             print(f"\n{r.BOLD}depth {depth}{r.RESET}")
         _print_table(rows, result.total_size, root, True, args.days)
+
+    _print_cloud_note(result)
 
     if result.errors:
         print()
@@ -527,7 +559,8 @@ def cmd_reclaim(args) -> int:
     for node in result.nodes.values():
         name = os.path.basename(node.path)
         tag = _tag_folder(name)
-        if not tag or node.size < args.min_bytes:
+        # Deleting inside a cloud folder deletes it from the cloud too; reported separately.
+        if not tag or node.size < args.min_bytes or node.cloud:
             continue
         # Skip a nested match inside an already-matched parent: deleting the
         # outer folder subsumes it.
@@ -556,23 +589,42 @@ def cmd_reclaim(args) -> int:
     print(r.rule())
     if not tops:
         r.note("no regenerable or cache folders above the threshold")
+        _print_cloud_note(result)
         return 0
 
     print(f"  {r.BOLD}{r.human_size(reclaimable)}{r.RESET} in regenerable folders "
           f"{r.DIM}(rebuildable — but verify before deleting){r.RESET}")
     print()
     width = min(r.term_width(), 120)
-    path_width = max(20, width - 56)
-    print(f"{r.DIM}  {'SIZE':>9}  {'':20}  {'KIND':<12} {'TOUCHED':>9}  FOLDER{r.RESET}")
-    for c in tops:
+    path_width = max(20, width - 61)
+    print(f"{r.DIM}  {'#':>3}  {'SIZE':>9}  {'':20}  {'KIND':<12} {'TOUCHED':>9}  FOLDER{r.RESET}")
+    for i, c in enumerate(tops, 1):
         frac = c["size"] / reclaimable if reclaimable else 0
         print(
+            f"  {r.BOLD}{i:>3}{r.RESET}"
             f"  {r.human_size(c['size']):>9}"
             f"  {r.bar(frac, 20, r.heat_color(frac))}"
             f"  {r.CYAN}{c['tag']:<12}{r.RESET}"
             f"{r.DIM}{r.human_age(c['newest_mtime']):>9}{r.RESET}"
             f"  {r.truncate_path(c['path'], path_width, root)}"
         )
-    print()
-    r.note("this command never deletes anything — it only reports")
+    _print_cloud_note(result)
+    if not picker.interactive():
+        print()
+        r.note("nothing deleted — run in a terminal to pick folders to delete by number")
+        return 0
+    # Matched by folder name only, so every deletion asks y/N first.
+    picker.delete_loop([
+        picker.Choice(r.truncate_path(c["path"], 60), c["size"],
+                      lambda p=c["path"]: _delete_reclaimable(p, root), confirm=True)
+        for c in tops
+    ], root)
     return 0
+
+
+def _delete_reclaimable(path: str, root: str) -> None:
+    real = os.path.realpath(path)
+    if not maint._within(path, root) or real in (os.path.realpath(root), os.path.realpath(maint.HOME)):
+        raise OSError(f"refusing to delete {path}")
+    if not maint.remove_tree(path):
+        raise OSError("partly deleted: some files are in use or access was denied")

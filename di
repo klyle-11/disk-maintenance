@@ -14,8 +14,11 @@ ROOT="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
 PY="${DI_PYTHON:-}"
 if [ -z "$PY" ]; then
-  for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1; then PY="$candidate"; break; fi
+  # Run each candidate: on Windows, python3/python may be Microsoft Store stubs that exist but fail.
+  for candidate in python3 python "py -3"; do
+    if $candidate -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
+      PY="$candidate"; break
+    fi
   done
 fi
 if [ -z "$PY" ]; then
@@ -24,4 +27,7 @@ if [ -z "$PY" ]; then
 fi
 
 export PYTHONPATH="$ROOT/backend${PYTHONPATH:+:$PYTHONPATH}"
-exec "$PY" -m diskcli "$@"
+export PYTHONUTF8=1
+# Native Windows Python under mintty sees pipes, not a terminal; tell it a person is here.
+if [ -t 0 ] && [ -t 1 ]; then export DI_TTY=1; fi
+exec $PY -m diskcli "$@"

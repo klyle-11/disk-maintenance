@@ -6,7 +6,8 @@ Maintenance commands: actually giving space back, and keeping it.
     di guard            free-space watchdog, installable as a launchd agent
     di ballast          a reserve file you can drop when the disk fills up
 
-Everything here is dry-run unless --yes is passed (guard --auto aside, which
+Everything here is dry-run unless --yes is passed, or you pick rows by number
+at the prompt clean and caches show in a terminal (guard --auto aside, which
 only touches entries marked auto-safe).
 """
 
@@ -17,14 +18,16 @@ import json
 import os
 import plistlib
 import shutil
+import stat
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 
+from . import picker
 from . import render as r
 from . import store
-from .walker import DEFAULT_EXCLUDES
+from .walker import DEFAULT_EXCLUDES, is_link, is_link_path, local_size
 
 HOME = os.path.expanduser("~")
 GB = 1 << 30
@@ -56,10 +59,10 @@ def disk_bytes(path: str) -> tuple[int, float]:
                     if key in seen:
                         continue
                     seen.add(key)
-                total += getattr(st, "st_blocks", 0) * 512 or st.st_size
+                total += getattr(st, "st_blocks", 0) * 512 or local_size(st)
                 if st.st_mtime > newest:
                     newest = st.st_mtime
-                if entry.is_dir(follow_symlinks=False):
+                if entry.is_dir(follow_symlinks=False) and not is_link(entry):
                     stack.append(entry.path)
     return total, newest
 
@@ -74,11 +77,25 @@ def _within(path: str, parent: str) -> bool:
 _NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 
-def remove_tree(path: str) -> None:
+def _clear_readonly_and_retry(func, path, _exc) -> None:
+    # Windows won't delete read-only files (git packs inside node_modules, for one).
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except OSError:
+        pass  # in use or permission denied: leave it, remove_tree reports what's left
+
+
+def remove_tree(path: str) -> bool:
+    """Delete a file or folder. Returns False if anything was left behind."""
     if os.path.islink(path) or not os.path.isdir(path):
         os.unlink(path)
+        return True
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_clear_readonly_and_retry)
     else:
-        shutil.rmtree(path, ignore_errors=True)
+        shutil.rmtree(path, onerror=_clear_readonly_and_retry)
+    return not os.path.lexists(path)
 
 
 def empty_dir(path: str) -> None:
@@ -188,7 +205,7 @@ def find_project_junk(root: str, groups: set[str]) -> list[Junk]:
         keep = []
         for d in dirnames:
             full = os.path.join(dirpath, d)
-            if d in DEFAULT_EXCLUDES or d == ".git" or os.path.islink(full):
+            if d in DEFAULT_EXCLUDES or d == ".git" or is_link_path(full):
                 continue
             spec = wanted.get(d)
             if spec and (spec[1] is None or spec[1](full)):
@@ -242,6 +259,8 @@ def cmd_clean(args) -> int:
         for j in targets:
             by_project.setdefault(_top_project(j.path, root), []).append(j)
 
+        projects = sorted(by_project.items(), key=lambda kv: -sum(j.size for j in kv[1]))
+
         print()
         print(r.header("Project build junk", f"{r.truncate_path(root, 50)} · kinds: {', '.join(sorted(groups))}"))
         print(r.rule())
@@ -249,8 +268,8 @@ def cmd_clean(args) -> int:
             r.note("nothing to clean")
         else:
             width = min(r.term_width(), 120)
-            print(f"{r.DIM}  {'SIZE':>9}  {'WORKED ON':>10}  {'WHAT':<28} PROJECT{r.RESET}")
-            for project, items in sorted(by_project.items(), key=lambda kv: -sum(j.size for j in kv[1])):
+            print(f"{r.DIM}  {'#':>3}  {'SIZE':>9}  {'WORKED ON':>10}  {'WHAT':<28} PROJECT{r.RESET}")
+            for i, (project, items) in enumerate(projects, 1):
                 size = sum(j.size for j in items)
                 touched = max(j.project_touched for j in items)
                 kinds: dict[str, int] = {}
@@ -260,10 +279,11 @@ def cmd_clean(args) -> int:
                 if len(what) > 28:
                     what = what[:27] + "…"
                 print(
+                    f"  {r.BOLD}{i:>3}{r.RESET}"
                     f"  {r.human_size(size):>9}"
                     f"  {r.DIM}{r.human_age(touched):>10}{r.RESET}"
                     f"  {r.CYAN}{what:<28}{r.RESET} "
-                    f"{r.truncate_path(project, max(20, width - 56), root)}"
+                    f"{r.truncate_path(project, max(20, width - 61), root)}"
                 )
             print()
             print(f"  {r.BOLD}{r.human_size(total)}{r.RESET} in {len(targets)} folder(s)")
@@ -273,19 +293,39 @@ def cmd_clean(args) -> int:
     if not targets:
         return 0
     if not args.yes:
-        if not args.json:
+        if args.json:
+            return 0
+        if not picker.interactive():
             r.note("dry run — nothing deleted. Re-run with --yes to delete.")
+            return 0
+        r.note("or re-run with --yes to delete everything listed")
+        picker.delete_loop([
+            picker.Choice(r.truncate_path(project, 60, root), sum(j.size for j in items),
+                          lambda items=items: _delete_junk(items, root))
+            for project, items in projects
+        ], root)
         return 0
 
     before = free_bytes(root)
-    for j in targets:
-        if not _within(j.path, root) or os.path.basename(j.path) not in PROJECT_JUNK:
-            continue
-        remove_tree(j.path)
+    try:
+        _delete_junk(targets, root)
+    except OSError as exc:
+        r.warn(str(exc))
     gained = free_bytes(root) - before
     if not args.json:
         print(f"  {r.GREEN}✓{r.RESET} deleted — free space {r.human_size(gained, signed=True)}")
     return 0
+
+
+def _delete_junk(items: list[Junk], root: str) -> None:
+    left = []
+    for j in items:
+        if not _within(j.path, root) or os.path.basename(j.path) not in PROJECT_JUNK:
+            continue
+        if not remove_tree(j.path):
+            left.append(j.path)
+    if left:
+        raise OSError(f"partly deleted: files in use or access denied under {', '.join(left)}")
 
 
 # ---------------------------------------------------------------------------
@@ -447,25 +487,36 @@ def cmd_caches(args) -> int:
             r.note("no known caches above the threshold")
             return 0
         width = min(r.term_width(), 120)
-        print(f"{r.DIM}  {'SIZE':>9}  {'USED':>9}  {'AUTO':<4}  CACHE{r.RESET}")
-        for row in rows:
+        print(f"{r.DIM}  {'#':>3}  {'SIZE':>9}  {'USED':>9}  {'AUTO':<4}  CACHE{r.RESET}")
+        pad = f"  {'':>3}  {'':>9}  {'':>9}  {'':<4}"
+        for i, row in enumerate(rows, 1):
             mark = f"{r.GREEN}yes {r.RESET}" if row["auto"] else f"{r.DIM}no  {r.RESET}"
             chosen = "" if row in selected else f" {r.DIM}(skipped){r.RESET}"
-            print(f"  {r.human_size(row['size']):>9}  {r.DIM}{r.human_age(row['newest']):>9}{r.RESET}"
+            print(f"  {r.BOLD}{i:>3}{r.RESET}  {r.human_size(row['size']):>9}  {r.DIM}{r.human_age(row['newest']):>9}{r.RESET}"
                   f"  {mark}  {row['name']}{chosen}")
             if row["note"] and args.verbose:
-                print(f"  {'':>9}  {'':>9}  {'':<4}  {r.DIM}↳ {row['note']}{r.RESET}")
+                print(f"{pad}  {r.DIM}↳ {row['note']}{r.RESET}")
             if args.verbose:
                 for p in row["paths"]:
-                    print(f"  {'':>9}  {'':>9}  {'':<4}  {r.DIM}{r.truncate_path(p, width - 30)}{r.RESET}")
+                    print(f"{pad}  {r.DIM}{r.truncate_path(p, width - 35)}{r.RESET}")
         total = sum(row["size"] for row in selected)
         print()
         print(f"  {r.BOLD}{r.human_size(total)}{r.RESET} selected "
               f"{r.DIM}(AUTO=yes entries; add --include-all or --only name,name){r.RESET}")
 
     if not args.yes:
-        if not args.json:
+        if args.json:
+            return 0
+        if not picker.interactive():
             r.note("dry run — nothing deleted. Re-run with --yes to clean the selected caches.")
+            return 0
+        r.note("or re-run with --yes to clean the selected caches")
+        # Caches marked AUTO=no are slow to rebuild or hold real state: ask first.
+        picker.delete_loop([
+            picker.Choice(row["name"], row["size"],
+                          lambda row=row: clean_cache(row["cache"], row["paths"]), confirm=not row["auto"])
+            for row in rows
+        ], HOME)
         return 0
 
     before = free_bytes()
@@ -692,6 +743,16 @@ def _install_schtasks(args, log: str) -> str | None:
     if res.returncode != 0:
         r.error(f"schtasks failed: {(res.stderr or res.stdout).strip()}")
         return None
+    # schtasks' defaults skip laptops on battery and runs missed while asleep.
+    settings = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+         "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries"
+         " -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30);"
+         f" Set-ScheduledTask -TaskName '{TASK_NAME}' -Settings $s | Out-Null"],
+        capture_output=True, text=True, **_NO_WINDOW,
+    )
+    if settings.returncode != 0:
+        r.warn("couldn't let the task run on battery; it will only run while plugged in")
     subprocess.run(["schtasks", "/Run", "/TN", TASK_NAME],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     return f"Task Scheduler → {TASK_NAME}"
