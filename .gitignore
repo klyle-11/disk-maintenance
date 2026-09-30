@@ -19,6 +19,11 @@ backend/tests/__pycache__/
 
 # Database
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 
 # Lock files
 package-lock.json
