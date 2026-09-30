@@ -167,8 +167,25 @@ TIPS: list[Tip] = [
     Tip("trash",
         "Deleted isn't freed until the Trash is empty",
         "Anything in the Trash still counts against your disk.",
-        "du -sh ~/.Trash",
-        ("path:.Trash",), only=("darwin", "linux")),
+        "du -sh ~/.Trash" if sys.platform == "darwin" else "du -sh ~/.local/share/Trash",
+        ("path:.Trash", "path:.local/share/Trash"), only=("darwin", "linux")),
+    Tip("apt-cache",
+        "apt keeps every package it downloads",
+        "Downloaded .deb files stay in /var/cache/apt/archives after install. autoremove also drops "
+        "old kernels and dependencies nothing needs any more.",
+        "sudo apt clean && sudo apt autoremove --purge",
+        ("tool:apt",), only=("linux",)),
+    Tip("journald",
+        "The system journal grows to its cap",
+        "journald keeps logs until they hit a size limit that can be several GB, which hurts on a small "
+        "SD card. Vacuum it now; set SystemMaxUse= in /etc/systemd/journald.conf to keep it down.",
+        "sudo journalctl --vacuum-size=200M",
+        ("tool:journalctl",), only=("linux",)),
+    Tip("docker-linux",
+        "Docker images and volumes pile up",
+        "Old images, stopped containers and dangling volumes live under /var/lib/docker.",
+        "docker system df && docker system prune -a --volumes",
+        ("tool:docker",), only=("linux",)),
 ]
 
 

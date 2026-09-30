@@ -76,11 +76,30 @@ cd frontend
 npm run dist:mac
 ```
 
-**Linux (AppImage):**
+**Linux (AppImage + .deb):**
 ```bash
-cd frontend
-npm run dist:linux
+./scripts/package-linux.sh        # or: cd frontend && npm run dist:linux
 ```
+
+### Raspberry Pi / Linux arm64
+
+PyInstaller can't cross-compile, so build the arm64 package on an arm64 machine
+(a Pi 5 with 8 GB works; a 4 GB one is fine with swap). On Raspberry Pi OS:
+
+```bash
+sudo apt install python3-venv python3-dev nodejs npm libfuse2   # libfuse2t64 on Pi OS "trixie"
+./scripts/package-linux.sh
+```
+
+- The backend builds in `backend/venv`, because Pi OS (like Debian) refuses
+  system-wide `pip install` (PEP 668).
+- The AppImage needs `libfuse2` to run. The `.deb` needs no FUSE, but
+  electron-builder's bundled `fpm` is x86-64 only, so on ARM the script builds
+  the `.deb` only when a system `fpm` is installed
+  (`sudo apt install ruby-dev build-essential && sudo gem install fpm`).
+- Install the .deb with `sudo apt install ./release/disk-intelligence_1.0.0_arm64.deb`.
+- For development on the Pi, run the backend from the same venv:
+  `backend/venv/bin/python backend/main.py` together with `npm run dev:frontend`.
 
 ## Output Files
 
@@ -95,7 +114,8 @@ After building, you'll find:
 - `release/Disk Intelligence.app` - Application bundle
 
 ### Linux
-- `release/disk-intelligence-1.0.0.AppImage` - AppImage bundle
+- `release/Disk Intelligence-1.0.0-arm64.AppImage` (or `-x86_64`) - AppImage bundle
+- `release/disk-intelligence_1.0.0_arm64.deb` (or `_amd64`) - Debian package
 
 ## Development Builds
 

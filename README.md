@@ -43,17 +43,30 @@ On Windows, use `npm run dev:win` (runs `python` instead of `python3`).
 
 ## Platform support
 
-Everything works on macOS and Windows; the platform-specific parts are chosen automatically.
+Everything works on macOS, Windows and Linux (x64 or ARM, including a Raspberry Pi); the platform-specific parts are chosen automatically.
 
 | | macOS | Windows | Linux |
 |---|---|---|---|
 | CLI launcher | `di` (bash) | `di.cmd` | `di` (bash) |
 | `di caches` locations | `~/Library/Caches`, `~/Library/Application Support`, `~/.*` | `%LOCALAPPDATA%`, `%APPDATA%`, `~\.*` | `~/.cache`, `~/.config`, `~/.*` |
 | Extra caches | Homebrew, Xcode, Simulator, CocoaPods, app updaters | NuGet, Scoop, `%LOCALAPPDATA%\Temp`, CrashDumps, app updaters | – |
-| `di guard --install` | launchd agent | Task Scheduler task (`DiskIntelligenceGuard`, runs hidden via `pythonw`) | prints a crontab line |
+| `di guard --install` | launchd agent | Task Scheduler task (`DiskIntelligenceGuard`, runs hidden via `pythonw`) | crontab entry |
 | Guard notifications | Notification Center | Windows toast | `notify-send` |
-| `di tips` | APFS snapshots, purgeable space, swap, Xcode, Messages … | WSL/Docker `.vhdx`, hiberfil, page file, restore points, WinSxS, Storage Sense … | shared tips |
-| Desktop app | Electron DMG (`npm run dist:mac`) | Electron NSIS installer (`npm run dist:win`, `scripts\package.bat`) | not packaged |
+| `di tips` | APFS snapshots, purgeable space, swap, Xcode, Messages … | WSL/Docker `.vhdx`, hiberfil, page file, restore points, WinSxS, Storage Sense … | apt cache, journald, Docker, Trash + shared tips |
+| Desktop app | Electron DMG (`npm run dist:mac`) | Electron NSIS installer (`npm run dist:win`, `scripts\package.bat`) | AppImage / .deb for the build machine's arch (`scripts/package-linux.sh`) |
+
+### Raspberry Pi (Raspberry Pi OS, arm64)
+
+The CLI is plain Python, so it runs as-is on a Pi 5 (Pi OS ships Python 3.11+):
+
+```bash
+ln -s "$PWD/di" ~/.local/bin/di
+di                                   # works over SSH on Pi OS Lite too
+di guard --auto --install            # adds a crontab entry; notify-send only shows on the desktop edition
+```
+
+For the desktop app, build on the Pi itself: `sudo apt install python3-venv nodejs npm`, then
+`./scripts/package-linux.sh` (see [BUILD.md](BUILD.md#raspberry-pi--linux-arm64)).
 
 Shared everywhere: `di clean` (including .NET `bin/`/`obj/` next to a `.csproj`), ballast,
 scan/recent/growth/reclaim, and the app's tips panel (it only shows tips for the OS it runs on).

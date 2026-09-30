@@ -14,7 +14,8 @@
     "preview": "vite preview",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
     "react": "^19.2.0",
@@ -89,6 +90,15 @@
       "gatekeeperAssess": false,
       "entitlements": "../backend/entitlements.plist",
       "entitlementsInherit": "../backend/entitlements.plist"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "maintainer": "Disk Intelligence <disk-intelligence@localhost>",
+      "synopsis": "Find what is eating your disk"
     },
     "dmg": {
       "contents": [

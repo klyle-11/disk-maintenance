@@ -16,22 +16,23 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# Install PyInstaller if not present
-if ! python3 -m pip show pyinstaller &> /dev/null; then
-    echo "Installing PyInstaller..."
-    python3 -m pip install pyinstaller
+# Build in a venv: Debian / Raspberry Pi OS refuse system-wide pip installs (PEP 668).
+if [ ! -x venv/bin/python ]; then
+    echo "Creating build venv in backend/venv..."
+    python3 -m venv venv || { echo "ERROR: python3 -m venv failed (on Debian/Pi OS: sudo apt install python3-venv)"; exit 1; }
 fi
+PY=venv/bin/python
 
-# Install backend dependencies
-echo "Installing backend dependencies..."
-python3 -m pip install -r requirements.txt
+echo "Installing PyInstaller and backend dependencies..."
+$PY -m pip install --upgrade pip pyinstaller
+$PY -m pip install -r requirements.txt
 
 # Clean previous build
 rm -rf dist build
 
 # Run PyInstaller
 echo "Running PyInstaller..."
-python3 -m PyInstaller disk-intelligence.spec --clean
+$PY -m PyInstaller disk-intelligence.spec --clean
 
 echo ""
 if [ -f "dist/disk-intelligence-backend" ]; then

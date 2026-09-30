@@ -14,10 +14,12 @@
     "dist": "npm --prefix frontend run dist",
     "dist:win": "npm --prefix frontend run dist:win",
     "dist:mac": "npm --prefix frontend run dist:mac",
+    "dist:linux": "npm --prefix frontend run dist:linux",
     "di": "./di",
     "di:win": "di.cmd",
     "verify": "./scripts/verify-package.sh",
-    "package:mac": "./scripts/package.sh"
+    "package:mac": "./scripts/package.sh",
+    "package:linux": "./scripts/package-linux.sh"
   },
   "dependencies": {
     "concurrently": "^9.2.1"

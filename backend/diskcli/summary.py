@@ -141,7 +141,7 @@ def _other_drives() -> list[dict]:
         for point, fstype in _mount_types().items():
             if not point.startswith(("/media/", "/mnt/", "/run/media/")) and not (
                 fstype in ("ext4", "ext3", "xfs", "btrfs", "ntfs", "ntfs3", "vfat", "exfat", "zfs")
-                and point not in ("/", "/boot", "/boot/efi")
+                and point not in ("/", "/boot", "/boot/efi", "/boot/firmware")
             ):
                 continue
             try:
@@ -428,6 +428,15 @@ def _os_label() -> str:
     if sys.platform == "win32":
         # Windows 11 still reports version 10.0; older Pythons say "10". Build 22000+ is 11.
         return "Windows 11" if sys.getwindowsversion().build >= 22000 else f"Windows {platform.release()}"
+    # "Debian GNU/Linux 12 (bookworm)", "Raspberry Pi OS", ... beats a bare kernel version.
+    try:
+        with open("/etc/os-release", encoding="utf-8") as f:
+            info = dict(line.rstrip("\n").split("=", 1) for line in f if "=" in line)
+        name = info.get("PRETTY_NAME", "").strip('"')
+        if name:
+            return name if platform.machine() == "x86_64" else f"{name} ({platform.machine()})"
+    except OSError:
+        pass
     return f"{platform.system()} {platform.release()}"
 
 

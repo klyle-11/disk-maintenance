@@ -675,11 +675,7 @@ def _install_agent(args) -> int:
     elif sys.platform == "win32":
         where = _install_schtasks(args, log)
     else:
-        cmd = " ".join([f'PYTHONPATH="{_backend_dir()}"', sys.executable, "-m", "diskcli", *_guard_argv(args)])
-        hours = max(1, round(args.every))
-        r.note("automatic install is macOS/Windows only. Add this line with `crontab -e`:")
-        print(f"\n  0 */{hours} * * * {cmd} >> {log} 2>&1\n")
-        return 0
+        where = _install_cron(args, log)
     if where is None:
         return 1
     print(f"  {r.GREEN}✓{r.RESET} guard installed — runs every {args.every:g}h")
@@ -758,6 +754,40 @@ def _install_schtasks(args, log: str) -> str | None:
     return f"Task Scheduler → {TASK_NAME}"
 
 
+def _crontab_lines() -> list[str] | None:
+    """The user's crontab without any di guard line; None if crontab isn't available."""
+    if not shutil.which("crontab"):
+        return None
+    res = subprocess.run(["crontab", "-l"], capture_output=True, text=True, check=False)
+    # Exit 1 with "no crontab for <user>" just means it's empty.
+    return [l for l in res.stdout.splitlines() if "diskcli guard" not in l]
+
+
+def _write_crontab(lines: list[str]) -> bool:
+    res = subprocess.run(["crontab", "-"], input="\n".join(lines) + "\n",
+                         capture_output=True, text=True, check=False)
+    if res.returncode != 0:
+        r.error(f"crontab failed: {res.stderr.strip()}")
+    return res.returncode == 0
+
+
+def _install_cron(args, log: str) -> str | None:
+    hours = min(23, max(1, round(args.every)))
+    # cron runs without the desktop session's environment; point notify-send at the user's bus.
+    env = [f'PYTHONPATH="{_backend_dir()}"', "NO_COLOR=1",
+           f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{os.getuid()}/bus"]
+    line = " ".join([f"0 */{hours} * * *", *env, sys.executable, "-m", "diskcli", *_guard_argv(args),
+                     ">>", log, "2>&1"])
+    lines = _crontab_lines()
+    if lines is None:
+        r.note("crontab not found (sudo apt install cron). Add this line with `crontab -e`:")
+        print(f"\n  {line}\n")
+        return None
+    if not _write_crontab([*lines, line]):
+        return None
+    return "crontab (see `crontab -l`)"
+
+
 def _uninstall_agent() -> int:
     removed = False
     if sys.platform == "darwin":
@@ -774,8 +804,12 @@ def _uninstall_agent() -> int:
         if os.path.exists(_task_script_path()):
             os.unlink(_task_script_path())
     else:
-        r.note("remove the di guard line with `crontab -e`")
-        return 0
+        kept = _crontab_lines()
+        if kept is None:
+            r.note("remove the di guard line with `crontab -e`")
+            return 0
+        res = subprocess.run(["crontab", "-l"], capture_output=True, text=True, check=False)
+        removed = "diskcli guard" in res.stdout and _write_crontab(kept)
     if removed:
         print(f"  {r.GREEN}✓{r.RESET} guard removed")
     else:
