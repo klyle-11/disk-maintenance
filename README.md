@@ -84,20 +84,20 @@ gives the same data for scripts. `di help` then lists commands; `di help <comman
 |---|---|
 | `di summary` | Disk, drives, memory and recent changes at a glance (what bare `di` shows) |
 | `di .` / `di <path>` | Insights for one folder: biggest folders, new files, dev junk and caches (type a row number to delete it), duplicate files and folders, old folders, file types |
-| `di scan [path] -d 2` | Rank folders by size, with a bar, share, recent bytes and last-touched time |
+| `di scan [path] -d 2` | Rank folders by size, with a bar, share, recent bytes and last-touched time; rows are numbered for the delete prompt |
 | `di recent [path] --days 7` | What was written recently, by folder and by file (no baseline needed) |
 | `di snapshot [path]` | Record a baseline |
 | `di growth [path]` | Diff against the latest baseline: what grew, what shrank, rate per day |
 | `di snapshots` / `di forget <id>` | List / delete baselines |
-| `di reclaim [path]` | Rank regenerable and cache folders; in a terminal, type a row number to delete it (asks y/N) |
+| `di reclaim [path]` | Rank regenerable and cache folders; in a terminal, type a row number to delete it |
 
 ### Getting space back and keeping it
 
 macOS treats freed space as room for caches, APFS snapshots and swap, so a
 cleanup rarely sticks. These commands give space back and keep a floor under it.
 **Anything that deletes is a dry run unless you pass `--yes`** — or, in a terminal, you type a row's number at the
-`delete #` prompt that `di .`, `di reclaim`, `di clean` and `di caches` leave open (one row at a time; name-matched
-folders and slow-to-rebuild caches ask y/N first).
+`delete #` prompt that `di .`, `di scan`, `di recent`, `di growth`, `di reclaim`, `di clean` and `di caches` leave open
+(one row at a time, each confirmed y/n; Enter lists what is left, q quits). Numbered rows show the whole path.
 
 Cloud sync folders (OneDrive, Dropbox, iCloud …) are handled specially: files that are only in the cloud count as
 0 bytes, downloaded ones are marked ☁ and totalled with how to free them through the provider, and `reclaim`

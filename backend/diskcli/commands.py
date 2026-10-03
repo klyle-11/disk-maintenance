@@ -63,7 +63,8 @@ def _rows_for_depth(result, depth: int, top: int, min_bytes: int):
     return rows[:top]
 
 
-def _print_table(rows, total: int, root: str, show_recent: bool, days: float):
+def _print_table(rows, total: int, root: str, show_recent: bool, days: float, number_from: int | None = None):
+    """`number_from` numbers the rows for the delete prompt and shows whole paths."""
     if not rows:
         r.note("nothing above the size threshold")
         return
@@ -71,17 +72,20 @@ def _print_table(rows, total: int, root: str, show_recent: bool, days: float):
     width = min(r.term_width(), 120)
     recent_col = 10 if show_recent else 0
     path_width = max(20, width - 10 - 20 - 7 - recent_col - 8 - 10 - 6)
+    numbered = number_from is not None
 
-    head = f"  {'SIZE':>9}  {'':20} {'SHARE':>6}"
+    head = f"  {'#':>3}" if numbered else ""
+    head += f"  {'SIZE':>9}  {'':20} {'SHARE':>6}"
     if show_recent:
         head += f"  {f'NEW/{int(days)}d':>9}"
     head += f"  {'FILES':>7}  {'TOUCHED':>9}  FOLDER"
     print(f"{r.DIM}{head}{r.RESET}")
 
-    for node in rows:
+    for i, node in enumerate(rows, number_from or 0):
         share = node.size / total if total else 0
         color = r.heat_color(share)
-        line = f"  {r.human_size(node.size):>9}  {r.bar(share, 20, color)} {share * 100:5.1f}%"
+        line = f"  {r.BOLD}{i:>3}{r.RESET}" if numbered else ""
+        line += f"  {r.human_size(node.size):>9}  {r.bar(share, 20, color)} {share * 100:5.1f}%"
         if show_recent:
             if node.recent_bytes:
                 recent = f"{r.RED}{r.human_size(node.recent_bytes):>9}{r.RESET}"
@@ -90,7 +94,7 @@ def _print_table(rows, total: int, root: str, show_recent: bool, days: float):
             line += f"  {recent}"
         line += f"  {r.human_count(node.files):>7}"
         line += f"  {r.DIM}{r.human_age(node.newest_mtime):>9}{r.RESET}"
-        line += f"  {r.truncate_path(node.path, path_width, root)}"
+        line += f"  {r.full_path(node.path) if numbered else r.truncate_path(node.path, path_width, root)}"
         if node.cloud:
             line += f"  {r.CYAN}☁ {node.cloud}{r.RESET}"
         print(line)
@@ -130,6 +134,21 @@ def _tag_folder(name: str) -> str | None:
     return None
 
 
+def _path_choice(path: str, size: int, root: str) -> picker.Choice:
+    return picker.Choice(r.full_path(path), size, lambda: _delete_reclaimable(path, root), path=path)
+
+
+def _offer_delete(choices: list[picker.Choice], root: str) -> None:
+    """Stay open after a listing so numbered rows can be deleted."""
+    if not choices:
+        return
+    if not picker.interactive():
+        print()
+        r.note("nothing deleted — run in a terminal to delete numbered rows by typing their number")
+        return
+    picker.delete_loop(choices, root)
+
+
 # ---------------------------------------------------------------------------
 # di scan
 # ---------------------------------------------------------------------------
@@ -165,18 +184,20 @@ def cmd_scan(args) -> int:
 
     print()
     print(r.header(
-        r.truncate_path(root, 70),
+        r.full_path(root),
         f"{r.human_size(result.total_size)} · {r.human_count(result.total_files)} files · {result.elapsed:.1f}s",
     ))
     print(r.rule())
 
+    choices: list[picker.Choice] = []
     for depth in range(1, args.depth + 1):
         rows = _rows_for_depth(result, depth, args.top, args.min_bytes)
         if not rows:
             continue
         if args.depth > 1:
             print(f"\n{r.BOLD}depth {depth}{r.RESET}")
-        _print_table(rows, result.total_size, root, True, args.days)
+        _print_table(rows, result.total_size, root, True, args.days, number_from=len(choices) + 1)
+        choices += [_path_choice(n.path, n.size, root) for n in rows]
 
     _print_cloud_note(result)
 
@@ -192,6 +213,7 @@ def cmd_scan(args) -> int:
         )
         print()
         r.note(f"baseline saved as {baseline_id} — compare later with:  di growth {args.path}")
+    _offer_delete(choices, root)
     return 0
 
 
@@ -250,7 +272,7 @@ def cmd_recent(args) -> int:
     print()
     print(r.header(
         f"Recent growth · last {int(args.days)} days",
-        r.truncate_path(root, 50),
+        r.full_path(root),
     ))
     print(r.rule())
     print(f"  {r.BOLD}{r.human_size(total_recent)}{r.RESET} written or modified in the window "
@@ -263,19 +285,20 @@ def cmd_recent(args) -> int:
         return 0
 
     print()
-    width = min(r.term_width(), 120)
-    path_width = max(20, width - 62)
-    print(f"{r.DIM}  {'NEW':>9}  {'':20} {'SHARE':>6}  {'OF FOLDER':>9}  {'FILES':>7}  FOLDER{r.RESET}")
+    print(f"{r.DIM}  {'#':>3}  {'NEW':>9}  {'':20} {'SHARE':>6}  {'OF FOLDER':>9}  {'FILES':>7}  FOLDER{r.RESET}")
 
+    choices: list[picker.Choice] = []
     for node in rows:
         share = node.recent_bytes / total_recent if total_recent else 0
         of_folder = node.recent_bytes / node.size if node.size else 0
         color = r.heat_color(share)
         tag = _tag_folder(os.path.basename(node.path))
-        label = r.truncate_path(node.path, path_width, root)
+        label = r.full_path(node.path)
         if tag:
             label += f" {r.DIM}[{tag}]{r.RESET}"
+        choices.append(_path_choice(node.path, node.size, root))
         print(
+            f"  {r.BOLD}{len(choices):>3}{r.RESET}"
             f"  {r.RED}{r.human_size(node.recent_bytes):>9}{r.RESET}"
             f"  {r.bar(share, 20, color)} {share * 100:5.1f}%"
             f"  {of_folder * 100:8.0f}%"
@@ -289,8 +312,9 @@ def cmd_recent(args) -> int:
             print()
             print(f"{r.BOLD}Largest individual files in the window{r.RESET}")
             print()
-            print(f"{r.DIM}  {'SIZE':>9}  {'MODIFIED':>10}  FILE{r.RESET}")
+            print(f"{r.DIM}  {'#':>3}  {'SIZE':>9}  {'MODIFIED':>10}  FILE{r.RESET}")
             for f in files:
+                choices.append(_path_choice(f["path"], f["size"], root))
                 ext = os.path.splitext(f["path"])[1].lower()
                 mark = ""
                 if ext in ARCHIVE_EXTS:
@@ -298,13 +322,15 @@ def cmd_recent(args) -> int:
                 elif ext in MEDIA_EXTS:
                     mark = f" {r.DIM}[media]{r.RESET}"
                 print(
+                    f"  {r.BOLD}{len(choices):>3}{r.RESET}"
                     f"  {r.human_size(f['size']):>9}"
                     f"  {r.DIM}{r.human_age(f['mtime']):>10}{r.RESET}"
-                    f"  {r.truncate_path(f['path'], path_width + 10, root)}{mark}"
+                    f"  {r.full_path(f['path'])}{mark}"
                 )
 
     print()
     r.note(f"tip: save a baseline now with  di snapshot {args.path}  then use  di growth {args.path}  later")
+    _offer_delete(choices, root)
     return 0
 
 
@@ -423,8 +449,7 @@ def cmd_growth(args) -> int:
     )
 
     biggest = max((abs(d["delta"]) for d in deltas if d["depth"] > 0), default=1)
-    width = min(r.term_width(), 120)
-    path_width = max(20, width - 58)
+    choices: list[picker.Choice] = []
 
     def show(title: str, items: list, color: str) -> None:
         if not items:
@@ -432,8 +457,13 @@ def cmd_growth(args) -> int:
         print()
         print(f"{r.BOLD}{title}{r.RESET}")
         print()
-        print(f"{r.DIM}  {'CHANGE':>10}  {'':20}  {'WAS':>9}  {'NOW':>9}  FOLDER{r.RESET}")
+        print(f"{r.DIM}  {'#':>3}  {'CHANGE':>10}  {'':20}  {'WAS':>9}  {'NOW':>9}  FOLDER{r.RESET}")
         for d in items:
+            # Only whole folders that still exist can be picked.
+            number = ""
+            if not d.get("loose") and not d.get("gone"):
+                choices.append(_path_choice(d["path"], d["new"], root))
+                number = len(choices)
             frac = abs(d["delta"]) / biggest
             marker = ""
             if d.get("loose"):
@@ -446,11 +476,12 @@ def cmd_growth(args) -> int:
             if tag:
                 marker += f" {r.DIM}[{tag}]{r.RESET}"
             print(
+                f"  {r.BOLD}{number:>3}{r.RESET}"
                 f"  {color}{r.human_size(d['delta'], signed=True):>10}{r.RESET}"
                 f"  {r.bar(frac, 20, color)}"
                 f"  {r.DIM}{r.human_size(d['old']):>9}{r.RESET}"
                 f"  {r.human_size(d['new']):>9}"
-                f"  {r.truncate_path(d['path'], path_width, root)}{marker}"
+                f"  {r.full_path(d['path'])}{marker}"
             )
 
     show(f"Grew the most", grew, r.RED)
@@ -467,6 +498,7 @@ def cmd_growth(args) -> int:
         )
         print()
         r.note(f"new baseline saved as {baseline_id}")
+    _offer_delete(choices, root)
     return 0
 
 
@@ -585,7 +617,7 @@ def cmd_reclaim(args) -> int:
         return 0
 
     print()
-    print(r.header("Reclaimable space", r.truncate_path(root, 50)))
+    print(r.header("Reclaimable space", r.full_path(root)))
     print(r.rule())
     if not tops:
         r.note("no regenerable or cache folders above the threshold")
@@ -595,8 +627,6 @@ def cmd_reclaim(args) -> int:
     print(f"  {r.BOLD}{r.human_size(reclaimable)}{r.RESET} in regenerable folders "
           f"{r.DIM}(rebuildable — but verify before deleting){r.RESET}")
     print()
-    width = min(r.term_width(), 120)
-    path_width = max(20, width - 61)
     print(f"{r.DIM}  {'#':>3}  {'SIZE':>9}  {'':20}  {'KIND':<12} {'TOUCHED':>9}  FOLDER{r.RESET}")
     for i, c in enumerate(tops, 1):
         frac = c["size"] / reclaimable if reclaimable else 0
@@ -606,25 +636,16 @@ def cmd_reclaim(args) -> int:
             f"  {r.bar(frac, 20, r.heat_color(frac))}"
             f"  {r.CYAN}{c['tag']:<12}{r.RESET}"
             f"{r.DIM}{r.human_age(c['newest_mtime']):>9}{r.RESET}"
-            f"  {r.truncate_path(c['path'], path_width, root)}"
+            f"  {r.full_path(c['path'])}"
         )
     _print_cloud_note(result)
-    if not picker.interactive():
-        print()
-        r.note("nothing deleted — run in a terminal to pick folders to delete by number")
-        return 0
-    # Matched by folder name only, so every deletion asks y/N first.
-    picker.delete_loop([
-        picker.Choice(r.truncate_path(c["path"], 60), c["size"],
-                      lambda p=c["path"]: _delete_reclaimable(p, root), confirm=True)
-        for c in tops
-    ], root)
+    _offer_delete([_path_choice(c["path"], c["size"], root) for c in tops], root)
     return 0
 
 
 def _delete_reclaimable(path: str, root: str) -> None:
-    real = os.path.realpath(path)
-    if not maint._within(path, root) or real in (os.path.realpath(root), os.path.realpath(maint.HOME)):
+    # Never the scanned folder itself, nor anything that holds the home directory.
+    if not maint._within(path, root) or maint._within(root, path) or maint._within(maint.HOME, path):
         raise OSError(f"refusing to delete {path}")
     if not maint.remove_tree(path):
         raise OSError("partly deleted: some files are in use or access was denied")

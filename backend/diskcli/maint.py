@@ -7,7 +7,7 @@ Maintenance commands: actually giving space back, and keeping it.
     di ballast          a reserve file you can drop when the disk fills up
 
 Everything here is dry-run unless --yes is passed, or you pick rows by number
-at the prompt clean and caches show in a terminal (guard --auto aside, which
+at the prompt clean and caches show in a terminal (it asks y/n each time) (guard --auto aside, which
 only touches entries marked auto-safe).
 """
 
@@ -262,12 +262,11 @@ def cmd_clean(args) -> int:
         projects = sorted(by_project.items(), key=lambda kv: -sum(j.size for j in kv[1]))
 
         print()
-        print(r.header("Project build junk", f"{r.truncate_path(root, 50)} · kinds: {', '.join(sorted(groups))}"))
+        print(r.header("Project build junk", f"{r.full_path(root)} · kinds: {', '.join(sorted(groups))}"))
         print(r.rule())
         if not targets:
             r.note("nothing to clean")
         else:
-            width = min(r.term_width(), 120)
             print(f"{r.DIM}  {'#':>3}  {'SIZE':>9}  {'WORKED ON':>10}  {'WHAT':<28} PROJECT{r.RESET}")
             for i, (project, items) in enumerate(projects, 1):
                 size = sum(j.size for j in items)
@@ -283,7 +282,7 @@ def cmd_clean(args) -> int:
                     f"  {r.human_size(size):>9}"
                     f"  {r.DIM}{r.human_age(touched):>10}{r.RESET}"
                     f"  {r.CYAN}{what:<28}{r.RESET} "
-                    f"{r.truncate_path(project, max(20, width - 61), root)}"
+                    f"{r.full_path(project)}"
                 )
             print()
             print(f"  {r.BOLD}{r.human_size(total)}{r.RESET} in {len(targets)} folder(s)")
@@ -300,8 +299,8 @@ def cmd_clean(args) -> int:
             return 0
         r.note("or re-run with --yes to delete everything listed")
         picker.delete_loop([
-            picker.Choice(r.truncate_path(project, 60, root), sum(j.size for j in items),
-                          lambda items=items: _delete_junk(items, root))
+            picker.Choice(f"{', '.join(sorted({j.name for j in items}))} in {r.full_path(project)}",
+                          sum(j.size for j in items), lambda items=items: _delete_junk(items, root))
             for project, items in projects
         ], root)
         return 0
@@ -486,7 +485,6 @@ def cmd_caches(args) -> int:
         if not rows:
             r.note("no known caches above the threshold")
             return 0
-        width = min(r.term_width(), 120)
         print(f"{r.DIM}  {'#':>3}  {'SIZE':>9}  {'USED':>9}  {'AUTO':<4}  CACHE{r.RESET}")
         pad = f"  {'':>3}  {'':>9}  {'':>9}  {'':<4}"
         for i, row in enumerate(rows, 1):
@@ -498,7 +496,7 @@ def cmd_caches(args) -> int:
                 print(f"{pad}  {r.DIM}↳ {row['note']}{r.RESET}")
             if args.verbose:
                 for p in row["paths"]:
-                    print(f"{pad}  {r.DIM}{r.truncate_path(p, width - 35)}{r.RESET}")
+                    print(f"{pad}  {r.DIM}{r.full_path(p)}{r.RESET}")
         total = sum(row["size"] for row in selected)
         print()
         print(f"  {r.BOLD}{r.human_size(total)}{r.RESET} selected "
@@ -511,10 +509,9 @@ def cmd_caches(args) -> int:
             r.note("dry run — nothing deleted. Re-run with --yes to clean the selected caches.")
             return 0
         r.note("or re-run with --yes to clean the selected caches")
-        # Caches marked AUTO=no are slow to rebuild or hold real state: ask first.
         picker.delete_loop([
-            picker.Choice(row["name"], row["size"],
-                          lambda row=row: clean_cache(row["cache"], row["paths"]), confirm=not row["auto"])
+            picker.Choice(row["name"] + ("" if row["auto"] else " (slow to rebuild)"), row["size"],
+                          lambda row=row: clean_cache(row["cache"], row["paths"]))
             for row in rows
         ], HOME)
         return 0

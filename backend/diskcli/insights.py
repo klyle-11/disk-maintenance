@@ -197,7 +197,7 @@ def cmd_insights(args) -> int:
 
     # ---- report
     print()
-    print(r.header(r.truncate_path(root, 70),
+    print(r.header(r.full_path(root),
                    f"{r.human_size(result.total_size)} · {r.human_count(result.total_files)} files · {result.elapsed:.1f}s"))
     print(r.rule())
 
@@ -220,22 +220,20 @@ def cmd_insights(args) -> int:
 
     def numbered(label_path: str, size: int, extra: str = "") -> None:
         print(f"  {r.BOLD}{len(choices):>3}{r.RESET}  {r.human_size(size):>9}  {extra}"
-              f"{r.truncate_path(label_path, max(20, width - 40), root)}")
+              f"{r.full_path(label_path)}")
 
     if junk:
         _section("Dev junk", sum(j.size for j in junk), "rebuilds with npm install / pip / the build")
         for j in junk[: args.top]:
-            confirm = j.group in ("venv", "build")
-            choices.append(picker.Choice(r.truncate_path(j.path, 60, root), j.size,
-                                         lambda j=j: maint._delete_junk([j], root), confirm=confirm))
+            choices.append(picker.Choice(r.full_path(j.path), j.size,
+                                         lambda j=j: maint._delete_junk([j], root), path=j.path))
             numbered(j.path, j.size, f"{r.CYAN}{j.group:<7}{r.RESET} ")
         _more(len(junk), args.top)
 
     if caches:
         _section("Caches, temp and logs", sum(c.size for c in caches), "matched by folder name — check before deleting")
         for c in caches[: args.top]:
-            choices.append(picker.Choice(r.truncate_path(c.path, 60, root), c.size,
-                                         lambda p=c.path: commands._delete_reclaimable(p, root), confirm=True))
+            choices.append(commands._path_choice(c.path, c.size, root))
             numbered(c.path, c.size, f"{r.DIM}{r.human_age(c.newest_mtime):>9}{r.RESET}  ")
         _more(len(caches), args.top)
 

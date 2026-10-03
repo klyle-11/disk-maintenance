@@ -1,8 +1,9 @@
 """
-Numbered pick-to-delete prompt shared by `di reclaim`, `di clean` and `di caches`.
+Numbered pick-to-delete prompt shared by every `di` command that lists rows
+(`di .`, scan, recent, growth, reclaim, clean, caches).
 
-After a listing, the command stays open: type a row's number to delete it,
-one at a time, and Enter (or q) to leave.
+After a listing, the command stays open: type a row's number to delete it
+(always asks y/n first), Enter to see what is left, and q to leave.
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ class Choice:
     label: str
     size: int
     delete: Callable[[], object]
-    # Ask y/N first: for guesses by folder name, or caches that are slow to rebuild.
-    confirm: bool = False
+    # What `delete` removes, when it is one path: lets the prompt notice it is already gone.
+    path: str | None = None
 
 
 def _free(path: str) -> int:
@@ -50,45 +51,64 @@ def _ask(prompt: str) -> str | None:
         return None
 
 
+def _gone(c: Choice) -> bool:
+    return c.path is not None and not os.path.lexists(c.path)
+
+
+def _print_remaining(choices: list[Choice], done: set[int]) -> None:
+    print()
+    for i, c in enumerate(choices, 1):
+        if i not in done and not _gone(c):
+            print(f"  {r.BOLD}{i:>3}{r.RESET}  {r.human_size(c.size):>9}  {c.label}")
+
+
 def delete_loop(choices: list[Choice], free_path: str) -> None:
     if not choices:
         return
     n = len(choices)
     done: set[int] = set()
     freed_total = 0
+    hint = f"type a number (1-{n}) to delete that row · Enter to list what's left · q to quit"
     print()
-    r.note(f"type a number (1-{n}) to delete it, one at a time · Enter or q to quit")
-    while len(done) < n:
-        answer = _ask(f"{r.BOLD}delete #{r.RESET} ")
-        if answer is None or answer in ("", "q", "quit", "exit"):
-            break
-        if not answer.isdigit() or not 1 <= int(answer) <= n:
-            r.warn(f"enter a number from 1 to {n}")
-            continue
-        i = int(answer)
-        if i in done:
-            r.note(f"  #{i} is already deleted")
-            continue
-        c = choices[i - 1]
-        if c.confirm:
-            ok = _ask(f"  delete {c.label} ({r.human_size(c.size)})? [y/N] ")
+    r.note(hint)
+    try:
+        while any(i not in done and not _gone(c) for i, c in enumerate(choices, 1)):
+            answer = _ask(f"{r.BOLD}delete #{r.RESET} ")
+            if answer is None or answer in ("q", "quit", "exit"):
+                break
+            if answer == "":
+                _print_remaining(choices, done)
+                r.note(hint)
+                continue
+            answer = answer.lstrip("#")
+            if not answer.isdigit() or not 1 <= int(answer) <= n:
+                r.warn(f"enter a number from 1 to {n}, or q to quit")
+                continue
+            i = int(answer)
+            c = choices[i - 1]
+            if i in done or _gone(c):
+                r.note(f"  #{i} is already deleted")
+                continue
+            ok = _ask(f"  delete {c.label} ({r.human_size(c.size)})? [y/n] ")
             if ok is None:
                 break
             if ok not in ("y", "yes"):
                 r.note("  kept")
                 continue
-        print(f"  {r.DIM}deleting {c.label}…{r.RESET}", flush=True)
-        before = _free(free_path)
-        try:
-            c.delete()
-        except OSError as exc:
+            print(f"  {r.DIM}deleting…{r.RESET}", flush=True)
+            before = _free(free_path)
+            try:
+                c.delete()
+            except OSError as exc:
+                freed = _free(free_path) - before
+                freed_total += max(freed, 0)
+                r.error(f"#{i}: {exc} — free space {r.human_size(freed, signed=True)}")
+                continue
             freed = _free(free_path) - before
             freed_total += max(freed, 0)
-            r.error(f"#{i}: {exc} — free space {r.human_size(freed, signed=True)}")
-            continue
-        freed = _free(free_path) - before
-        freed_total += max(freed, 0)
-        done.add(i)
-        print(f"  {r.GREEN}✓{r.RESET} #{i} {c.label} {r.DIM}— free space {r.human_size(freed, signed=True)}{r.RESET}")
+            done.add(i)
+            print(f"  {r.GREEN}✓{r.RESET} #{i} {c.label} {r.DIM}— free space {r.human_size(freed, signed=True)}{r.RESET}")
+    except KeyboardInterrupt:
+        print()
     if done or freed_total:
         print(f"\n  {r.BOLD}{len(done)}{r.RESET} deleted · {r.human_size(freed_total)} freed")

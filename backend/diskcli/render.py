@@ -138,21 +138,26 @@ def delta_color(delta: int) -> str:
 
 def truncate_path(path: str, width: int, root: str | None = None) -> str:
     """
-    Shorten a path to fit `width`, preferring to keep the tail (the part that
-    identifies the folder) and eliding the middle.
+    Shorten a path to fit `width`. The start is always kept, so you can see
+    where it lives; anything cut comes off the end.
     """
     display = path
     if root and display.startswith(root):
         display = display[len(root) :].lstrip(os.sep) or "."
-    home = os.path.expanduser("~")
-    if display.startswith(home):
-        display = "~" + display[len(home) :]
+    display = full_path(display)
     if len(display) <= width:
         return display
-    if width <= 3:
-        return display[-width:]
-    keep_tail = width - 3
-    return "…" + display[-keep_tail:]
+    if width <= 1:
+        return display[:width]
+    return display[: width - 1] + "…"
+
+
+def full_path(path: str) -> str:
+    """The whole path, never shortened; only the home directory becomes ~."""
+    home = os.path.expanduser("~")
+    if path == home or path.startswith(home + os.sep):
+        return "~" + path[len(home) :]
+    return path
 
 
 def header(title: str, subtitle: str = "") -> str:
