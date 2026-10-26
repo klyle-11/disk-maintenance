@@ -15,9 +15,13 @@ import sys
 import time
 from dataclasses import asdict, dataclass
 
+from .walker import is_link, local_size
+
 HOME = os.path.expanduser("~")
 GB = 1 << 30
 LOW_SPACE = 20 * GB
+_WIN = sys.platform == "win32"
+_SYS = os.environ.get("SystemDrive", "C:")
 
 # How often the CLI volunteers a tip when the disk is healthy.
 TIP_INTERVAL = 6 * 3600
@@ -35,6 +39,9 @@ class Tip:
     when: tuple[str, ...] = ("always",)
     # Only ever shown on these platforms (empty = all).
     only: tuple[str, ...] = ()
+    # Files or folders whose current size `di tips` shows next to the title.
+    # Same syntax as "path:" (without the prefix); "recycle-bin" asks Windows.
+    measure: tuple[str, ...] = ()
 
 
 TIPS: list[Tip] = [
@@ -55,15 +62,36 @@ TIPS: list[Tip] = [
     Tip("hiberfil",
         "hiberfil.sys can be many GB",
         "Hibernation reserves a file sized to a large share of your RAM on C:. If you never hibernate, "
-        "turn it off (admin terminal). Fast Startup also uses it.",
+        "turn it off (admin terminal) and Windows deletes the file. Fast Startup also uses it.",
         "powercfg /hibernate off",
-        ("win32",), only=("win32",)),
+        ("win32",), only=("win32",), measure=("%SystemDrive%/hiberfil.sys",)),
     Tip("pagefile",
-        "The page file lives on C:",
-        "Windows grows pagefile.sys when memory runs short. Closing idle Electron apps and dev servers "
-        "keeps it small; check its current size in Settings → System → About → Advanced system settings.",
-        "Get-CimInstance Win32_PageFileUsage",
-        ("win32",), only=("win32",)),
+        "The page file can live on another drive",
+        "Windows grows pagefile.sys when memory runs short; closing idle Electron apps and dev servers "
+        "keeps it small. With a second internal drive, move it: Advanced → Virtual memory → Change, "
+        "set D: to System managed and C: to a small custom size (or none), then restart.",
+        "SystemPropertiesPerformance",
+        ("win32",), only=("win32",), measure=("%SystemDrive%/pagefile.sys", "%SystemDrive%/swapfile.sys")),
+    Tip("windows-old",
+        "Windows.old is your previous Windows",
+        "An upgrade keeps the old install for 10 days so you can roll back. If you're happy with this one, "
+        "remove it: Disk Cleanup → Clean up system files → Previous Windows installation(s).",
+        f"cleanmgr /d {_SYS}",
+        ("path:%SystemDrive%/Windows.old",), only=("win32",), measure=("%SystemDrive%/Windows.old",)),
+    Tip("windows-update-cache",
+        "Windows Update keeps what it downloaded",
+        "Installed updates stay in SoftwareDistribution, and Delivery Optimization keeps a copy to share. "
+        "Disk Cleanup → Clean up system files → tick Windows Update Cleanup and Delivery Optimization Files.",
+        f"cleanmgr /d {_SYS}",
+        ("win32",), only=("win32",), measure=("%SystemRoot%/SoftwareDistribution/Download",)),
+    Tip("crash-dumps",
+        "Crash dumps can be as big as your RAM",
+        "After a blue screen Windows writes MEMORY.DMP (and LiveKernelReports after driver hangs). "
+        "Once you don't need them: Disk Cleanup → Clean up system files → System error memory dump files.",
+        f"cleanmgr /d {_SYS}",
+        ("path:%SystemRoot%/MEMORY.DMP", "path:%SystemRoot%/LiveKernelReports", "path:%SystemRoot%/Minidump"),
+        only=("win32",),
+        measure=("%SystemRoot%/MEMORY.DMP", "%SystemRoot%/LiveKernelReports", "%SystemRoot%/Minidump")),
     Tip("restore-points",
         "System Restore can hold a lot of space",
         "Restore points and shadow copies are capped as a percentage of the drive. Check the cap and lower "
@@ -86,7 +114,7 @@ TIPS: list[Tip] = [
         "Deleted isn't freed until the Recycle Bin is empty",
         "Files in the Recycle Bin still count against your drive.",
         "Clear-RecycleBin -Force",
-        ("win32",), only=("win32",)),
+        ("win32",), only=("win32",), measure=("recycle-bin",)),
     Tip("apfs-snapshots",
         "\"System Data\" is often snapshots",
         "Time Machine and macOS updates leave local APFS snapshots that hold on to deleted files. "
@@ -168,7 +196,8 @@ TIPS: list[Tip] = [
         "Deleted isn't freed until the Trash is empty",
         "Anything in the Trash still counts against your disk.",
         "du -sh ~/.Trash" if sys.platform == "darwin" else "du -sh ~/.local/share/Trash",
-        ("path:.Trash", "path:.local/share/Trash"), only=("darwin", "linux")),
+        ("path:.Trash", "path:.local/share/Trash"), only=("darwin", "linux"),
+        measure=(".Trash", ".local/share/Trash")),
     Tip("apt-cache",
         "apt keeps every package it downloads",
         "Downloaded .deb files stay in /var/cache/apt/archives after install. autoremove also drops "
@@ -236,7 +265,97 @@ def tips_payload() -> dict:
     for row in rows:
         row.pop("when")
         row.pop("only")
+        row.pop("measure")
     return {"free_bytes": free, "low_space": free < LOW_SPACE, "tips": rows}
+
+
+# ---------------------------------------------------------------------------
+# how much a tip would give back
+# ---------------------------------------------------------------------------
+
+def _recycle_bin_bytes() -> int | None:
+    """Bytes in the system drive's Recycle Bin (it's skipped by scans)."""
+    if not _WIN:
+        return None
+    import ctypes  # noqa: PLC0415
+
+    class SHQUERYRBINFO(ctypes.Structure):
+        # shellapi.h packs this struct on 32-bit Windows only.
+        if ctypes.sizeof(ctypes.c_void_p) == 4:
+            _pack_ = 1
+        _fields_ = [("cbSize", ctypes.c_ulong), ("i64Size", ctypes.c_longlong),
+                    ("i64NumItems", ctypes.c_longlong)]
+
+    info = SHQUERYRBINFO()
+    info.cbSize = ctypes.sizeof(info)
+    try:
+        if ctypes.windll.shell32.SHQueryRecycleBinW(_SYS + "\\", ctypes.byref(info)) != 0:
+            return None
+    except (OSError, AttributeError):
+        return None
+    return info.i64Size
+
+
+def _folder_bytes(path: str, deadline: float) -> tuple[int, bool, bool]:
+    """(bytes, finished in time, readable at all). Hard links once, like the scanner."""
+    total, finished, readable = 0, True, False
+    seen: set = set()
+    stack = [path]
+    while stack:
+        if time.time() > deadline:
+            finished = False
+            break
+        try:
+            with os.scandir(stack.pop()) as it:
+                readable = True
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if not is_link(entry):
+                                stack.append(entry.path)
+                            continue
+                        # Windows' DirEntry.stat() has no link count; Windows.old is full of hard links.
+                        st = os.stat(entry.path, follow_symlinks=False) if _WIN else entry.stat(follow_symlinks=False)
+                        if st.st_nlink > 1:
+                            if (st.st_dev, st.st_ino) in seen:
+                                continue
+                            seen.add((st.st_dev, st.st_ino))
+                        total += local_size(st)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total, finished, readable
+
+
+def measure(tip: Tip, walk: float = 0.0) -> tuple[int, bool] | None:
+    """
+    (bytes, exact) for what the tip's `measure` paths hold now, or None when
+    none can be read. Files cost one stat each; folders are only walked when
+    `walk` gives a time budget, and a walk cut short reports a lower bound.
+    """
+    total, exact, found = 0, True, False
+    for spec in tip.measure:
+        if spec == "recycle-bin":
+            n = _recycle_bin_bytes()
+            if n is not None:
+                total, found = total + n, True
+            continue
+        full = _path(spec)
+        if not full:
+            continue
+        try:
+            st = os.stat(full)
+        except OSError:
+            continue
+        if not os.path.isdir(full):
+            total, found = total + local_size(st), True
+        elif walk:
+            n, finished, readable = _folder_bytes(full, time.time() + walk)
+            if readable:
+                total, found = total + n, True
+                exact = exact and finished
+    return (total, exact) if found else None
 
 
 # ---------------------------------------------------------------------------
@@ -284,8 +403,8 @@ def pick_tip(force: bool = False) -> Tip | None:
     return tip
 
 
-def format_tip(tip: Tip, r) -> str:
-    """Render a tip as a small framed note. `r` is the render module."""
+def format_tip(tip: Tip, r, size: tuple[int, bool] | None = None) -> str:
+    """Render a tip as a small framed note. `r` is the render module; `size` comes from measure()."""
     width = min(r.term_width(), 100) - 4
     words, lines, line = tip.body.split(), [], ""
     for w in words:
@@ -297,6 +416,8 @@ def format_tip(tip: Tip, r) -> str:
     if line:
         lines.append(line)
     out = [f"  {r.YELLOW}tip{r.RESET} {r.BOLD}{tip.title}{r.RESET}"]
+    if size and size[0] >= 1 << 20:
+        out[0] += f"  {r.CYAN}{'' if size[1] else '≥ '}{r.human_size(size[0])} now{r.RESET}"
     out += [f"  {r.DIM}│{r.RESET} {r.DIM}{l}{r.RESET}" for l in lines]
     if tip.command:
         out.append(f"  {r.DIM}│{r.RESET} {r.CYAN}$ {tip.command}{r.RESET}")

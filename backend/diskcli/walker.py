@@ -99,6 +99,9 @@ _ATTR_REPARSE_POINT = 0x400
 _ATTR_OFFLINE = 0x1000
 _ATTR_RECALL_ON_DATA_ACCESS = 0x400000
 _NAME_SURROGATE = 0x20000000  # reparse tag bit: junctions and symlinks, not cloud placeholders
+# C:\Windows. WinSxS hard-links most of System32, so a scan of C:\ counts several GB twice
+# unless link counts are read there.
+_SYSTEM_ROOT = os.path.normcase(os.environ.get("SystemRoot", r"C:\Windows")) if _WIN else ""
 
 
 def is_link(entry: os.DirEntry) -> bool:
@@ -191,6 +194,18 @@ def cloud_hint(provider: str) -> str:
     return f"right-click the folder → Free up space / Make online-only in {provider}"
 
 
+def _needs_link_count(path: str) -> bool:
+    """
+    On Windows, DirEntry.stat() reports st_nlink and st_ino as 0, so hard links
+    can't be told apart. A full os.stat() reads them (one extra call per file),
+    which is only worth it under %SystemRoot%, where nearly all of them live.
+    """
+    if not _WIN:
+        return False
+    path = os.path.normcase(path)
+    return path == _SYSTEM_ROOT or path.startswith(_SYSTEM_ROOT + os.sep)
+
+
 def local_size(st: os.stat_result) -> int:
     """Bytes a file holds on this disk: 0 for OneDrive/iCloud files that live only in the cloud."""
     if _WIN and st.st_file_attributes & (_ATTR_OFFLINE | _ATTR_RECALL_ON_DATA_ACCESS):
@@ -209,6 +224,7 @@ def _walk_subtree(
     stop: list,
     cloud: str | None = None,
     on_file=None,
+    prune: frozenset = frozenset(),
 ) -> DirNode:
     """
     Recursively walk `root`, filling `nodes` for every directory down to
@@ -220,6 +236,7 @@ def _walk_subtree(
     node = DirNode(path=root, depth=base_depth, cloud=cloud or cloud_provider(root))
     if base_depth <= max_depth:
         nodes[root] = node
+    link_counts = _needs_link_count(root)
 
     try:
         entries = list(os.scandir(root))
@@ -232,7 +249,8 @@ def _walk_subtree(
             break
         try:
             if entry.is_dir(follow_symlinks=False):
-                if entry.name in excludes or _should_prune(entry.path) or is_link(entry):
+                if (entry.name in excludes or _should_prune(entry.path) or is_link(entry)
+                        or (prune and os.path.normcase(entry.path) in prune)):
                     continue
                 child = _walk_subtree(
                     entry.path,
@@ -245,6 +263,7 @@ def _walk_subtree(
                     stop,
                     node.cloud,
                     on_file,
+                    prune,
                 )
                 node.size += child.size
                 node.cloud_bytes += child.cloud_bytes
@@ -257,7 +276,13 @@ def _walk_subtree(
                 if child.path in nodes:
                     node.children.append(child.path)
             else:
-                st = entry.stat(follow_symlinks=False)
+                st = None
+                if link_counts:
+                    try:
+                        st = os.stat(entry.path, follow_symlinks=False)
+                    except OSError:
+                        pass  # locked or denied: the listing's size still counts, without link dedupe
+                st = st or entry.stat(follow_symlinks=False)
                 # Count a hardlinked file's bytes only once per scan.
                 if st.st_nlink > 1:
                     key = (st.st_dev, st.st_ino)
@@ -294,6 +319,7 @@ def scan(
     workers: int = 8,
     on_progress=None,
     on_file=None,
+    prune=(),
 ) -> ScanResult:
     """
     Scan `root` and return aggregates for every directory down to `max_depth`.
@@ -303,10 +329,11 @@ def scan(
     complexity of multiprocessing.
 
     `on_file(path, local_bytes, mtime)` is called for every file (hardlinks
-    once), from worker threads.
+    once), from worker threads. Folders in `prune` (absolute paths) are skipped.
     """
     root = os.path.abspath(os.path.expanduser(root))
     excludes = set(excludes) if excludes is not None else set(DEFAULT_EXCLUDES)
+    prune = frozenset(os.path.normcase(os.path.abspath(p)) for p in prune)
     recent_cutoff = time.time() - recent_days * 86400
     started = time.time()
 
@@ -326,7 +353,8 @@ def scan(
     for entry in top_entries:
         try:
             if entry.is_dir(follow_symlinks=False):
-                if entry.name in excludes or _should_prune(entry.path) or is_link(entry):
+                if (entry.name in excludes or _should_prune(entry.path) or is_link(entry)
+                        or os.path.normcase(entry.path) in prune):
                     continue
                 top_dirs.append(entry.path)
             else:
@@ -349,11 +377,15 @@ def scan(
             root_node.errors += 1
 
     done = [0]
+    # Under C:\Windows, WinSxS and System32 (different threads) share most files,
+    # so there the seen-set is shared. A rare race can still count a file twice.
+    shared_inodes = set() if _needs_link_count(root) else None
 
     def run(path: str) -> DirNode:
         sub_nodes: dict[str, DirNode] = {}
+        seen = shared_inodes if shared_inodes is not None else set()
         node = _walk_subtree(
-            path, 1, max_depth, excludes, recent_cutoff, set(), sub_nodes, [], root_node.cloud, on_file
+            path, 1, max_depth, excludes, recent_cutoff, seen, sub_nodes, [], root_node.cloud, on_file, prune
         )
         nodes.update(sub_nodes)
         done[0] += 1

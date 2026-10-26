@@ -69,6 +69,15 @@ the worst packaging pain. Suggested order:
 - [ ] Reuse from the branch where it fits (commands, models, Diesel schema), but fix its scanner
       (`WalkDir` + per-file `Vec`s has the same memory shape as item 3).
 
+2026-10-26 re-check, on a Windows machine with ~10 GB free: still the right direction, but not
+now, and not built locally there. The app only analyses (cleanup and moving live in `di`), its
+Windows scanner hides `C:\Program Files (x86)` (Steam) and `C:\ProgramData`, and a rebuild costs
+space the machine doesn't have. `npm install` alone is 0.87 GB (505 MB `node_modules`, 288 MB of
+it Electron, plus 362 MB npm cache); packaging adds roughly another 0.5–0.7 GB (an Electron zip
+for electron-builder, its tools, PyInstaller `build/`, `release/` with `win-unpacked`). A Tauri
+build needs rustup (~1 GB), the MSVC Build Tools C++ workload (several GB, if not already
+installed) and a `target/` of a few GB. Build Windows installers in CI instead (see Build & packaging).
+
 ## Windows parity
 
 `di` now picks the right locations, scheduler and notifications per OS (see the README's
@@ -79,20 +88,31 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
       `di caches` paths, `di clean` on a .NET repo, `di guard --install` (schtasks + hidden
       `pythonw` run + toast), `--uninstall`, ANSI colours in conhost and Windows Terminal,
       piped output (`di scan > out.txt`).
-- [ ] Priority 1 item 1 applies to Windows too: `IGNORE_PATHS` substring matching hides any
-      path containing e.g. `system volume information` or `$recycle.bin`; the fix must use
-      case-insensitive *exact* prefixes on Windows (`os.path.normcase`).
-- [ ] `walker.py` prune list is POSIX-only (`/System/Volumes`, `/dev` …). Add Windows
-      equivalents (`C:\Windows\WinSxS`, `C:\$Recycle.Bin`, `pagefile.sys`/`hiberfil.sys` handling)
-      so `di scan C:\` stays fast and doesn't double-count.
+- [x] Priority 1 item 1 applies to Windows too: `should_ignore` now matches exact, case-folded
+      prefixes and folder names, so `$recycle.bin` / `system volume information` only hide themselves.
+- [x] `di scan C:\` double-counted WinSxS (it hard-links most of System32): under `%SystemRoot%`
+      the walker now reads real link counts with `os.stat()` and shares the seen-set across threads.
+      `$Recycle.Bin` and `System Volume Information` were already excluded; `di tips` reports the
+      Recycle Bin, `hiberfil.sys` and `pagefile.sys` instead.
 - [ ] Windows size accuracy: `st_blocks` doesn't exist there, so sizes are apparent sizes.
-      NTFS-compressed and OneDrive placeholder files are overcounted; use
-      `GetCompressedFileSizeW` via ctypes, and skip cloud-only placeholders (`FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`).
-- [ ] Hard-link dedupe doesn't work on Windows: `DirEntry.stat()` returns `st_ino = 0` there. Call
-      `os.stat()` for files with `st_nlink > 1`, or skip dedupe on Windows.
-- [ ] `di tips` could include a live "top system files" line on Windows (sizes of
-      `hiberfil.sys`, `pagefile.sys`, `C:\Windows\SoftwareDistribution`), as the macOS tips do
-      for snapshots/swap commands.
+      Cloud-only placeholders already count as 0 (`local_size`), and `di move` uses
+      `GetCompressedFileSizeW` for single files (sparse `.vhdx`), but NTFS-compressed folders are
+      still overcounted by the walker.
+- [ ] Hard links outside `%SystemRoot%` are still counted once per link on Windows (`DirEntry.stat()`
+      has no `st_ino`/`st_nlink`): mainly pnpm, whose `node_modules` hard-link into its store, so
+      `di clean` can promise more than deleting frees. The prompt reports the real gain.
+- [x] `di tips` shows live sizes on Windows: `hiberfil.sys`, `pagefile.sys`/`swapfile.sys`,
+      `Windows.old`, the Recycle Bin, Windows Update downloads, crash dumps; biggest first.
+- [x] `di clean` without a path found nothing on most Windows machines (`~/dev` rarely exists).
+      It now uses the first of `~/dev`, `~/source/repos` (Visual Studio's default), `~/projects` …
+      and errors on a folder that doesn't exist instead of reporting "nothing to clean".
+- [x] `di caches` covers browser and chat-app caches (Chrome, Edge, Brave, Vivaldi, Firefox,
+      Discord, Slack, new Teams, Spotify), listed but not auto-cleaned (the app must be closed).
+- [x] `di move`: what could live on another drive (games, WSL distros, Docker disk, VMs, Android,
+      models, iPhone backups, known folders, old folders, big files) and each app's own way to move it.
+- [ ] Check `di move`'s Windows-only parts on a real machine: Steam `SteamPath` + `libraryfolders.vdf`,
+      the WSL `Lxss` registry keys, `User Shell Folders`, `GetCompressedFileSizeW`, drive letters in
+      the printed commands, and that `wsl --manage <distro> --move` is in the installed WSL.
 - [ ] App: `npm run dev` uses `python3`; on Windows it's `npm run dev:win`. Consider a small
       Node launcher that picks the right Python so one command works everywhere.
 - [ ] Tauri port: Windows needs WebView2 (bundled with Windows 11; use the bootstrapper for 10)
@@ -144,6 +164,17 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
 - [ ] MEDIUM-004: pin dependency versions (`requirements.txt` uses `>=`).
 
 ## Build & packaging
+
+- [ ] **Windows: every app session leaves its backend unpacked in `%TEMP%`.** The supervisor stops
+      the backend with `taskkill /f /t`, which kills PyInstaller's onefile bootloader before it can
+      delete its `_MEI…` folder (~27 MB). Stop it gracefully first (close its stdin or call a
+      shutdown endpoint, `taskkill` as the fallback after a few seconds), or build `--onedir`, which
+      also removes the unpack-on-launch wait. `di caches` cleans `%LOCALAPPDATA%\Temp` meanwhile.
+- [ ] The app's Windows ignore list hides `C:\Program Files`, `C:\Program Files (x86)` and
+      `C:\ProgramData` entirely, so a `C:\` scan can't show Steam libraries, Package Cache or
+      Hyper-V disks. Show them (tagged "system") rather than skipping them.
+- [ ] Build the Windows installer in CI (`windows-latest`, upload `release/*.exe`) so a full disk
+      never blocks a release.
 
 - [ ] Rebuild the backend so the PyInstaller bundle includes `diskcli/` (added to the spec
       for `/api/tips`), then run `npm run verify`.

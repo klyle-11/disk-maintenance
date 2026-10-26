@@ -517,10 +517,15 @@ def print_summary(data: dict | None = None) -> None:
     if disk:
         print(_volume_line(f"{disk['name'][:name_width]:<{name_width}}", disk, bar_width))
         notes = []
-        if disk["free"] < CRITICAL_FREE:
-            notes.append(f"{r.RED}critically low — di caches, di clean ~/dev{r.RESET}")
-        elif disk["free"] < WARN_FREE:
-            notes.append(f"{r.YELLOW}running low — di caches, di reclaim ~{r.RESET}")
+        if disk["free"] < WARN_FREE:
+            critical = disk["free"] < CRITICAL_FREE
+            fixes = ["di caches", "di clean" if critical else "di reclaim ~"]
+            if data.get("drives"):
+                fixes.append("di move")
+            if sys.platform == "win32":
+                fixes.append("di tips")  # hiberfil, page file, Windows.old: often the biggest wins there
+            notes.append(f"{r.RED if critical else r.YELLOW}{'critically' if critical else 'running'} low — "
+                         f"{', '.join(fixes)}{r.RESET}")
         if disk["ballast"]:
             notes.append(f"{r.human_size(disk['ballast'])} ballast held (di ballast release)")
         if notes:

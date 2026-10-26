@@ -50,9 +50,11 @@ Everything works on macOS, Windows and Linux (x64 or ARM, including a Raspberry 
 | CLI launcher | `di` (bash) | `di.cmd` | `di` (bash) |
 | `di caches` locations | `~/Library/Caches`, `~/Library/Application Support`, `~/.*` | `%LOCALAPPDATA%`, `%APPDATA%`, `~\.*` | `~/.cache`, `~/.config`, `~/.*` |
 | Extra caches | Homebrew, Xcode, Simulator, CocoaPods, app updaters | NuGet, Scoop, `%LOCALAPPDATA%\Temp`, CrashDumps, app updaters | – |
+| Browser / chat caches (not auto) | Chrome, Edge, Brave, Vivaldi, Firefox, Discord, Slack, Spotify | same + new Teams | same |
+| `di move` finds | Steam, Docker disk, VirtualBox/VMware, Android, Ollama/LM Studio/Hugging Face, iPhone backups | same + WSL distros, Hyper-V, Epic, Xbox games, Downloads/Videos/… (Location tab) | Steam, VMs, Android, models |
 | `di guard --install` | launchd agent | Task Scheduler task (`DiskIntelligenceGuard`, runs hidden via `pythonw`) | crontab entry |
 | Guard notifications | Notification Center | Windows toast | `notify-send` |
-| `di tips` | APFS snapshots, purgeable space, swap, Xcode, Messages … | WSL/Docker `.vhdx`, hiberfil, page file, restore points, WinSxS, Storage Sense … | apt cache, journald, Docker, Trash + shared tips |
+| `di tips` | APFS snapshots, purgeable space, swap, Xcode, Messages … | sizes of hiberfil, page file, Windows.old, Recycle Bin, update downloads, crash dumps; WSL/Docker `.vhdx`, restore points, WinSxS … | apt cache, journald, Docker, Trash + shared tips |
 | Desktop app | Electron DMG (`npm run dist:mac`) | Electron NSIS installer (`npm run dist:win`, `scripts\package.bat`) | AppImage / .deb for the build machine's arch (`scripts/package-linux.sh`) |
 
 ### Raspberry Pi (Raspberry Pi OS, arm64)
@@ -90,6 +92,7 @@ gives the same data for scripts. `di help` then lists commands; `di help <comman
 | `di growth [path]` | Diff against the latest baseline: what grew, what shrank, rate per day |
 | `di snapshots` / `di forget <id>` | List / delete baselines |
 | `di reclaim [path]` | Rank regenerable and cache folders; in a terminal, type a row number to delete it |
+| `di move` | What could live on another drive, and the safe way to move each (see below) |
 
 ### Getting space back and keeping it
 
@@ -104,17 +107,40 @@ Cloud sync folders (OneDrive, Dropbox, iCloud …) are handled specially: files 
 never offers to delete inside them (that would delete from the cloud too).
 
 ```bash
-di clean ~/dev                     # node_modules, __pycache__, .next, .vite ... grouped by project
+di clean                           # node_modules, __pycache__, .next, .vite ... in ~/dev (or ~/source/repos,
+                                   # ~/projects, ~/code ... whichever exists), grouped by project
 di clean ~/dev --older-than 14 -y  # only projects idle for 2+ weeks
 di clean ~/dev --all               # also .venv, target/, build/, dist/ (only when a manifest proves they're build output)
-di caches -v                       # npm/yarn/bun/pip/uv/cargo/go/Homebrew/Xcode/editor/updater caches
-di caches --yes                    # clean the auto-safe ones (uses `npm cache clean` etc. when installed)
+di caches -v                       # npm/yarn/bun/pip/uv/cargo/go/Homebrew/Xcode/editor/updater/browser caches
+di caches --yes                    # clean the auto-safe ones (uses `npm cache clean` etc. when installed);
+                                   # browser and chat caches are listed too, pick them by number once the app is closed
 di ballast set 5G                  # reserve 5 GB; `di ballast release` hands it back in an emergency
 di guard --auto --dev ~/dev --install   # launchd agent every 2h: notify < 20G, auto-clean < 20G,
                                         # release ballast < 8G
 di guard --history                 # free-space readings the guard has logged
 di guard --uninstall
-di tips                            # where "System Data" comes from and how to take it back
+di tips                            # where "System Data" comes from and how to take it back; on Windows
+                                   # with live sizes: hiberfil.sys, pagefile.sys, Windows.old, Recycle Bin ...
+```
+
+### Moving things to another drive
+
+Deleting caches only goes so far. `di move` lists what is big on the drive holding your home folder and
+could live on another one: Steam / Epic / Xbox games (one row per game), WSL distros, the Docker Desktop disk,
+Hyper-V / VirtualBox / VMware machines, Android emulator images and SDK, Ollama / LM Studio / Hugging Face
+models, NuGet packages, iPhone backups, Windows' Downloads / Videos / Pictures / Music / Documents / Desktop,
+folders under your home untouched for 6 months, and big files.
+
+Each row says how to move it **without breaking the app that owns it**: Steam's storage manager,
+`wsl --manage <distro> --move`, Docker's disk image location, the folder's Location tab, an environment variable
+plus a move for model and emulator folders, a junction for iPhone backups. Plain data gets a `robocopy` (Windows) or
+`mv` command. `di move` never moves anything itself.
+
+```bash
+di move                    # suggests the other local drive with the most room
+di move --to E:\           # or a drive / folder of your choice
+di move --quick            # app data and known folders only, without searching your files
+di move --days 365 -m 2G   # stricter: untouched for a year, 2 GB and up
 ```
 
 After table commands, `di` occasionally prints one relevant tip (every 6 hours,

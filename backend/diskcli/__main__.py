@@ -15,6 +15,7 @@ import sys
 from . import commands
 from . import insights
 from . import maint
+from . import move
 from . import summary
 from . import tips
 from . import render as r
@@ -61,7 +62,8 @@ examples:
   di growth ~                    what changed since the last baseline
   di reclaim ~/dev               node_modules, caches and other rebuildable bulk
   di clean ~/dev --older-than 14 dry-run: junk in projects idle 2+ weeks (--yes deletes)
-  di caches                      npm/pip/Xcode/editor caches outside your projects
+  di caches                      npm/pip/Xcode/editor/browser caches outside your projects
+  di move                        what could live on another drive, and the safe way to move it
   di guard --auto --install      watchdog: notify + auto-clean when space runs low
   di ballast set 5G              reserve 5 GB that guard releases in an emergency
   di tips                        ways to keep the OS from eating the space you free
@@ -125,8 +127,9 @@ set DI_TIPS=0 to silence the occasional tip after a command.
     p.set_defaults(func=commands.cmd_reclaim)
 
     p = sub.add_parser("clean", help="delete node_modules, __pycache__ and other project build junk")
-    p.add_argument("path", nargs="?", default=os.path.expanduser("~/dev"),
-                   help="folder holding your projects (default: ~/dev)")
+    p.add_argument("path", nargs="?", default=None,
+                   help="folder holding your projects (default: the first of ~/dev, ~/source/repos, "
+                        "~/projects, ~/code ... that exists)")
     p.add_argument("-k", "--kinds", default=None,
                    help="comma list of: node, web, python, venv, build (default: node,web,python). build includes .NET bin/obj")
     p.add_argument("--all", action="store_true", help="every kind, including venvs and build output")
@@ -137,7 +140,7 @@ set DI_TIPS=0 to silence the occasional tip after a command.
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=maint.cmd_clean)
 
-    p = sub.add_parser("caches", help="package-manager, IDE and toolchain caches in ~/Library and ~/.*")
+    p = sub.add_parser("caches", help="package-manager, IDE, toolchain and browser caches outside your projects")
     p.add_argument("-m", "--min-bytes", type=_size_arg, default=10 * MB, metavar="SIZE")
     p.add_argument("--include-all", action="store_true",
                    help="also select caches that are slow to rebuild (models, browsers, Docker)")
@@ -146,6 +149,19 @@ set DI_TIPS=0 to silence the occasional tip after a command.
     p.add_argument("-y", "--yes", action="store_true", help="actually clean (default is a dry run)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=maint.cmd_caches)
+
+    p = sub.add_parser("move", help="what could move to another drive (games, WSL/Docker disks, VMs, media), and how")
+    p.add_argument("--to", default=None, metavar="DRIVE",
+                   help="drive or folder to move to (default: the other local drive with the most room)")
+    p.add_argument("-m", "--min-bytes", type=_size_arg, default=500 * MB, metavar="SIZE",
+                   help="ignore anything smaller (default: 500MB)")
+    p.add_argument("-n", "--top", type=int, default=10, help="rows for old folders and big files (default: 10)")
+    p.add_argument("--days", type=float, default=180,
+                   help="a folder counts as untouched after this many days (default: 180)")
+    p.add_argument("-d", "--depth", type=int, default=4, help="how deep to look for untouched folders (default: 4)")
+    p.add_argument("--quick", action="store_true", help="only app data and known folders; don't search your files")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=move.cmd_move)
 
     p = sub.add_parser("guard", help="free-space watchdog: notify, auto-clean, release ballast")
     p.add_argument("--warn", type=_size_arg, default=20 * GB, metavar="SIZE",
@@ -212,12 +228,21 @@ def cmd_tips(args) -> int:
     if args.json:
         print(json.dumps({**payload, "tips": rows}, indent=2))
         return 0
+    by_id = {t.id: t for t in tips.TIPS}
+    spinner = r.Spinner("measuring")
+    sizes = {}
+    for row in rows:
+        if by_id[row["id"]].measure:
+            spinner.tick(row["title"])
+            sizes[row["id"]] = tips.measure(by_id[row["id"]], walk=3.0)
+    spinner.done()
+    # Biggest measurable win first, then the rest in catalogue order.
+    rows.sort(key=lambda row: -(sizes.get(row["id"]) or (0,))[0])
     print()
     print(r.header("Keeping space free", f"free now: {r.human_size(payload['free_bytes'])}"))
     print(r.rule())
-    by_id = {t.id: t for t in tips.TIPS}
     for row in rows:
-        print(tips.format_tip(by_id[row["id"]], r))
+        print(tips.format_tip(by_id[row["id"]], r, sizes.get(row["id"])))
         print()
     if not args.all:
         r.note("showing tips that apply to this machine — di tips --all for the rest")
@@ -258,7 +283,7 @@ def cmd_help(parser: argparse.ArgumentParser, topic: str | None) -> int:
 
 
 # Commands whose output is a table for a person, where a trailing tip fits.
-_TIP_AFTER = {"insights", "scan", "recent", "growth", "reclaim", "clean", "caches"}
+_TIP_AFTER = {"insights", "scan", "recent", "growth", "reclaim", "clean", "caches", "move"}
 
 
 def _maybe_tip(args) -> None:
@@ -267,7 +292,7 @@ def _maybe_tip(args) -> None:
     tip = tips.pick_tip()
     if tip:
         print()
-        print(tips.format_tip(tip, r))
+        print(tips.format_tip(tip, r, tips.measure(tip)))
 
 
 def main(argv: list[str] | None = None) -> int:
