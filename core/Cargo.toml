@@ -1,0 +1,26 @@
+[package]
+name = "disk-core"
+version = "1.0.0"
+description = "Disk Intelligence core: scanner, findings, compare, snapshots"
+edition = "2021"
+rust-version = "1.77.2"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+rayon = "1.10"
+sha2 = "0.10"
+rusqlite = { version = "0.32", features = ["bundled"] }
+dunce = "1"
+dirs = "5"
+which = "6"
+fs4 = { version = "0.13", features = ["sync"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile = "3"
