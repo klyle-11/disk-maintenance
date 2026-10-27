@@ -1,7 +1,14 @@
 /**
  * Frontend API client for Disk Intelligence backend.
- * Handles all HTTP communication with the FastAPI backend via fetch.
+ *
+ * In the Tauri app every call is a Tauri command handled in-process by the
+ * Rust core. Under Electron (legacy) or in a browser tab it is an HTTP call
+ * to the Python backend. Both return the same snake_case JSON, so the
+ * transforms below are shared.
  */
+
+import { Channel, invoke } from "@tauri-apps/api/core";
+import { isTauri } from "./desktop";
 
 // ============================================================================
 // Configuration
@@ -291,6 +298,74 @@ async function apiFetch<T>(
   }
 }
 
+/**
+ * Run a Tauri command inside the Tauri app, otherwise the HTTP fallback.
+ * Command errors arrive as plain strings; they are rethrown as Errors.
+ */
+async function call<T>(
+  command: string,
+  args: Record<string, unknown>,
+  http: () => Promise<T>
+): Promise<T> {
+  if (!isTauri) return http();
+  console.log(`[API] ${command}`);
+  try {
+    return await invoke<T>(command, args);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[API] ${command} failed: ${message}`);
+    throw new Error(message);
+  }
+}
+
+/** A unique id for a cancellable request (scan, du-hast-much). */
+function newRequestId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Run a cancellable Tauri command: aborting `signal` tells the backend to
+ * stop, and the call then rejects with `cancelledMessage`.
+ */
+async function callCancellable<T>(
+  command: string,
+  args: Record<string, unknown>,
+  signal: AbortSignal | undefined,
+  cancelledMessage: string
+): Promise<T> {
+  const requestId = newRequestId();
+  const onAbort = () => {
+    invoke("cancel", { requestId }).catch(() => {});
+  };
+  if (signal?.aborted) throw new Error(cancelledMessage);
+  signal?.addEventListener("abort", onAbort);
+  try {
+    return await call<T>(command, { ...args, requestId }, () => {
+      throw new Error(`${command} needs the desktop app`);
+    });
+  } catch (err) {
+    if (signal?.aborted) throw new Error(cancelledMessage);
+    throw err;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/** snake_case scan info from either backend to ScanResponse. */
+function transformScanResponse(data: any): ScanResponse {
+  return {
+    scanId: data.scan_id,
+    rootPath: data.root_path,
+    startedAt: data.started_at,
+    completedAt: data.completed_at,
+    totalFiles: data.total_files,
+    totalFolders: data.total_folders,
+    totalSizeBytes: data.total_size_bytes,
+  };
+}
+
 // ============================================================================
 // API functions
 // ============================================================================
@@ -302,21 +377,14 @@ async function apiFetch<T>(
  * @returns A ScanResponse with scan_id and metadata.
  */
 export async function scan(rootPath: string, signal?: AbortSignal): Promise<ScanResponse> {
-  return apiFetch<ScanResponse>("/scan", {
+  if (isTauri) return scanWithProgress(rootPath, () => {}, signal);
+  return apiFetch<any>("/scan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ root_path: rootPath }),
     signal,
     timeoutMs: LONG_TIMEOUT_MS,
-  }).then((data) => ({
-    scanId: (data as any).scan_id,
-    rootPath: (data as any).root_path,
-    startedAt: (data as any).started_at,
-    completedAt: (data as any).completed_at,
-    totalFiles: (data as any).total_files,
-    totalFolders: (data as any).total_folders,
-    totalSizeBytes: (data as any).total_size_bytes,
-  }));
+  }).then(transformScanResponse);
 }
 
 /**
@@ -331,6 +399,18 @@ export async function scanWithProgress(
   onProgress: (event: ProgressEventData) => void,
   signal?: AbortSignal
 ): Promise<ScanResponse> {
+  if (isTauri) {
+    const channel = new Channel<ProgressEventData>();
+    channel.onmessage = onProgress;
+    const data = await callCancellable<any>(
+      "scan",
+      { rootPath, onProgress: channel },
+      signal,
+      "Scan cancelled"
+    );
+    return transformScanResponse(data);
+  }
+
   return new Promise((resolve, reject) => {
     const url = apiUrl(`/scan/stream?root_path=${encodeURIComponent(rootPath)}`);
     const eventSource = new EventSource(url);
@@ -343,16 +423,7 @@ export async function scanWithProgress(
           onProgress(data);
         } else if (data.event_type === 'complete' && data.scan_response) {
           eventSource.close();
-          const response = data.scan_response;
-          resolve({
-            scanId: (response as any).scan_id,
-            rootPath: (response as any).root_path,
-            startedAt: (response as any).started_at,
-            completedAt: (response as any).completed_at,
-            totalFiles: (response as any).total_files,
-            totalFolders: (response as any).total_folders,
-            totalSizeBytes: (response as any).total_size_bytes,
-          });
+          resolve(transformScanResponse(data.scan_response));
         }
       } catch (err) {
         eventSource.close();
@@ -380,9 +451,9 @@ export async function scanWithProgress(
  * @returns An array of Finding objects.
  */
 export async function getFindings(scanId: string): Promise<Finding[]> {
-  const data = await apiFetch<any[]>(`/findings?scan_id=${scanId}`, {
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const data = await call<any[]>("findings", { scanId }, () =>
+    apiFetch<any[]>(`/findings?scan_id=${scanId}`, { timeoutMs: LONG_TIMEOUT_MS })
+  );
   return data.map((item) => ({
     id: item.id,
     category: item.category,
@@ -400,9 +471,9 @@ export async function getFindings(scanId: string): Promise<Finding[]> {
 export async function getExtensionSummary(
   scanId: string
 ): Promise<ExtensionSummary[]> {
-  const data = await apiFetch<any[]>(`/extensions-summary?scan_id=${scanId}`, {
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const data = await call<any[]>("extensions_summary", { scanId }, () =>
+    apiFetch<any[]>(`/extensions-summary?scan_id=${scanId}`, { timeoutMs: LONG_TIMEOUT_MS })
+  );
   return data.map((item) => ({
     extension: item.extension,
     fileCount: item.file_count,
@@ -415,7 +486,9 @@ export async function getExtensionSummary(
  * @returns A health status object.
  */
 export async function healthCheck(): Promise<{ status: string }> {
-  return apiFetch<{ status: string }>("/health", { timeoutMs: HEALTH_TIMEOUT_MS });
+  return call("health", {}, () =>
+    apiFetch<{ status: string }>("/health", { timeoutMs: HEALTH_TIMEOUT_MS })
+  );
 }
 
 export interface SpaceTip {
@@ -437,7 +510,7 @@ export interface SpaceTips {
  * Tips for keeping freed space from filling back up (shared with `di tips`).
  */
 export async function getSpaceTips(): Promise<SpaceTips> {
-  const data = await apiFetch<any>("/tips");
+  const data = await call<any>("tips", {}, () => apiFetch<any>("/tips"));
   return { freeBytes: data.free_bytes, lowSpace: data.low_space, tips: data.tips };
 }
 
@@ -451,27 +524,21 @@ export async function saveSnapshot(
   scanId: string,
   rootPath: string
 ): Promise<Snapshot> {
-  const item = await apiFetch<any>("/snapshots", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scan_id: scanId, root_path: rootPath }),
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const item = await call<any>("save_snapshot", { scanId, rootPath }, () =>
+    apiFetch<any>("/snapshots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scan_id: scanId, root_path: rootPath }),
+      timeoutMs: LONG_TIMEOUT_MS,
+    })
+  );
   return {
     id: item.id,
     scanId: item.scan_id,
     rootPath: item.root_path,
     findings: (item.findings || []).map(transformFinding),
     extensions: (item.extensions || []).map(transformExtension),
-    scanInfo: item.scan_info ? {
-      scanId: item.scan_info.scan_id,
-      rootPath: item.scan_info.root_path,
-      startedAt: item.scan_info.started_at,
-      completedAt: item.scan_info.completed_at,
-      totalFiles: item.scan_info.total_files,
-      totalFolders: item.scan_info.total_folders,
-      totalSizeBytes: item.scan_info.total_size_bytes,
-    } : {} as ScanResponse,
+    scanInfo: item.scan_info ? transformScanResponse(item.scan_info) : ({} as ScanResponse),
     savedAt: item.saved_at,
     totalFiles: item.total_files,
     totalFolders: item.total_folders,
@@ -547,15 +614,7 @@ function transformSnapshot(item: any): ComparisonSnapshot {
     rootPath: item.root_path,
     findings: (item.findings || []).map(transformFinding),
     extensions: (item.extensions || []).map(transformExtension),
-    scanInfo: item.scan_info ? {
-      scanId: item.scan_info.scan_id,
-      rootPath: item.scan_info.root_path,
-      startedAt: item.scan_info.started_at,
-      completedAt: item.scan_info.completed_at,
-      totalFiles: item.scan_info.total_files,
-      totalFolders: item.scan_info.total_folders,
-      totalSizeBytes: item.scan_info.total_size_bytes,
-    } : {} as ScanResponse,
+    scanInfo: item.scan_info ? transformScanResponse(item.scan_info) : ({} as ScanResponse),
     savedAt: item.saved_at,
     totalFiles: item.total_files,
     totalFolders: item.total_folders,
@@ -579,9 +638,9 @@ function transformSnapshot(item: any): ComparisonSnapshot {
  * @returns An array of snapshots.
  */
 export async function getSnapshots(): Promise<ComparisonSnapshot[]> {
-  const data = await apiFetch<any[]>("/snapshots", {
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const data = await call<any[]>("list_snapshots", {}, () =>
+    apiFetch<any[]>("/snapshots", { timeoutMs: LONG_TIMEOUT_MS })
+  );
   return data.map(transformSnapshot);
 }
 
@@ -591,24 +650,16 @@ export async function getSnapshots(): Promise<ComparisonSnapshot[]> {
  * @returns The snapshot data.
  */
 export async function getSnapshot(snapshotId: string): Promise<Snapshot> {
-  const item = await apiFetch<any>(`/snapshots/${snapshotId}`, {
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const item = await call<any>("get_snapshot", { snapshotId }, () =>
+    apiFetch<any>(`/snapshots/${snapshotId}`, { timeoutMs: LONG_TIMEOUT_MS })
+  );
   return {
     id: item.id,
     scanId: item.scan_id,
     rootPath: item.root_path,
     findings: (item.findings || []).map(transformFinding),
     extensions: (item.extensions || []).map(transformExtension),
-    scanInfo: item.scan_info ? {
-      scanId: item.scan_info.scan_id,
-      rootPath: item.scan_info.root_path,
-      startedAt: item.scan_info.started_at,
-      completedAt: item.scan_info.completed_at,
-      totalFiles: item.scan_info.total_files,
-      totalFolders: item.scan_info.total_folders,
-      totalSizeBytes: item.scan_info.total_size_bytes,
-    } : {} as ScanResponse,
+    scanInfo: item.scan_info ? transformScanResponse(item.scan_info) : ({} as ScanResponse),
     savedAt: item.saved_at,
     totalFiles: item.total_files,
     totalFolders: item.total_folders,
@@ -622,25 +673,16 @@ export async function getSnapshot(snapshotId: string): Promise<Snapshot> {
  * @returns The updated snapshot.
  */
 export async function updateSnapshot(snapshotId: string): Promise<Snapshot> {
-  const item = await apiFetch<any>(`/snapshots/${snapshotId}`, {
-    method: "PUT",
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const item = await call<any>("update_snapshot", { snapshotId }, () =>
+    apiFetch<any>(`/snapshots/${snapshotId}`, { method: "PUT", timeoutMs: LONG_TIMEOUT_MS })
+  );
   return {
     id: item.id,
     scanId: item.scan_id,
     rootPath: item.root_path,
     findings: (item.findings || []).map(transformFinding),
     extensions: (item.extensions || []).map(transformExtension),
-    scanInfo: item.scan_info ? {
-      scanId: item.scan_info.scan_id,
-      rootPath: item.scan_info.root_path,
-      startedAt: item.scan_info.started_at,
-      completedAt: item.scan_info.completed_at,
-      totalFiles: item.scan_info.total_files,
-      totalFolders: item.scan_info.total_folders,
-      totalSizeBytes: item.scan_info.total_size_bytes,
-    } : {} as ScanResponse,
+    scanInfo: item.scan_info ? transformScanResponse(item.scan_info) : ({} as ScanResponse),
     savedAt: item.saved_at,
     totalFiles: item.total_files,
     totalFolders: item.total_folders,
@@ -656,9 +698,9 @@ export async function updateSnapshot(snapshotId: string): Promise<Snapshot> {
 export async function deleteSnapshot(
   snapshotId: string
 ): Promise<{ message: string }> {
-  return apiFetch<{ message: string }>(`/snapshots/${snapshotId}`, {
-    method: "DELETE",
-  });
+  return call("delete_snapshot", { snapshotId }, () =>
+    apiFetch<{ message: string }>(`/snapshots/${snapshotId}`, { method: "DELETE" })
+  );
 }
 
 // ============================================================================
@@ -677,16 +719,18 @@ export async function compareDirectories(
   targetPath: string,
   deepScan: boolean = false
 ): Promise<ComparisonResponse> {
-  const data = await apiFetch<any>("/compare", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      source_path: sourcePath,
-      target_path: targetPath,
-      deep_scan: deepScan,
-    }),
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const data = await call<any>("compare", { sourcePath, targetPath, deepScan }, () =>
+    apiFetch<any>("/compare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_path: sourcePath,
+        target_path: targetPath,
+        deep_scan: deepScan,
+      }),
+      timeoutMs: LONG_TIMEOUT_MS,
+    })
+  );
 
   return {
     comparisonId: data.comparison_id,
@@ -713,10 +757,15 @@ export async function saveComparisonSnapshot(
     comparison_id: comparisonId,
   });
 
-  const item = await apiFetch<any>(`/snapshots/comparison?${params}`, {
-    method: "POST",
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const item = await call<any>(
+    "save_comparison_snapshot",
+    { sourcePath, targetPath, comparisonId },
+    () =>
+      apiFetch<any>(`/snapshots/comparison?${params}`, {
+        method: "POST",
+        timeoutMs: LONG_TIMEOUT_MS,
+      })
+  );
 
   return transformSnapshot(item);
 }
@@ -727,10 +776,12 @@ export async function saveComparisonSnapshot(
 export async function updateComparisonSnapshot(
   snapshotId: string
 ): Promise<ComparisonSnapshot> {
-  const item = await apiFetch<any>(`/snapshots/comparison/${snapshotId}`, {
-    method: "PUT",
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const item = await call<any>("update_comparison_snapshot", { snapshotId }, () =>
+    apiFetch<any>(`/snapshots/comparison/${snapshotId}`, {
+      method: "PUT",
+      timeoutMs: LONG_TIMEOUT_MS,
+    })
+  );
 
   return transformSnapshot(item);
 }
@@ -806,18 +857,21 @@ export interface DuHastMuchRequest {
 export async function runDuHastMuch(
   request: DuHastMuchRequest
 ): Promise<DuHastMuchResponse> {
-  const data = await apiFetch<any>("/du-hast-much", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      path: request.path,
-      depth: request.depth ?? 1,
-      top: request.top,
-      latest: request.latest ?? false,
-      exclude: request.exclude ?? [],
-    }),
-    timeoutMs: LONG_TIMEOUT_MS,
-  });
+  const body = {
+    path: request.path,
+    depth: request.depth ?? 1,
+    top: request.top,
+    latest: request.latest ?? false,
+    exclude: request.exclude ?? [],
+  };
+  const data = await call<any>("du_hast_much", { request: body }, () =>
+    apiFetch<any>("/du-hast-much", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      timeoutMs: LONG_TIMEOUT_MS,
+    })
+  );
 
   return {
     results: (data.results || []).map((item: any) => ({
@@ -838,11 +892,35 @@ export async function runDuHastMuch(
  * Stream du-hast-much results via SSE, calling onResult for each directory as it completes.
  * Returns final summary when the scan finishes.
  */
-export function streamDuHastMuch(
+export async function streamDuHastMuch(
   request: DuHastMuchRequest,
   onResult: (result: DuHastMuchResult) => void,
   signal?: AbortSignal
 ): Promise<{ totalSize: number; totalFiles: number; elapsedSeconds: number }> {
+  if (isTauri) {
+    const channel = new Channel<DuHastMuchResult>();
+    channel.onmessage = onResult;
+    const done = await callCancellable<any>(
+      "du_hast_much_stream",
+      {
+        request: {
+          path: request.path,
+          top: request.top,
+          latest: request.latest ?? false,
+          exclude: request.exclude ?? [],
+        },
+        onResult: channel,
+      },
+      signal,
+      "Scan cancelled"
+    );
+    return {
+      totalSize: done.total_size || 0,
+      totalFiles: done.total_files || 0,
+      elapsedSeconds: done.elapsed_seconds || 0,
+    };
+  }
+
   return new Promise((resolve, reject) => {
     const params = new URLSearchParams({
       path: request.path,

@@ -28,6 +28,7 @@ import {
   type ComparisonSnapshot,
 } from "./api";
 import type { BackendStatus as BackendStatusType } from "./electron.d";
+import { ask, desktop, notify } from "./desktop";
 import "./App.css";
 
 type TabId = "findings" | "extensions";
@@ -85,10 +86,10 @@ function App() {
   // Tag the document with the host platform so CSS can reserve space for
   // the macOS traffic lights only when needed.
   useEffect(() => {
-    const platform = window.electronAPI?.platform;
-    if (platform) {
-      document.documentElement.setAttribute("data-platform", platform);
-    }
+    desktop
+      ?.getPlatform()
+      .then((platform) => document.documentElement.setAttribute("data-platform", platform))
+      .catch(() => {});
   }, []);
 
   const handleThemeChange = (newTheme: Theme) => {
@@ -116,8 +117,8 @@ function App() {
       if (status.state !== "ready") setConnected(false);
     };
 
-    window.electronAPI?.getBackendStatus().then(apply).catch(() => {});
-    const unsubscribe = window.electronAPI?.onBackendStatus(apply);
+    desktop?.getBackendStatus?.().then(apply).catch(() => {});
+    const unsubscribe = desktop?.onBackendStatus?.(apply);
 
     return () => {
       cancelled = true;
@@ -154,7 +155,7 @@ function App() {
 
   const handleRetryBackend = async () => {
     setConnected(null);
-    const status = await window.electronAPI?.retryBackend();
+    const status = await desktop?.retryBackend?.();
     if (status) setBackendStatus(status);
   };
 
@@ -256,10 +257,10 @@ function App() {
       const snapshot = await saveSnapshot(scanId, scanInfo.rootPath, scanInfo);
       setSnapshots([snapshot, ...snapshots]);
       setCurrentSnapshot(snapshot);
-      alert("Snapshot saved successfully!");
+      await notify("Snapshot saved successfully!");
     } catch (err) {
       console.error("Failed to save snapshot:", err);
-      alert("Failed to save snapshot. Please try again.");
+      await notify("Failed to save snapshot. Please try again.");
     } finally {
       setIsSavingSnapshot(false);
     }
@@ -283,10 +284,10 @@ function App() {
       setScanId(null); // Clear scanId to prevent unnecessary API fetch
       setCurrentSnapshot(updated);
 
-      alert("Snapshot updated successfully!");
+      await notify("Snapshot updated successfully!");
     } catch (err) {
       console.error("Failed to update snapshot:", err);
-      alert("Failed to update snapshot. Please try again.");
+      await notify("Failed to update snapshot. Please try again.");
     } finally {
       setIsSavingSnapshot(false);
     }
@@ -305,10 +306,10 @@ function App() {
       );
       setSnapshots([snapshot, ...snapshots]);
       setComparisonSnapshotId(snapshot.id);
-      alert("Comparison saved successfully!");
+      await notify("Comparison saved successfully!");
     } catch (err) {
       console.error("Failed to save comparison snapshot:", err);
-      alert("Failed to save comparison. Please try again.");
+      await notify("Failed to save comparison. Please try again.");
     } finally {
       setIsSavingSnapshot(false);
     }
@@ -338,10 +339,10 @@ function App() {
         });
       }
 
-      alert("Comparison updated successfully!");
+      await notify("Comparison updated successfully!");
     } catch (err) {
       console.error("Failed to update comparison snapshot:", err);
-      alert("Failed to update comparison. Please try again.");
+      await notify("Failed to update comparison. Please try again.");
     } finally {
       setIsSavingSnapshot(false);
     }
@@ -362,7 +363,7 @@ function App() {
     const hasUnsavedScan = scanId && !currentSnapshot;
 
     if (hasUnsavedScan) {
-      const confirmed = confirm(
+      const confirmed = await ask(
         "You have an unsaved scan. Navigating away will cause this scan data to be lost. Are you sure you want to continue?"
       );
       if (!confirmed) {
@@ -534,10 +535,10 @@ function App() {
         setMainView("du-hast-much"); // Return to du-hast-much view
       }
 
-      alert("Snapshot deleted successfully!");
+      await notify("Snapshot deleted successfully!");
     } catch (err) {
       console.error("Failed to delete snapshot:", err);
-      alert("Failed to delete snapshot. Please try again.");
+      await notify("Failed to delete snapshot. Please try again.");
     }
   };
 
@@ -588,7 +589,7 @@ function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
+      <header className="app-header" data-tauri-drag-region>
         <div className="header-content">
           <h1
             className="app-title"

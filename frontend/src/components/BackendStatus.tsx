@@ -9,6 +9,7 @@
 
 import { useState } from "react";
 import type { BackendStatus as Status } from "../electron.d";
+import { desktop } from "../desktop";
 import "./BackendStatus.css";
 
 interface Props {
@@ -70,11 +71,11 @@ export function BackendStatus({ status, connected, onRetry }: Props) {
                 {showLog ? "Hide log" : "Show log"}
               </button>
             ) : null}
-            {window.electronAPI?.openBackendLog && (
+            {desktop?.openBackendLog && (
               <button
                 type="button"
                 className="ghost"
-                onClick={() => window.electronAPI?.openBackendLog()}
+                onClick={() => desktop?.openBackendLog?.()}
               >
                 Open log file
               </button>

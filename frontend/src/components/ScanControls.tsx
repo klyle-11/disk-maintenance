@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { scanWithProgress, compareDirectories, formatBytes } from "../api";
 import type { ScanResponse, ComparisonResponse } from "../api";
+import { desktop } from "../desktop";
 import "./ScanControls.css";
 
 export type ScanStatus = "idle" | "scanning" | "completed" | "error" | "comparing";
@@ -74,10 +75,10 @@ export function ScanControls({
   }, [logs]);
 
   const handleDirectorySelect = async () => {
-    // Use native Electron dialog if available
-    if (window.electronAPI) {
+    // Use the native folder picker when running in the desktop app
+    if (desktop) {
       try {
-        const selectedPath = await window.electronAPI.selectDirectory();
+        const selectedPath = await desktop.selectDirectory();
         if (selectedPath) {
           setRootPath(selectedPath);
         }
@@ -177,9 +178,9 @@ export function ScanControls({
   };
 
   const handleTargetDirectorySelect = async () => {
-    if (window.electronAPI) {
+    if (desktop) {
       try {
-        const selectedPath = await window.electronAPI.selectDirectory();
+        const selectedPath = await desktop.selectDirectory();
         if (selectedPath) {
           setTargetPath(selectedPath);
         }
@@ -273,7 +274,7 @@ export function ScanControls({
       </div>
 
       <div className="scan-input-row">
-        {!window.electronAPI && (
+        {!desktop && (
           <input
             ref={fileInputRef}
             type="file"
@@ -329,7 +330,7 @@ export function ScanControls({
       {compareMode && (
         <div className="comparison-controls">
           <div className="scan-input-row">
-            {!window.electronAPI && (
+            {!desktop && (
               <input
                 ref={targetFileInputRef}
                 type="file"

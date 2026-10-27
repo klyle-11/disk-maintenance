@@ -1,5 +1,6 @@
 import type { ComparisonSnapshot } from "../api";
 import { formatBytes } from "../api";
+import { ask } from "../desktop";
 import "./SnapshotGallery.css";
 
 interface SnapshotGalleryProps {
@@ -104,10 +105,10 @@ export function SnapshotGallery({
                 </h4>
                 <button
                   className="snapshot-delete"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
                     if (
-                      window.confirm(
+                      await ask(
                         `Are you sure you want to delete this ${isComparison ? "comparison" : "snapshot"}?`
                       )
                     ) {

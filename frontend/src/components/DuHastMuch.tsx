@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory, streamDuHastMuch, type DuHastMuchResult } from "../api";
 import "./DuHastMuch.css";
+import { desktop } from "../desktop";
 
 interface DuHastMuchProps {
   onScanStart?: () => void;
@@ -70,10 +71,10 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
   }, [initialResult]);
 
   const handleDirectorySelect = async () => {
-    // Use native Electron dialog if available
-    if (window.electronAPI) {
+    // Use the native folder picker when running in the desktop app
+    if (desktop) {
       try {
-        const selectedPath = await window.electronAPI.selectDirectory();
+        const selectedPath = await desktop.selectDirectory();
         if (selectedPath) {
           setPath(selectedPath);
         }
@@ -82,7 +83,7 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
         setError('Failed to open directory selection dialog');
       }
     } else {
-      // Fall back to HTML5 file input for browser/Tauri environment
+      // Fall back to HTML5 file input in a plain browser tab
       fileInputRef.current?.click();
     }
   };
@@ -348,7 +349,7 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
 
         <div className="du-hast-much-controls">
           {/* Hidden file input for directory picker */}
-          {!window.electronAPI && (
+          {!desktop && (
             <input
               ref={fileInputRef}
               type="file"

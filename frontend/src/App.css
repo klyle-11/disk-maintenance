@@ -21,7 +21,9 @@
   app-region: drag;
 }
 
-/* Reserve space for the macOS traffic lights (hiddenInset titlebar). */
+/* Reserve space for the macOS traffic lights (Electron's hiddenInset /
+   Tauri's Overlay titlebar). Electron drags by app-region; Tauri by the
+   header's data-tauri-drag-region attribute. */
 [data-platform="darwin"] .app-header {
   padding-left: 88px;
 }
