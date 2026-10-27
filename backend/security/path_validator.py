@@ -44,14 +44,22 @@ class PathValidator:
     # Maximum path length (prevent DoS)
     MAX_PATH_LENGTH = 1000
 
-    def __init__(self, allowed_roots: Optional[List[str]] = None):
+    def __init__(
+        self,
+        allowed_roots: Optional[List[str]] = None,
+        allow_mounted_drives: bool = False,
+    ):
         """
         Initialize the path validator.
 
         Args:
             allowed_roots: List of allowed root directories.
                           If None, only allows current directory.
+            allow_mounted_drives: If True (Windows only), drive letters that
+                          are mounted after startup (e.g. external USB drives)
+                          are picked up when a path is validated.
         """
+        self._allow_mounted_drives = allow_mounted_drives
         if allowed_roots is None:
             allowed_roots = [os.getcwd()]
 
@@ -103,15 +111,13 @@ class PathValidator:
             raise InvalidPathError(f"Invalid path: {e}")
 
         # Check 5: Must be within allowed roots
-        is_allowed = False
-        for allowed_root in self._allowed_roots:
-            try:
-                resolved_path.relative_to(allowed_root)
-                is_allowed = True
-                break
-            except ValueError:
-                # Path is not relative to this root
-                continue
+        is_allowed = self._is_within_allowed_roots(resolved_path)
+
+        # Drives can be attached after startup - rescan once before rejecting
+        if not is_allowed and self._allow_mounted_drives:
+            for drive in list_mounted_drives():
+                self._allowed_roots.add(Path(drive).resolve())
+            is_allowed = self._is_within_allowed_roots(resolved_path)
 
         if not is_allowed:
             roots_str = ", ".join(str(r) for r in self._allowed_roots)
@@ -124,6 +130,17 @@ class PathValidator:
             raise InvalidPathError(f"Path does not exist: {resolved_path}")
 
         return resolved_path
+
+    def _is_within_allowed_roots(self, resolved_path: Path) -> bool:
+        """Check whether a resolved path is inside any allowed root."""
+        for allowed_root in self._allowed_roots:
+            try:
+                resolved_path.relative_to(allowed_root)
+                return True
+            except ValueError:
+                # Path is not relative to this root
+                continue
+        return False
 
     def validate_and_sanitize(self, path_str: str) -> str:
         """
@@ -187,6 +204,25 @@ class PathValidator:
         self._allowed_roots.add(resolved)
 
 
+def list_mounted_drives() -> List[str]:
+    """
+    List the currently mounted Windows drive roots (e.g. "C:\\", "D:\\").
+
+    Returns:
+        List of drive root strings; empty on non-Windows platforms
+    """
+    if os.name != "nt":
+        return []
+
+    import string
+    drives = []
+    for letter in string.ascii_uppercase:
+        drive = f"{letter}:\\"
+        if os.path.exists(drive):
+            drives.append(drive)
+    return drives
+
+
 def create_default_validator() -> PathValidator:
     """
     Create a PathValidator with sensible default allowed roots.
@@ -196,18 +232,15 @@ def create_default_validator() -> PathValidator:
     """
     roots = [os.path.expanduser("~")]
 
-    # On Windows, allow all available drive letters
+    # On Windows, allow all available drive letters (rescanned on demand so
+    # external drives plugged in after startup are accepted too)
     if os.name == "nt":
-        import string
-        for letter in string.ascii_uppercase:
-            drive = f"{letter}:\\"
-            if os.path.exists(drive):
-                roots.append(drive)
+        roots.extend(list_mounted_drives())
     else:
         # On Unix, allow common mount points
         roots.append("/")
 
-    return PathValidator(allowed_roots=roots)
+    return PathValidator(allowed_roots=roots, allow_mounted_drives=True)
 
 
 def is_safe_path(path_str: str, validator: Optional[PathValidator] = None) -> bool:
