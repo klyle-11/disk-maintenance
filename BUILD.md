@@ -1,189 +1,128 @@
 # Building Disk Intelligence
 
-This document describes how to build and package Disk Intelligence for distribution.
+The desktop app is a Tauri app: the React UI (`frontend/src/`) plus a Rust
+core (`core/`) compiled into one native binary. There is no Python backend to
+bundle, no port and no sidecar.
 
 ## Prerequisites
 
-### Common
+### All platforms
 - Node.js 18+
-- Python 3.10+
+- Rust (stable, 1.77+): https://rustup.rs
 
 ### Windows
-- Visual Studio Build Tools (for native dependencies)
-- NSIS (included with electron-builder)
+- Microsoft C++ Build Tools ("Desktop development with C++")
+- WebView2: built into Windows 11. On Windows 10 the installer downloads it.
 
 ### macOS
-- Xcode Command Line Tools
-- macOS 10.14+
+- Xcode Command Line Tools (`xcode-select --install`)
+- macOS 10.15+
 
-## Quick Start
-
-### Windows
-```batch
-scripts\package.bat
-```
-
-### macOS/Linux
+### Linux (Debian/Ubuntu/Raspberry Pi OS)
 ```bash
-./scripts/package.sh
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libssl-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
-This will:
-1. Build the Python backend with PyInstaller
-2. Install frontend npm dependencies
-3. Build the React/Vite frontend
-4. Package everything with electron-builder
+## Quick start
 
-## Manual Build Steps
-
-### 1. Build Backend
-
-**Windows:**
-```batch
-cd backend
-pyinstaller disk-intelligence.spec --clean
-```
-
-**macOS/Linux:**
 ```bash
-cd backend
-python3 -m PyInstaller disk-intelligence.spec --clean
+./scripts/package.sh            # macOS: .app + .dmg
+./scripts/package-linux.sh      # Linux: .deb, .rpm, AppImage
+```
+```batch
+scripts\package.bat             :: Windows: .msi + setup .exe
 ```
 
-Output: `backend/dist/disk-intelligence-backend` (or `.exe` on Windows)
+Each script runs `npm install` and then `npm run dist` (`tauri build`), which
+builds the frontend, compiles the Rust core in release mode and bundles it.
+Build each OS's installers on that OS.
 
-### 2. Build Frontend
+## Manual steps
 
 ```bash
 cd frontend
 npm install
-npm run build
+npm run dist                    # = tauri build
+npx tauri build --bundles deb   # just one bundle type
+npx tauri build --debug --no-bundle   # quick debug binary, no installer
 ```
 
-Output: `frontend/dist/` with built React app
+Development:
 
-### 3. Package Full App
-
-**Windows (NSIS installer):**
 ```bash
 cd frontend
-npm run dist:win
+npm run dev                     # Vite dev server + Tauri window, with hot reload
+cargo test --manifest-path ../core/Cargo.toml   # core tests (no GUI needed)
 ```
 
-**macOS (DMG):**
-```bash
-cd frontend
-npm run dist:mac
-```
+## Output files
 
-**Linux (AppImage + .deb):**
-```bash
-./scripts/package-linux.sh        # or: cd frontend && npm run dist:linux
-```
+Everything lands in `frontend/src-tauri/target/release/bundle/`:
+
+| Platform | Files |
+|---|---|
+| Windows | `msi/Disk Intelligence_1.0.0_x64_en-US.msi`, `nsis/Disk Intelligence_1.0.0_x64-setup.exe` |
+| macOS | `macos/Disk Intelligence.app`, `dmg/Disk Intelligence_1.0.0_aarch64.dmg` (or `_x64`) |
+| Linux | `deb/Disk Intelligence_1.0.0_amd64.deb`, `rpm/…`, `appimage/…` (arm64 on ARM) |
 
 ### Raspberry Pi / Linux arm64
 
-PyInstaller can't cross-compile, so build the arm64 package on an arm64 machine
-(a Pi 5 with 8 GB works; a 4 GB one is fine with swap). On Raspberry Pi OS:
+Build on the Pi itself (a Pi 5 is fine; the first Rust build takes a while).
+Install the Linux packages above plus Node.js and Rust, then run
+`./scripts/package-linux.sh`. Install the result with
+`sudo apt install ./frontend/src-tauri/target/release/bundle/deb/*.deb`.
+The AppImage needs `libfuse2` (`libfuse2t64` on Pi OS "trixie") to run.
+
+## App icon
+
+The source is `frontend/src-tauri/icons/icon.svg` (a #FFFFFC wrench on a
+#6414D9 square). After editing it, regenerate every size with:
 
 ```bash
-sudo apt install python3-venv python3-dev nodejs npm libfuse2   # libfuse2t64 on Pi OS "trixie"
-./scripts/package-linux.sh
+cd frontend && npm run icons
 ```
 
-- The backend builds in `backend/venv`, because Pi OS (like Debian) refuses
-  system-wide `pip install` (PEP 668).
-- The AppImage needs `libfuse2` to run. The `.deb` needs no FUSE, but
-  electron-builder's bundled `fpm` is x86-64 only, so on ARM the script builds
-  the `.deb` only when a system `fpm` is installed
-  (`sudo apt install ruby-dev build-essential && sudo gem install fpm`).
-- Install the .deb with `sudo apt install ./release/disk-intelligence_1.0.0_arm64.deb`.
-- For development on the Pi, run the backend from the same venv:
-  `backend/venv/bin/python backend/main.py` together with `npm run dev:frontend`.
+`frontend/public/icon.svg` (the window favicon) and `frontend/build/icon.png`
+(the legacy Electron build) are copies of the same icon.
 
-## Output Files
+## Database location
 
-After building, you'll find:
+Snapshots live in the same SQLite file the Electron app used, so they carry over:
 
-### Windows
-- `release/Disk Intelligence Setup 1.0.0.exe` - NSIS installer
-- `release/win-unpacked/` - Unpacked application
+- Windows: `%APPDATA%\DiskIntelligence\disk_intelligence.db`
+- macOS: `~/Library/Application Support/DiskIntelligence/disk_intelligence.db`
+- Linux: `~/.local/share/DiskIntelligence/disk_intelligence.db`
 
-### macOS
-- `release/Disk Intelligence 1.0.0.dmg` - DMG disk image
-- `release/Disk Intelligence.app` - Application bundle
+## Code signing
 
-### Linux
-- `release/Disk Intelligence-1.0.0-arm64.AppImage` (or `-x86_64`) - AppImage bundle
-- `release/disk-intelligence_1.0.0_arm64.deb` (or `_amd64`) - Debian package
+Builds are unsigned by default. On macOS they get an ad-hoc signature
+(`signingIdentity: "-"` in `tauri.conf.json`), which Apple Silicon needs to run
+the app at all; the first launch may need right-click → Open.
 
-## Development Builds
-
-For development testing without full packaging:
-
-```bash
-# Terminal 1: Backend
-cd backend
-python main.py
-
-# Terminal 2: Frontend
-cd frontend
-npm run dev
-```
-
-## Database Location
-
-The SQLite database is stored in:
-- **Development**: `backend/disk_intelligence.db`
-- **Production**:
-  - Windows: `%APPDATA%\DiskIntelligence\disk_intelligence.db`
-  - macOS: `~/Library/Application Support/DiskIntelligence/disk_intelligence.db`
-  - Linux: `~/.local/share/DiskIntelligence/disk_intelligence.db`
-
-## Code Signing
-
-By default, builds are unsigned. For distribution, you'll need to:
-
-### Windows
-1. Get a code signing certificate
-2. Set `CSC_LINK` environment variable to certificate path
-3. Set `CSC_KEY_PASSWORD` to certificate password
-
-### macOS
-1. Get an Apple Developer certificate
-2. Set `CSC_LINK` to certificate .p12 file path
-3. Set `CSC_KEY_PASSWORD` to certificate password
-4. For notarization, set `APPLE_ID` and `APPLE_ID_PASSWORD`
+- **macOS**: set `APPLE_SIGNING_IDENTITY` (and `APPLE_CERTIFICATE`,
+  `APPLE_CERTIFICATE_PASSWORD` in CI). For notarization also set `APPLE_ID`,
+  `APPLE_PASSWORD` (an app-specific password) and `APPLE_TEAM_ID`.
+- **Windows**: set `bundle.windows.certificateThumbprint` (or a `signCommand`)
+  in `tauri.conf.json`. See https://v2.tauri.app/distribute/sign/windows/.
 
 ## Troubleshooting
 
-### PyInstaller Issues
-- Clean build cache: `pyinstaller --clean`
-- Check hidden imports in `disk-intelligence.spec`
+- **`webkit2gtk-4.1` not found (Linux)**: install the packages listed above.
+- **Stale build**: `cargo clean --manifest-path frontend/src-tauri/Cargo.toml`.
+- **Blank window in dev**: the Vite server must be on 127.0.0.1:5176
+  (`npm run dev` starts it for you).
 
-### Electron Builder Issues
-- Clean: `rm -rf frontend/node_modules frontend/dist release`
-- Rebuild: `npm install` then build again
-- Check platform-specific requirements
+## Legacy Electron + Python build
 
-### Import Errors
-- Ensure `backend/__init__.py` exists
-- Verify `backend/security/__init__.py` exists
-- Check pathex in spec file includes project root
+The previous app (Electron shell + PyInstaller-bundled FastAPI backend) still
+builds until it is removed:
 
-## File Structure After Build
-
-```
-Disk Intelligence.app (or .exe)
-├── resources/
-│   ├── app.asar        # Frontend (React app)
-│   └── backend/
-│       └── disk-intelligence-backend    # Python FastAPI server
-└── Disk Intelligence     # Electron launcher
+```bash
+./scripts/build-backend.sh                     # PyInstaller → backend/dist/
+npm --prefix frontend run dist:electron:mac    # or :win / :linux → release/
+npm run verify                                 # checks the packaged backend
+npm run dev:electron                           # dev: Python backend + Electron
 ```
 
-The Electron app:
-1. Launches the backend executable on startup
-2. Waits for backend to be ready (port 8001)
-3. Loads the React frontend
-4. Shuts down backend on exit
+It needs Python 3.10+ and `pip install -r backend/requirements.txt`.

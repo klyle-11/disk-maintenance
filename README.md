@@ -3,17 +3,18 @@
 Find what is eating your disk, see what changed since last time, and keep the
 space you free from filling straight back up.
 
-Two front ends share one Python core and one database:
+Two front ends:
 
-- **`di`**: a fast, dependency-free command line tool for scanning, growth
-  tracking, cleanup and a free-space guard.
-- **Desktop app**: Electron + React UI over a local FastAPI backend, with scan
-  findings, snapshots, folder comparison and space-keeping tips.
+- **`di`**: a fast, dependency-free Python command line tool for scanning,
+  growth tracking, cleanup and a free-space guard.
+- **Desktop app**: a Tauri app (React UI + Rust core in one small binary) with
+  scan findings, snapshots, folder comparison and space-keeping tips.
 
 Everything runs locally. Nothing leaves the machine (see [Security](#security)).
 
-> The `worktree-tauri-migration` branch holds an in-progress Tauri + Rust port.
-> `main` is Electron + Python; this README describes `main`.
+> The previous Electron + Python (FastAPI) desktop app still builds
+> (`npm run dev:electron`, `npm run dist:electron`) while the Tauri app beds in.
+> It will be removed once the Tauri app has been used for a while.
 
 ## Quick start
 
@@ -30,16 +31,15 @@ di help
 ```
 
 ```bash
-
-# Desktop app (development)
-pip install -r backend/requirements.txt
+# Desktop app (development): needs Node.js 18+ and Rust (https://rustup.rs)
 npm run install-all
-npm run dev                            # Python backend on :8001 + Vite on :5176 + Electron window
+npm run dev                            # Vite on :5176 + the Tauri window; first run compiles the Rust core
+npm test                               # Rust core tests
 ```
 
 On macOS, give your terminal (and the packaged app) **Full Disk Access** in
 System Settings → Privacy & Security, or scans will skip protected folders.
-On Windows, use `npm run dev:win` (runs `python` instead of `python3`).
+On Linux, Tauri needs the WebKitGTK dev packages (see [BUILD.md](BUILD.md#prerequisites)).
 
 ## Platform support
 
@@ -53,7 +53,7 @@ Everything works on macOS, Windows and Linux (x64 or ARM, including a Raspberry 
 | `di guard --install` | launchd agent | Task Scheduler task (`DiskIntelligenceGuard`, runs hidden via `pythonw`) | crontab entry |
 | Guard notifications | Notification Center | Windows toast | `notify-send` |
 | `di tips` | APFS snapshots, purgeable space, swap, Xcode, Messages … | WSL/Docker `.vhdx`, hiberfil, page file, restore points, WinSxS, Storage Sense … | apt cache, journald, Docker, Trash + shared tips |
-| Desktop app | Electron DMG (`npm run dist:mac`) | Electron NSIS installer (`npm run dist:win`, `scripts\package.bat`) | AppImage / .deb for the build machine's arch (`scripts/package-linux.sh`) |
+| Desktop app | .app + DMG (`scripts/package.sh`) | MSI + setup.exe (`scripts\package.bat`); uses WebView2 (built into Windows 11, installed by the setup on 10) | .deb, .rpm and AppImage for the build machine's arch (`scripts/package-linux.sh`) |
 
 ### Raspberry Pi (Raspberry Pi OS, arm64)
 
@@ -65,7 +65,7 @@ di                                   # works over SSH on Pi OS Lite too
 di guard --auto --install            # adds a crontab entry; notify-send only shows on the desktop edition
 ```
 
-For the desktop app, build on the Pi itself: `sudo apt install python3-venv nodejs npm`, then
+For the desktop app, build on the Pi itself: install Node.js, Rust and the WebKitGTK packages, then
 `./scripts/package-linux.sh` (see [BUILD.md](BUILD.md#raspberry-pi--linux-arm64)).
 
 Shared everywhere: `di clean` (including .NET `bin/`/`obj/` next to a `.csproj`), ballast,
@@ -128,7 +128,7 @@ or every time when the disk is low). Set `DI_TIPS=0` to turn that off.
 - **Scan & findings**: large folders, old large folders, cache/regenerable
   folders, duplicate-name folders and files, cold archives, and a breakdown by
   file extension.
-- **Du-hast-much**: quick per-folder sizing with live progress and history.
+- **Du-hast-much**: quick per-folder sizing, each folder shown as soon as it is measured.
 - **Folder comparison**: source vs target (mirror or backup validation) with
   optional hash verification. Design: `docs/plans/2026-01-15-folder-comparison-design.md`.
 - **Snapshots**: save scans and comparisons, reopen and refresh them later.
@@ -141,30 +141,35 @@ The app only analyses; cleanup lives in `di`.
 ## Architecture
 
 ```
-Electron main (frontend/electron/)
-  ├── backend.cjs     supervises the Python backend: finds a free port, health-checks, restarts
-  └── React UI (frontend/src/)  ── HTTP/SSE on 127.0.0.1 ──►  FastAPI (backend/main.py)
-                                                                ├── security/   path validation, sanitising, headers, redacting logger
-                                                                ├── database.py SQLAlchemy / SQLite snapshots
-                                                                └── diskcli/tips.py  shared tips
+Tauri app (frontend/src-tauri/)
+  └── React UI (frontend/src/) ── invoke() / Channel (in-process IPC) ──► commands (src-tauri/src/lib.rs)
+                                                                          └── disk-core (core/)
+                                                                                ├── scanner    parallel walk, per-folder totals
+                                                                                ├── analyzer   findings
+                                                                                ├── compare    folder comparison
+                                                                                ├── duhast     per-folder sizing
+                                                                                ├── snapshots  SQLite
+                                                                                └── tips       same list as di tips
 di / di.cmd ──► backend/diskcli/  stdlib only: walker, store (SQLite baselines), commands, maint, tips
 ```
 
+There is no server, port or HTTP: the UI calls Rust functions directly, and long
+scans stream progress over a Tauri `Channel` and can be cancelled.
+
 | Path | Contents |
 |---|---|
-| `backend/main.py` | FastAPI app: scan (+SSE stream), findings, extensions, snapshots, compare, du-hast-much, tips |
+| `core/` | `disk-core`, the Rust library with everything the app does. `cargo test` runs without a GUI |
+| `frontend/src-tauri/` | The Tauri shell: commands, window and bundle config, icons (`icons/icon.svg` is the source) |
+| `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` calls Tauri commands (HTTP under Electron); `desktop.ts` wraps the shell (folder picker, dialogs) |
 | `backend/diskcli/` | The `di` CLI. `walker.py` is the fast single-pass scanner; `maint.py` holds clean/caches/guard/ballast |
-| `backend/security/` | Path validator, input sanitiser, secure logger, security headers, encryption helper |
-| `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` is the HTTP client |
-| `frontend/electron/` | Main process, preload bridge, backend supervisor |
+| `backend/main.py`, `backend/security/`, `frontend/electron/` | Legacy Electron + FastAPI app |
 | `scripts/` | Build, package, verify and audit scripts |
 
 ## Data locations
 
 | What | Where (macOS) |
 |---|---|
-| App snapshots (packaged) | `~/Library/Application Support/DiskIntelligence/disk_intelligence.db` |
-| App snapshots (dev) | `backend/disk_intelligence.db` |
+| App snapshots | `~/Library/Application Support/DiskIntelligence/disk_intelligence.db` (same file and schema as the Electron app, so existing snapshots carry over) |
 | CLI baselines, guard log, ballast, tip state | `~/Library/Application Support/DiskIntelligence/` (override the DB with `DISK_INTELLIGENCE_DB`) |
 | Guard launchd agent | `~/Library/LaunchAgents/com.diskintelligence.guard.plist` |
 
@@ -173,18 +178,19 @@ Windows uses `%APPDATA%\DiskIntelligence` (the guard's Task Scheduler launcher i
 
 ## Building
 
-See [BUILD.md](BUILD.md). In short: `npm run package:mac` / `scripts/package.sh`
-(macOS) or `scripts\package.bat` (Windows) builds the backend with PyInstaller,
-builds the frontend, and packages with electron-builder into `release/`.
-PyInstaller can't cross-compile, so build each OS's installer on that OS.
-`npm run verify` checks the packaged app.
+See [BUILD.md](BUILD.md). In short: `scripts/package.sh` (macOS),
+`scripts\package.bat` (Windows) or `scripts/package-linux.sh` run `tauri build`,
+which leaves installers in `frontend/src-tauri/target/release/bundle/`.
+Build each OS's installer on that OS.
 
 ## Security
 
-The app is designed to be local-only: backend bound to 127.0.0.1, CORS
-restricted to localhost origins, path validation and input sanitisation on
-every path-taking endpoint, security headers, CSP, redacted logging, Electron
-context isolation, and audited dependencies with telemetry disabled.
+The app is local-only: there is no network listener at all (the UI talks to the
+Rust core over Tauri's in-process IPC), the CSP only allows the app's own
+content and that IPC channel, every path from the UI is validated
+(`core/src/paths.rs`), the app only reads (cleanup lives in `di`), and
+dependencies are audited with telemetry disabled. The legacy Electron app keeps
+its 127.0.0.1-only backend, CORS and input sanitising.
 
 Background documents (written during the March 2026 hardening pass; see
 `todo.md` for what's still open):
@@ -201,11 +207,10 @@ Background documents (written during the March 2026 hardening pass; see
 ## Troubleshooting
 
 - **Scans miss folders / show "unreadable"**: grant Full Disk Access.
-- **App says "Backend unavailable"**: the banner has Retry and a log link. In
-  dev, check `npm run dev:backend` output. The backend moves to the next free
-  port if 8001 is taken.
-- **Packaged backend killed on first launch (macOS)**: the supervisor clears the
-  quarantine flag; if it persists, run `xattr -dr com.apple.quarantine "/Applications/Disk Intelligence.app"`.
+- **"Disk Intelligence is damaged" / won't open (macOS)**: builds without a
+  Developer ID are ad-hoc signed. Run `xattr -dr com.apple.quarantine "/Applications/Disk Intelligence.app"`.
+- **Blank window on Windows 10**: WebView2 is missing; the installer downloads it,
+  or get it from Microsoft's WebView2 page.
 - **`di guard` notifications don't appear**: on macOS, allow notifications for
   "Script Editor" (osascript) in System Settings → Notifications. On Windows,
   toasts are sent as Windows PowerShell; check Settings → System → Notifications

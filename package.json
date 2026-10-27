@@ -1,22 +1,24 @@
 {
   "name": "disk-maintenance",
   "version": "1.0.0",
-  "description": "Disk Intelligence - Full stack disk maintenance tool",
+  "description": "Disk Intelligence - disk maintenance app (Tauri + Rust) and the di CLI",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:win": "concurrently \"npm run dev:backend:win\" \"npm run dev:frontend\"",
-    "dev:backend": "python3 backend/main.py",
-    "dev:backend:win": "python backend/main.py",
-    "dev:frontend": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
-    "install-all": "npm install && cd frontend && npm install",
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run dist",
+    "test": "cargo test --manifest-path core/Cargo.toml",
+    "install-all": "npm install && npm --prefix frontend install",
     "dist": "npm --prefix frontend run dist",
-    "dist:win": "npm --prefix frontend run dist:win",
-    "dist:mac": "npm --prefix frontend run dist:mac",
-    "dist:linux": "npm --prefix frontend run dist:linux",
     "di": "./di",
     "di:win": "di.cmd",
+    "dev:electron": "concurrently \"npm run dev:backend\" \"npm --prefix frontend run dev:electron\"",
+    "dev:electron:win": "concurrently \"npm run dev:backend:win\" \"npm --prefix frontend run dev:electron\"",
+    "dev:backend": "python3 backend/main.py",
+    "dev:backend:win": "python backend/main.py",
+    "dist:electron": "npm --prefix frontend run dist:electron",
+    "dist:electron:win": "npm --prefix frontend run dist:electron:win",
+    "dist:electron:mac": "npm --prefix frontend run dist:electron:mac",
+    "dist:electron:linux": "npm --prefix frontend run dist:electron:linux",
     "verify": "./scripts/verify-package.sh",
     "package:mac": "./scripts/package.sh",
     "package:linux": "./scripts/package-linux.sh"
@@ -25,5 +27,3 @@
     "concurrently": "^9.2.1"
   }
 }
-
-
