@@ -24,6 +24,11 @@ const PORT_SEARCH_RANGE = 20;
 const READY_TIMEOUT_MS = 120000;
 const HEALTH_POLL_MS = 400;
 const MAX_RESTARTS = 3;
+// The API this build of the app needs. Must match API_VERSION in
+// backend/main.py. A backend that answers /api/health but speaks an older API
+// (an old install still running, or a stale backend build that got packaged)
+// is missing endpoints, so it is never reused or accepted.
+const API_VERSION = 2;
 
 class BackendSupervisor extends EventEmitter {
   constructor({ isDev, logPath }) {
@@ -155,7 +160,9 @@ class BackendSupervisor extends EventEmitter {
   }
 
   /**
-   * Ask whoever is on `port` whether they are one of our backends.
+   * Ask whoever is on `port` whether they are one of our backends, and which
+   * API they speak. Resolves to { api } (0 for backends older than the version
+   * check) or null when nothing healthy answers.
    * Never assume — an unrelated process on 8001 used to make the app hang
    * forever waiting for a health check that would never pass.
    */
@@ -167,24 +174,45 @@ class BackendSupervisor extends EventEmitter {
           let body = '';
           res.on('data', (chunk) => (body += chunk));
           res.on('end', () => {
-            resolve(res.statusCode === 200 && body.includes('ok'));
+            if (res.statusCode !== 200 || !body.includes('ok')) return resolve(null);
+            let api = 0;
+            try {
+              api = Number(JSON.parse(body).api) || 0;
+            } catch {
+              // Not JSON: not a backend we know how to talk to.
+            }
+            resolve({ api });
           });
         }
       );
-      req.on('error', () => resolve(false));
+      req.on('error', () => resolve(null));
       req.on('timeout', () => {
         req.destroy();
-        resolve(false);
+        resolve(null);
       });
     });
   }
 
+  outdatedMessage(api, where) {
+    return (
+      `${where} is out of date: it speaks API ${api}, this app needs ${API_VERSION}, ` +
+      'so newer features (di, tips) would fail.'
+    );
+  }
+
   async choosePort() {
     // Reuse a backend that is already healthy (e.g. a dev server, or a second
-    // window of this app).
-    if (await this.probeHealth(DEFAULT_PORT)) {
+    // window of this app), but only one from this version: an older backend
+    // left running answers /api/health and then 404s on newer endpoints.
+    const existing = await this.probeHealth(DEFAULT_PORT);
+    if (existing && existing.api === API_VERSION) {
       this.log(`[backend] reusing healthy backend already on ${DEFAULT_PORT}`);
       return { port: DEFAULT_PORT, reuse: true };
+    }
+    if (existing) {
+      this.log(
+        `[backend] an older backend (API ${existing.api}, need ${API_VERSION}) is on ${DEFAULT_PORT}; starting this version's own`
+      );
     }
 
     for (let port = DEFAULT_PORT; port < DEFAULT_PORT + PORT_SEARCH_RANGE; port++) {
@@ -210,9 +238,20 @@ class BackendSupervisor extends EventEmitter {
     if (this.isDev) {
       // The dev backend is run separately by `npm run dev`.
       this.setState('starting', 'waiting for the development backend');
-      const ok = await this.waitForHealth(this.port, 30000);
-      this.setState(ok ? 'ready' : 'error', ok ? '' : 'development backend is not running');
-      return ok;
+      const health = await this.waitForHealth(this.port, 30000);
+      if (!health) {
+        this.setState('error', 'development backend is not running');
+        return false;
+      }
+      if (health.api !== API_VERSION) {
+        this.setState(
+          'error',
+          `${this.outdatedMessage(health.api, `The development backend on port ${this.port}`)} Restart it (npm run dev:backend).`
+        );
+        return false;
+      }
+      this.setState('ready', '');
+      return true;
     }
 
     const exePath = this.executablePath();
@@ -302,8 +341,18 @@ class BackendSupervisor extends EventEmitter {
       }
     });
 
-    const ok = await this.waitForHealth(this.port, READY_TIMEOUT_MS);
-    if (ok) {
+    const health = await this.waitForHealth(this.port, READY_TIMEOUT_MS);
+    if (health && health.api !== API_VERSION) {
+      // Restarting won't help: the bundled binary itself is old.
+      this.log(`[backend] bundled backend speaks API ${health.api}, need ${API_VERSION}`);
+      this.setState(
+        'error',
+        `${this.outdatedMessage(health.api, 'The backend bundled with this app')} ` +
+          'It was built from older code: rebuild it with scripts/build-backend.sh, then package the app again.'
+      );
+      return false;
+    }
+    if (health) {
       this.restarts = 0;
       this.setState('ready', '');
       this.log('[backend] ready');
@@ -316,13 +365,17 @@ class BackendSupervisor extends EventEmitter {
     return false;
   }
 
-  /** Poll /api/health until it answers, the process dies, or we run out of time. */
+  /**
+   * Poll /api/health until it answers (resolving to its { api }), the process
+   * dies, or we run out of time (false).
+   */
   async waitForHealth(port, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     let attempt = 0;
     while (Date.now() < deadline) {
       if (this.stopping) return false;
-      if (await this.probeHealth(port)) return true;
+      const health = await this.probeHealth(port);
+      if (health) return health;
 
       // Give up early when the process is already gone; its exit handler
       // produces a much better message than a timeout would.

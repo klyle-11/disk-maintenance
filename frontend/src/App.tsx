@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { healthCheck, setApiBaseUrl } from "./api";
+import { API_VERSION, healthCheck, setApiBaseUrl } from "./api";
 import type { BackendStatus } from "./electron.d";
 import { appStore, backendFailed, loadSnapshots, loadTips, patchApp, useApp } from "./state/app";
 import { loadDiCommands } from "./state/di";
@@ -101,9 +101,18 @@ function App() {
 
     const check = () => {
       healthCheck()
-        .then(() => {
+        .then((health) => {
           if (cancelled) return;
-          if (appStore.get().connected !== true) patchApp({ connected: true });
+          // An older backend answers here too, then 404s on newer endpoints:
+          // refuse it rather than half-work against it.
+          const api = health.api ?? 0;
+          if (api !== API_VERSION) {
+            if (appStore.get().outdated !== api) patchApp({ connected: false, outdated: api });
+            timer = setTimeout(check, 5000);
+            return;
+          }
+          const { connected, outdated } = appStore.get();
+          if (connected !== true || outdated !== null) patchApp({ connected: true, outdated: null });
           timer = setTimeout(check, 15000);
         })
         .catch(() => {

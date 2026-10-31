@@ -60,6 +60,15 @@ for APP in "$ROOT/release"/mac*/*.app; do
       READY=1; break
     fi
   done
+  # Same version as the app (API_VERSION in backend/main.py), and the newest
+  # endpoints really there: a stale backend build answers health and 404s on these.
+  API_OK=0
+  if [ "$READY" = "1" ] \
+    && curl -fsS -m 2 "http://127.0.0.1:$PORT/api/health" | grep -q '"api":2' \
+    && curl -fsS -m 5 "http://127.0.0.1:$PORT/api/di/commands" | grep -q '"scan"' \
+    && curl -fsS -m 5 -o /dev/null "http://127.0.0.1:$PORT/api/tips"; then
+    API_OK=1
+  fi
   kill -- -"$BPID" 2>/dev/null || kill "$BPID" 2>/dev/null || true
   wait "$BPID" 2>/dev/null || true
 
@@ -67,6 +76,12 @@ for APP in "$ROOT/release"/mac*/*.app; do
     pass "backend starts and answers /api/health"
   else
     fail "backend did not start — see /tmp/di-verify.log"
+  fi
+
+  if [ "$API_OK" = "1" ]; then
+    pass "backend is current: API 2, /api/di and /api/tips answer"
+  else
+    fail "backend is out of date (wrong API version or missing endpoints) — run scripts/build-backend.sh"
   fi
 done
 

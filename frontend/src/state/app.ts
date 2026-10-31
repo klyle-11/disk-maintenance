@@ -16,6 +16,8 @@ import { createStore, useStore } from "../store";
 export interface AppState {
   /** True once /api/health answers; null while we don't know yet. */
   connected: boolean | null;
+  /** The API version of a backend that answered but is too old to use. */
+  outdated: number | null;
   backend: BackendStatus | null;
   snapshots: ComparisonSnapshot[];
   snapshotsLoading: boolean;
@@ -30,6 +32,7 @@ export interface AppState {
 
 export const appStore = createStore<AppState>({
   connected: null,
+  outdated: null,
   backend: null,
   snapshots: [],
   snapshotsLoading: true,
@@ -55,6 +58,7 @@ export function isReady(): boolean {
 
 /** The backend failed to start (or, outside Electron, stopped answering). */
 export function backendFailed(state: AppState): boolean {
+  if (state.outdated !== null) return true;
   if (state.connected === true) return false;
   return state.backend ? state.backend.state === "error" : state.connected === false;
 }

@@ -209,6 +209,16 @@ builds the frontend, and packages with electron-builder into `release/`.
 PyInstaller can't cross-compile, so build each OS's installer on that OS.
 `npm run verify` checks the packaged app.
 
+Packaging refuses a `backend/dist` binary that is older than the backend source
+(electron-builder ships whatever is there, and `npm run dist` doesn't rebuild
+it): run `scripts/build-backend.sh` first, or set `DI_ALLOW_STALE_BACKEND=1`.
+
+Size: a Linux build is about 270 MB unpacked. The Electron/Chromium runtime is
+~230 MB of that and the PyInstaller backend (with its own Python) 30 MB; the UI
+itself is about 0.35 MB. Only the en-US Chromium locale is shipped. A Tauri
+build drops the bundled Chromium, which is where most of the gap to Tauri is
+(see todo.md).
+
 ## Security
 
 The app is designed to be local-only: backend bound to 127.0.0.1, CORS
@@ -234,6 +244,12 @@ Background documents (written during the March 2026 hardening pass; see
 - **App says "Backend unavailable"**: the banner has Retry and a log link. In
   dev, check `npm run dev:backend` output. The backend moves to the next free
   port if 8001 is taken.
+- **"Backend out of date", or di / tips fail with 404**: the app found a backend
+  older than itself, either an old install or `python backend/main.py` from an
+  older checkout still running on port 8001, or a stale `backend/dist` that was
+  packaged. The app no longer reuses an older backend on 8001 (it starts its own
+  on the next port); quit the old one, or rebuild with `scripts/build-backend.sh`
+  and package again.
 - **Packaged backend killed on first launch (macOS)**: the supervisor clears the
   quarantine flag; if it persists, run `xattr -dr com.apple.quarantine "/Applications/Disk Intelligence.app"`.
 - **`di guard` notifications don't appear**: on macOS, allow notifications for

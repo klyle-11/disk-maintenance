@@ -103,6 +103,15 @@ def _events(response) -> list[dict]:
     return [json.loads(line[len("data: "):]) for line in response.text.splitlines() if line.startswith("data: ")]
 
 
+def test_health_reports_the_api_version(client):
+    # The app refuses a backend whose API doesn't match (see API_VERSION in
+    # main.py, frontend/electron/backend.cjs and frontend/src/api.ts).
+    from backend.main import API_VERSION
+
+    assert client.get("/api/health").json() == {"status": "ok", "api": API_VERSION}
+    assert API_VERSION >= 2  # the di endpoints arrived in API 2
+
+
 def test_di_commands_lists_commands_except_serve(client):
     names = [c["name"] for c in client.get("/api/di/commands").json()["commands"]]
     assert "scan" in names and "tips" in names

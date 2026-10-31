@@ -874,6 +874,19 @@
   border-radius: 0;
 }
 
+.backend-outdated {
+  font-size: 11px;
+}
+
+.backend-outdated p {
+  margin: 5px 0;
+  line-height: 1.45;
+}
+
+.backend-outdated code {
+  color: var(--lcd-strong);
+}
+
 /* ── Tips ──────────────────────────────────────────────────────────────── */
 
 .tip {

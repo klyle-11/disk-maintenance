@@ -48,7 +48,7 @@ Where the pain actually comes from:
 
 | Pain | Cause | Fixed by Tauri alone? | Fixed by Tauri + Rust backend? |
 |---|---|---|---|
-| 289 MB app (255 MB is Electron's Chromium) | Electron | yes (~10–15 MB shell) | yes |
+| 289 MB app (255 MB is Electron's Chromium); measured 2026-10-31 on Linux: 321 MB → 270 MB after shipping only the en-US locale and dropping React's node_modules from app.asar (Chromium runtime ~230 MB, backend 30 MB, UI 0.35 MB) | Electron | yes (~10–15 MB shell) | yes |
 | Packaging the backend: PyInstaller, quarantine stripping, 27 MB unpack on every launch, 120s ready timeout, port search, 383-line supervisor | Python sidecar | **no**: Tauri would still need the same sidecar | **yes**: one binary, no ports, no HTTP |
 | Idle RAM of a second browser engine | Electron | yes | yes |
 | Scanner memory / wrong sizes | Scanner design | no | only if the Rust scanner is designed right |
@@ -154,8 +154,9 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
 
 ## Build & packaging
 
-- [ ] Rebuild the backend so the PyInstaller bundle includes `diskcli/` (added to the spec
-      for `/api/tips`), then run `npm run verify`.
+- [x] Rebuild the backend so the PyInstaller bundle includes `diskcli/` (added to the spec
+      for `/api/tips`), then run `npm run verify`. Packaging now refuses a stale
+      `backend/dist`, and the app refuses a backend with an older API version.
 - [ ] BUILD.md mentions `npm run dist:linux`, which doesn't exist in `frontend/package.json`.
 - [ ] `run-dev.sh` says the backend is on port 8000; it's 8001.
 

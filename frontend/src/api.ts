@@ -414,9 +414,15 @@ export async function getExtensionSummary(
  * Check if the backend is running and healthy.
  * @returns A health status object.
  */
-export async function healthCheck(): Promise<{ status: string }> {
-  return apiFetch<{ status: string }>("/health", { timeoutMs: HEALTH_TIMEOUT_MS });
+export async function healthCheck(): Promise<{ status: string; api?: number }> {
+  return apiFetch<{ status: string; api?: number }>("/health", { timeoutMs: HEALTH_TIMEOUT_MS });
 }
+
+/**
+ * The backend API this app needs, as reported by /api/health. Must match
+ * API_VERSION in backend/main.py and frontend/electron/backend.cjs.
+ */
+export const API_VERSION = 2;
 
 export interface SpaceTip {
   id: string;

@@ -2,7 +2,7 @@
  * The small windows that run the app: status, controls, skins, and the
  * backend window that appears when the backend can't start.
  */
-import { formatBytes } from "../api";
+import { API_VERSION, formatBytes, getApiBaseUrl } from "../api";
 import { BackendStatus } from "../components/BackendStatus";
 import { SKINS } from "../skins";
 import { appStore, backendFailed, loadTips, retryBackend, setPanel, setSkin, useApp } from "../state/app";
@@ -193,10 +193,38 @@ export function SkinsWindow({ view, controls }: WindowArgs) {
 export function BackendWindow({ view, controls }: WindowArgs) {
   const backend = useApp((s) => s.backend);
   const connected = useApp((s) => s.connected);
+  const outdated = useApp((s) => s.outdated);
   return (
-    <Window title="BACKEND" shadeInfo="unavailable" view={view} controls={controls} className="kind-backend">
+    <Window
+      title="BACKEND"
+      shadeInfo={outdated !== null ? "out of date" : "unavailable"}
+      view={view}
+      controls={controls}
+      className="kind-backend"
+    >
       <div className="backend-win">
-        <BackendStatus status={backend} connected={connected} onRetry={retryBackend} />
+        {outdated !== null ? (
+          <div className="lcd backend-outdated">
+            <div className="lcd-bad">BACKEND OUT OF DATE</div>
+            <p>
+              The backend at {getApiBaseUrl()} speaks API {outdated}; this app needs {API_VERSION}. It is missing newer
+              endpoints (di, tips), so the app won't use it.
+            </p>
+            <p>
+              If an older Disk Intelligence (or a <code>python backend/main.py</code> from an older checkout) is still
+              running, quit it. If this app was packaged with an old backend build, run{" "}
+              <code>scripts/build-backend.sh</code> and package again.
+            </p>
+            {backend?.state === "error" && backend.detail ? <p className="lcd-dim">{backend.detail}</p> : null}
+            {window.electronAPI ? (
+              <button type="button" className="chip" onClick={() => void retryBackend()}>
+                RETRY
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <BackendStatus status={backend} connected={connected} onRetry={retryBackend} />
+        )}
       </div>
     </Window>
   );
