@@ -152,7 +152,7 @@ The windows:
 | du-hast-much + DHM output | Settings and recent scans; the CLI-style table with live progress. |
 | di + di commands | The real `di` command line, and its suggestions: quick commands and every command with its help. Anything that deletes or schedules something (`clean --yes`, `caches --yes`, `guard --install/--auto`, `ballast set/release`, `forget`) asks first; the pick-to-delete prompt stays terminal-only. |
 | Tips (one per tip) | Each way to keep freed space free, with its command to copy (the list `di tips` prints). TIPS opens the ones that apply to this machine. |
-| Skins | Cold Steel, Silver & White, Warm Yellow, Frost, Gunmetal, Obsidian. |
+| Skins | Cold Steel, Silver, Pale Sun, Sunburnt (hot orange metal fading to yellow), Frost, Gunmetal, Obsidian. Any of them can have a DARK display or WHITE paper inside; each skin remembers which. |
 | Backend | Appears by itself if the backend can't start: why, retry, and the log. |
 
 Apart from the di window, the app only analyses; cleanup lives in `di`.

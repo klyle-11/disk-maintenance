@@ -10,7 +10,7 @@ import {
   type SpaceTips,
 } from "../api";
 import type { BackendStatus } from "../electron.d";
-import { readSkin, saveSkin, type Skin } from "../skins";
+import { readPanels, readSkin, savePanels, saveSkin, type Panel, type Skin } from "../skins";
 import { createStore, useStore } from "../store";
 
 export interface AppState {
@@ -24,6 +24,8 @@ export interface AppState {
   problems: Record<string, string>;
   tips: SpaceTips | null;
   skin: Skin;
+  /** Each skin's inside: a dark display or white paper. */
+  panels: Record<Skin, Panel>;
 }
 
 export const appStore = createStore<AppState>({
@@ -35,6 +37,7 @@ export const appStore = createStore<AppState>({
   problems: {},
   tips: null,
   skin: readSkin(),
+  panels: readPanels(),
 });
 
 export function useApp<S>(select: (state: AppState) => S): S {
@@ -59,6 +62,14 @@ export function backendFailed(state: AppState): boolean {
 export function setSkin(skin: Skin): void {
   saveSkin(skin);
   patchApp({ skin });
+}
+
+/** Switch the current skin's inside between dark and white. */
+export function setPanel(panel: Panel): void {
+  const { skin, panels } = appStore.get();
+  const next = { ...panels, [skin]: panel };
+  savePanels(next);
+  patchApp({ panels: next });
 }
 
 export async function loadSnapshots(): Promise<void> {

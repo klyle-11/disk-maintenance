@@ -1,19 +1,26 @@
 /*
- * Skins. Each one sets:
- *   --metal-*  the frame every window is made of
- *   --lcd-*    the panels the content sits on (dark displays, or white paper)
- *   --ansi-*   terminal colours for di and du-hast-much output
- *   --btn-*    the lit buttons
- * The older --bg-* / --text-* / --accent-* names the components were written
- * against are mapped onto the panel palette, so they draw as panel content.
+ * Skins come in two halves.
  *
- * There is no page background: the windows float on the desktop.
+ * The frame (data-theme): what every window is made of.
+ *   --metal-*, --frame-bg, --btn-face   the metal, its gradient, the buttons
+ *   --glow, --btn-primary, ...          lit details
+ *   --d-* / --l-*                       the skin's tint for a dark / white inside
+ *
+ * The panel (data-panel = dark | light): the inside each window's content sits
+ * on, a dark display or white paper, drawn in the frame's tint. Any skin can
+ * have either.
+ *
+ * The older --bg-* / --text-* / --accent-* names the components were written
+ * against map onto the panel. There is no page background: the windows float
+ * on the desktop.
  */
 * {
   box-sizing: border-box;
 }
 
-/* Cold Steel (default): blue-grey brushed metal, ice-blue display. */
+/* ── Frames ──────────────────────────────────────────────────────────────── */
+
+/* Cold Steel (default): blue-grey brushed metal. */
 :root,
 [data-theme="steel"] {
   --metal-hi: #d2d9e0;
@@ -30,27 +37,315 @@
   --groove-light: #c3cbd3;
   --glow: #59c8ff;
   --glow-soft: rgba(89, 200, 255, 0.35);
+  --btn-primary: linear-gradient(to bottom, #e3f6ff, #8fd6ff 50%, #4fb3ea);
+  --btn-primary-text: #062033;
 
-  --lcd-bg: #04070a;
-  --lcd-bg-2: #0a1118;
-  --lcd-hover: #10202e;
-  --lcd-line: #16232f;
-  --lcd-line-2: #22384a;
-  --lcd-text: #9ed6ff;
-  --lcd-strong: #e4f5ff;
-  --lcd-dim: #4f7590;
-  --lcd-accent: #36c6ff;
+  --d-bg: #04070a;
+  --d-bg-2: #0a1118;
+  --d-hover: #10202e;
+  --d-line: #16232f;
+  --d-line-2: #22384a;
+  --d-text: #9ed6ff;
+  --d-strong: #e4f5ff;
+  --d-dim: #4f7590;
+  --d-accent: #36c6ff;
+  --d-glow: rgba(54, 198, 255, 0.55);
+
+  --l-bg: #ffffff;
+  --l-bg-2: #f2f6fa;
+  --l-hover: #e4eef8;
+  --l-line: #e1e8ef;
+  --l-line-2: #c7d3de;
+  --l-text: #22313f;
+  --l-strong: #0a121a;
+  --l-dim: #7a8896;
+  --l-accent: #1677c9;
+}
+
+/* Silver: brighter, cooler brushed silver. */
+[data-theme="silver"] {
+  --metal-hi: #f1f4f7;
+  --metal-1: #cdd3da;
+  --metal-2: #aeb6bf;
+  --metal-3: #8d96a0;
+  --metal-lo: #5a626c;
+  --metal-edge: #22272d;
+  --metal-inset: #9aa3ad;
+  --chrome-text: #151b22;
+  --chrome-text-dim: #3a434d;
+  --emboss: rgba(255, 255, 255, 0.6);
+  --groove-dark: #6f7882;
+  --groove-light: #f3f6f9;
+  --glow: #2f8cff;
+  --glow-soft: rgba(47, 140, 255, 0.25);
+  --btn-primary: linear-gradient(to bottom, #eef5ff, #a9cdff 50%, #5b97ea);
+  --btn-primary-text: #06203f;
+
+  --d-bg: #06080a;
+  --d-bg-2: #0d1114;
+  --d-hover: #1a2129;
+  --d-line: #1a1f25;
+  --d-line-2: #2a323b;
+  --d-text: #cfd8e2;
+  --d-strong: #ffffff;
+  --d-dim: #6b7682;
+  --d-accent: #7ab8ff;
+  --d-glow: rgba(122, 184, 255, 0.45);
+
+  --l-bg: #ffffff;
+  --l-bg-2: #f3f6f9;
+  --l-hover: #e7f0fa;
+  --l-line: #e3e8ee;
+  --l-line-2: #cbd4dd;
+  --l-text: #2a3644;
+  --l-strong: #0b1118;
+  --l-dim: #7d8a97;
+  --l-accent: #1f6fd1;
+}
+
+/* Pale Sun: soft lemon enamel, washed out by the light. */
+[data-theme="palesun"] {
+  --metal-hi: #fffef4;
+  --metal-1: #fbf2c4;
+  --metal-2: #f6e8a2;
+  --metal-3: #ebd67f;
+  --metal-lo: #b8a24f;
+  --metal-edge: #6b5a1c;
+  --metal-inset: #f0df90;
+  --chrome-text: #4a3d0c;
+  --chrome-text-dim: #7a6a2c;
+  --emboss: rgba(255, 255, 245, 0.75);
+  --groove-dark: #cbb35a;
+  --groove-light: #fffcea;
+  --glow: #f2a91c;
+  --glow-soft: rgba(242, 169, 28, 0.25);
+  --btn-primary: linear-gradient(to bottom, #fffdf0, #ffeeb0 50%, #f7d36a);
+  --btn-primary-text: #3d2f00;
+
+  --d-bg: #0d0b04;
+  --d-bg-2: #16130a;
+  --d-hover: #262011;
+  --d-line: #221d0e;
+  --d-line-2: #3a3218;
+  --d-text: #f2e3a2;
+  --d-strong: #fffbe6;
+  --d-dim: #8f8150;
+  --d-accent: #ffd75e;
+  --d-glow: rgba(255, 215, 94, 0.45);
+
+  --l-bg: #fffef8;
+  --l-bg-2: #fffaea;
+  --l-hover: #fff3cf;
+  --l-line: #f3ebcf;
+  --l-line-2: #e6d9a8;
+  --l-text: #4d4224;
+  --l-strong: #231d08;
+  --l-dim: #a39566;
+  --l-accent: #b7791f;
+}
+
+/* Sunburnt: hot orange metal, baked yellow where the sun hits it. */
+[data-theme="sunburnt"] {
+  --metal-hi: #ffeaa6;
+  --metal-1: #ffad4a;
+  --metal-2: #f58a2c;
+  --metal-3: #dc6a18;
+  --metal-lo: #8f3a0a;
+  --metal-edge: #3d1502;
+  --metal-inset: #d96a1c;
+  --chrome-text: #3a1300;
+  --chrome-text-dim: #6e2e05;
+  --emboss: rgba(255, 236, 170, 0.6);
+  --groove-dark: #9c3f0a;
+  --groove-light: #ffe08a;
+  --glow: #ffe14d;
+  --glow-soft: rgba(255, 225, 77, 0.35);
+  --btn-primary: linear-gradient(to bottom, #fff6c2, #ffd84a 50%, #ffae1a);
+  --btn-primary-text: #3a1a00;
+  --frame-bg:
+    radial-gradient(ellipse 70% 55% at 88% 0%, rgba(255, 238, 140, 0.55), transparent 70%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0 1px, rgba(0, 0, 0, 0.04) 1px 3px),
+    linear-gradient(165deg, #ffcf55 0%, #ffa83c 20%, #f7862a 48%, #e5661a 78%, #c24d10 100%);
+  --btn-face: linear-gradient(to bottom, #fff0a8, #ffc24d 45%, #f98f2e);
+  --btn-face-hover: linear-gradient(to bottom, #fff7cc, #ffd56b 45%, #ffa23f);
+
+  --d-bg: #120602;
+  --d-bg-2: #1c0b04;
+  --d-hover: #2e1406;
+  --d-line: #2a1106;
+  --d-line-2: #4a2009;
+  --d-text: #ffb866;
+  --d-strong: #ffe9c2;
+  --d-dim: #9a5a26;
+  --d-accent: #ffcf3f;
+  --d-glow: rgba(255, 160, 40, 0.5);
+
+  --l-bg: #fffaf3;
+  --l-bg-2: #fff1df;
+  --l-hover: #ffe3c2;
+  --l-line: #f5dfc4;
+  --l-line-2: #ecc597;
+  --l-text: #4a2a12;
+  --l-strong: #200d02;
+  --l-dim: #a5774f;
+  --l-accent: #d9530b;
+}
+
+/* Frost: pale anodised aluminium. */
+[data-theme="frost"] {
+  --metal-hi: #ffffff;
+  --metal-1: #e3e9ef;
+  --metal-2: #c9d2db;
+  --metal-3: #aab6c2;
+  --metal-lo: #7d8b99;
+  --metal-edge: #4a5663;
+  --metal-inset: #b4bfca;
+  --chrome-text: #14212e;
+  --chrome-text-dim: #44546a;
+  --emboss: rgba(255, 255, 255, 0.8);
+  --groove-dark: #8796a5;
+  --groove-light: #ffffff;
+  --glow: #0a84d6;
+  --glow-soft: rgba(10, 132, 214, 0.3);
+  --btn-primary: linear-gradient(to bottom, #e3f3ff, #8cc8f0 50%, #3d97d6);
+  --btn-primary-text: #062033;
+
+  --d-bg: #050a10;
+  --d-bg-2: #0b131c;
+  --d-hover: #13202e;
+  --d-line: #142130;
+  --d-line-2: #20364b;
+  --d-text: #b9d8f0;
+  --d-strong: #f0f8ff;
+  --d-dim: #557089;
+  --d-accent: #5ab4f0;
+  --d-glow: rgba(90, 180, 240, 0.45);
+
+  --l-bg: #eef4f9;
+  --l-bg-2: #e2ebf3;
+  --l-hover: #d5e3ef;
+  --l-line: #d1dde8;
+  --l-line-2: #b6c8d7;
+  --l-text: #1b3a52;
+  --l-strong: #06121c;
+  --l-dim: #5f7d93;
+  --l-accent: #0a6fb8;
+}
+
+/* Gunmetal: darker, heavier metal. */
+[data-theme="gunmetal"] {
+  --metal-hi: #858d96;
+  --metal-1: #59616a;
+  --metal-2: #434950;
+  --metal-3: #31363c;
+  --metal-lo: #1a1d21;
+  --metal-edge: #000;
+  --metal-inset: #262a2f;
+  --chrome-text: #dfe5ea;
+  --chrome-text-dim: #9ea7b0;
+  --emboss: rgba(0, 0, 0, 0.7);
+  --groove-dark: #121417;
+  --groove-light: #6a737c;
+  --glow: #8fb3ff;
+  --glow-soft: rgba(143, 179, 255, 0.35);
+  --btn-primary: linear-gradient(to bottom, #dfe7ff, #9fb7f0 50%, #6688d8);
+  --btn-primary-text: #0b1530;
+
+  --d-bg: #030405;
+  --d-bg-2: #0a0c0f;
+  --d-hover: #161b22;
+  --d-line: #171b20;
+  --d-line-2: #262c34;
+  --d-text: #bac8d6;
+  --d-strong: #f1f5f9;
+  --d-dim: #5d6876;
+  --d-accent: #8fb3ff;
+  --d-glow: rgba(143, 179, 255, 0.45);
+
+  --l-bg: #fcfcfd;
+  --l-bg-2: #f1f3f5;
+  --l-hover: #e6eaf0;
+  --l-line: #e3e6ea;
+  --l-line-2: #c9ced5;
+  --l-text: #2a2f36;
+  --l-strong: #0b0d10;
+  --l-dim: #7c838c;
+  --l-accent: #3d5fc4;
+}
+
+/* Obsidian: black anodised metal; an amber display when dark. The darkest. */
+[data-theme="obsidian"] {
+  --metal-hi: #4e5258;
+  --metal-1: #2f3237;
+  --metal-2: #23262a;
+  --metal-3: #191b1e;
+  --metal-lo: #0c0d0f;
+  --metal-edge: #000;
+  --metal-inset: #121316;
+  --chrome-text: #c9cdd2;
+  --chrome-text-dim: #7e848b;
+  --emboss: rgba(0, 0, 0, 0.85);
+  --groove-dark: #000;
+  --groove-light: #3d4147;
+  --glow: #ffb000;
+  --glow-soft: rgba(255, 176, 0, 0.3);
+  --btn-primary: linear-gradient(to bottom, #fff2cc, #ffcc4d 50%, #e69500);
+  --btn-primary-text: #2b1a00;
+
+  --d-bg: #000;
+  --d-bg-2: #0b0905;
+  --d-hover: #1d1606;
+  --d-line: #1a1408;
+  --d-line-2: #2e230c;
+  --d-text: #ffb000;
+  --d-strong: #ffd27a;
+  --d-dim: #8a5f00;
+  --d-accent: #ffcc33;
+  --d-glow: rgba(255, 176, 0, 0.5);
+
+  --l-bg: #fffdf8;
+  --l-bg-2: #f7f3ea;
+  --l-hover: #f0e7d2;
+  --l-line: #ece5d6;
+  --l-line-2: #d8cdb4;
+  --l-text: #2b2418;
+  --l-strong: #000;
+  --l-dim: #8a7d63;
+  --l-accent: #b06e00;
+}
+
+/* Shared frame details, built from each skin's metal unless it has its own
+   (:where keeps these weaker than any skin's own values). */
+:where(:root) {
+  --frame-bg:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, rgba(0, 0, 0, 0.035) 1px 3px),
+    linear-gradient(to bottom, var(--metal-1), var(--metal-2) 40%, var(--metal-3));
+  --btn-face: linear-gradient(to bottom, var(--metal-hi), var(--metal-1) 45%, var(--metal-2));
+  --btn-face-hover: linear-gradient(to bottom, var(--metal-hi), var(--metal-hi) 20%, var(--metal-1));
+  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
+  --btn-warn-text: #3a0a0f;
+}
+
+/* ── Panels ──────────────────────────────────────────────────────────────── */
+
+/* Dark: a display, glowing in the frame's colour. */
+:root,
+[data-panel="dark"] {
+  --lcd-bg: var(--d-bg);
+  --lcd-bg-2: var(--d-bg-2);
+  --lcd-hover: var(--d-hover);
+  --lcd-line: var(--d-line);
+  --lcd-line-2: var(--d-line-2);
+  --lcd-text: var(--d-text);
+  --lcd-strong: var(--d-strong);
+  --lcd-dim: var(--d-dim);
+  --lcd-accent: var(--d-accent);
+  --lcd-glow: var(--d-glow);
+  --lcd-scan: rgba(255, 255, 255, 0.018);
   --lcd-good: #5cf2a0;
   --lcd-warn: #ffc457;
   --lcd-bad: #ff5f6d;
-  --lcd-glow: rgba(54, 198, 255, 0.55);
-  --lcd-scan: rgba(255, 255, 255, 0.018);
   --led-off: #1b2228;
-
-  --btn-primary: linear-gradient(to bottom, #e3f6ff, #8fd6ff 50%, #4fb3ea);
-  --btn-primary-text: #062033;
-  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
-  --btn-warn-text: #3a0a0f;
 
   --ansi-black: #3a4652;
   --ansi-red: #ff5f6d;
@@ -70,43 +365,23 @@
   --ansi-bright-white: #f2f8fc;
 }
 
-/* Silver & White: the same brushed silver, with white paper inside. */
-[data-theme="silver"] {
-  --metal-hi: #f1f4f7;
-  --metal-1: #cdd3da;
-  --metal-2: #aeb6bf;
-  --metal-3: #8d96a0;
-  --metal-lo: #5a626c;
-  --metal-edge: #22272d;
-  --metal-inset: #9aa3ad;
-  --chrome-text: #151b22;
-  --chrome-text-dim: #3a434d;
-  --emboss: rgba(255, 255, 255, 0.6);
-  --groove-dark: #6f7882;
-  --groove-light: #f3f6f9;
-  --glow: #2f8cff;
-  --glow-soft: rgba(47, 140, 255, 0.25);
-
-  --lcd-bg: #ffffff;
-  --lcd-bg-2: #f3f6f9;
-  --lcd-hover: #e7f0fa;
-  --lcd-line: #e3e8ee;
-  --lcd-line-2: #cbd4dd;
-  --lcd-text: #2a3644;
-  --lcd-strong: #0b1118;
-  --lcd-dim: #7d8a97;
-  --lcd-accent: #1f6fd1;
+/* White: paper, printed in the frame's colour. */
+[data-panel="light"] {
+  --lcd-bg: var(--l-bg);
+  --lcd-bg-2: var(--l-bg-2);
+  --lcd-hover: var(--l-hover);
+  --lcd-line: var(--l-line);
+  --lcd-line-2: var(--l-line-2);
+  --lcd-text: var(--l-text);
+  --lcd-strong: var(--l-strong);
+  --lcd-dim: var(--l-dim);
+  --lcd-accent: var(--l-accent);
+  --lcd-glow: transparent;
+  --lcd-scan: transparent;
   --lcd-good: #12804a;
   --lcd-warn: #b06d00;
   --lcd-bad: #c62a3a;
-  --lcd-glow: transparent;
-  --lcd-scan: transparent;
-  --led-off: #b7c0c9;
-
-  --btn-primary: linear-gradient(to bottom, #eef5ff, #a9cdff 50%, #5b97ea);
-  --btn-primary-text: #06203f;
-  --btn-warn: linear-gradient(to bottom, #ffe8ea, #ffaab2 50%, #e86b77);
-  --btn-warn-text: #3a0a0f;
+  --led-off: #c3cbd3;
 
   --ansi-black: #2b3a47;
   --ansi-red: #c62a3a;
@@ -126,212 +401,13 @@
   --ansi-bright-white: #0b1118;
 }
 
-/* Warm Yellow: buttery yellow enamel, white paper inside. */
-[data-theme="butter"] {
-  --metal-hi: #fff7cf;
-  --metal-1: #f8dc6a;
-  --metal-2: #eec544;
-  --metal-3: #d9a82c;
-  --metal-lo: #9c7417;
-  --metal-edge: #4a3608;
-  --metal-inset: #e0b640;
-  --chrome-text: #3a2a05;
-  --chrome-text-dim: #6b5214;
-  --emboss: rgba(255, 252, 228, 0.65);
-  --groove-dark: #a7801d;
-  --groove-light: #fff4c4;
-  --glow: #ff8a00;
-  --glow-soft: rgba(255, 138, 0, 0.25);
-
-  --lcd-bg: #fffdf6;
-  --lcd-bg-2: #fff7e2;
-  --lcd-hover: #ffefc6;
-  --lcd-line: #f2e6c4;
-  --lcd-line-2: #e4d09c;
-  --lcd-text: #4a3b1f;
-  --lcd-strong: #241a06;
-  --lcd-dim: #a08a63;
-  --lcd-accent: #c96f00;
-  --lcd-good: #3f8a2e;
-  --lcd-warn: #b45f00;
-  --lcd-bad: #c0392b;
-  --lcd-glow: transparent;
-  --lcd-scan: transparent;
-  --led-off: #d8c28a;
-
-  --btn-primary: linear-gradient(to bottom, #fff1d6, #ffc266 50%, #f08c00);
-  --btn-primary-text: #3a1d00;
-  --btn-warn: linear-gradient(to bottom, #ffe6e2, #ffa79b 50%, #e2604f);
-  --btn-warn-text: #3a0a05;
-
-  --ansi-black: #4a3b1f;
-  --ansi-red: #c0392b;
-  --ansi-green: #3f8a2e;
-  --ansi-yellow: #a36300;
-  --ansi-blue: #2b67b0;
-  --ansi-magenta: #9b3f8f;
-  --ansi-cyan: #1f7f86;
-  --ansi-white: #6b5a3a;
-  --ansi-bright-black: #a99872;
-  --ansi-bright-red: #e0533f;
-  --ansi-bright-green: #55a83f;
-  --ansi-bright-yellow: #c98000;
-  --ansi-bright-blue: #3d7fd0;
-  --ansi-bright-magenta: #b95aab;
-  --ansi-bright-cyan: #2b9aa2;
-  --ansi-bright-white: #241a06;
-}
-
-/* Frost: pale anodised aluminium with a backlit grey-blue LCD. */
-[data-theme="frost"] {
-  --metal-hi: #ffffff;
-  --metal-1: #e3e9ef;
-  --metal-2: #c9d2db;
-  --metal-3: #aab6c2;
-  --metal-lo: #7d8b99;
-  --metal-edge: #4a5663;
-  --metal-inset: #b4bfca;
-  --chrome-text: #14212e;
-  --chrome-text-dim: #44546a;
-  --emboss: rgba(255, 255, 255, 0.8);
-  --groove-dark: #8796a5;
-  --groove-light: #ffffff;
-  --glow: #0a84d6;
-  --glow-soft: rgba(10, 132, 214, 0.3);
-
-  --lcd-bg: #d6e3ec;
-  --lcd-bg-2: #ccdae4;
-  --lcd-hover: #bfd2e0;
-  --lcd-line: #b6c7d4;
-  --lcd-line-2: #9fb4c4;
-  --lcd-text: #1b3a52;
-  --lcd-strong: #06121c;
-  --lcd-dim: #5f7d93;
-  --lcd-accent: #0a6fb8;
-  --lcd-good: #13824f;
-  --lcd-warn: #a3620a;
-  --lcd-bad: #c42b3a;
-  --lcd-glow: transparent;
-  --lcd-scan: rgba(255, 255, 255, 0.12);
-  --led-off: #9aabba;
-
-  --btn-primary: linear-gradient(to bottom, #e3f3ff, #8cc8f0 50%, #3d97d6);
-  --btn-primary-text: #062033;
-  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
-  --btn-warn-text: #3a0a0f;
-
-  --ansi-black: #2b3a47;
-  --ansi-red: #c42b3a;
-  --ansi-green: #13824f;
-  --ansi-yellow: #9a6a00;
-  --ansi-blue: #1660b8;
-  --ansi-magenta: #8a3fb5;
-  --ansi-cyan: #0a7894;
-  --ansi-white: #43566a;
-  --ansi-bright-black: #6a7c8c;
-  --ansi-bright-red: #e04454;
-  --ansi-bright-green: #1f9d63;
-  --ansi-bright-yellow: #b88310;
-  --ansi-bright-blue: #2a7bd8;
-  --ansi-bright-magenta: #a457cf;
-  --ansi-bright-cyan: #138fb0;
-  --ansi-bright-white: #06121c;
-}
-
-/* Gunmetal: darker, heavier metal with a steel-white display. */
-[data-theme="gunmetal"] {
-  --metal-hi: #858d96;
-  --metal-1: #59616a;
-  --metal-2: #434950;
-  --metal-3: #31363c;
-  --metal-lo: #1a1d21;
-  --metal-edge: #000;
-  --metal-inset: #262a2f;
-  --chrome-text: #dfe5ea;
-  --chrome-text-dim: #9ea7b0;
-  --emboss: rgba(0, 0, 0, 0.7);
-  --groove-dark: #121417;
-  --groove-light: #6a737c;
-  --glow: #8fb3ff;
-  --glow-soft: rgba(143, 179, 255, 0.35);
-
-  --lcd-bg: #030405;
-  --lcd-bg-2: #0a0c0f;
-  --lcd-hover: #161b22;
-  --lcd-line: #171b20;
-  --lcd-line-2: #262c34;
-  --lcd-text: #bac8d6;
-  --lcd-strong: #f1f5f9;
-  --lcd-dim: #5d6876;
-  --lcd-accent: #8fb3ff;
-  --lcd-good: #7fe0a8;
-  --lcd-warn: #e8b85c;
-  --lcd-bad: #ff6b6b;
-  --lcd-glow: rgba(143, 179, 255, 0.45);
-  --lcd-scan: rgba(255, 255, 255, 0.018);
-  --led-off: #15181b;
-
-  --btn-primary: linear-gradient(to bottom, #dfe7ff, #9fb7f0 50%, #6688d8);
-  --btn-primary-text: #0b1530;
-  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
-  --btn-warn-text: #3a0a0f;
-
-  --ansi-black: #3f454c;
-  --ansi-red: #ff6b6b;
-  --ansi-green: #7fe0a8;
-  --ansi-yellow: #e8c46c;
-  --ansi-blue: #7ea6ff;
-  --ansi-magenta: #c79bff;
-  --ansi-cyan: #7fd3e8;
-  --ansi-white: #c8d0d8;
-  --ansi-bright-black: #646c75;
-  --ansi-bright-red: #ff9a9a;
-  --ansi-bright-green: #a9f0c6;
-  --ansi-bright-yellow: #f3dc9d;
-  --ansi-bright-blue: #abc4ff;
-  --ansi-bright-magenta: #dcc2ff;
-  --ansi-bright-cyan: #aee6f3;
-  --ansi-bright-white: #f6f8fa;
-}
-
-/* Obsidian: black anodised metal and an amber display. The darkest. */
-[data-theme="obsidian"] {
-  --metal-hi: #4e5258;
-  --metal-1: #2f3237;
-  --metal-2: #23262a;
-  --metal-3: #191b1e;
-  --metal-lo: #0c0d0f;
-  --metal-edge: #000;
-  --metal-inset: #121316;
-  --chrome-text: #c9cdd2;
-  --chrome-text-dim: #7e848b;
-  --emboss: rgba(0, 0, 0, 0.85);
-  --groove-dark: #000;
-  --groove-light: #3d4147;
-  --glow: #ffb000;
-  --glow-soft: rgba(255, 176, 0, 0.3);
-
-  --lcd-bg: #000;
-  --lcd-bg-2: #0b0905;
-  --lcd-hover: #1d1606;
-  --lcd-line: #1a1408;
-  --lcd-line-2: #2e230c;
-  --lcd-text: #ffb000;
-  --lcd-strong: #ffd27a;
-  --lcd-dim: #8a5f00;
-  --lcd-accent: #ffcc33;
+/* Warm skins keep their terminals warm on a dark display. */
+[data-theme="obsidian"][data-panel="dark"] {
   --lcd-good: #b8e05a;
   --lcd-warn: #ff8c1a;
   --lcd-bad: #ff4d4d;
-  --lcd-glow: rgba(255, 176, 0, 0.5);
-  --lcd-scan: rgba(255, 176, 0, 0.025);
   --led-off: #141414;
-
-  --btn-primary: linear-gradient(to bottom, #fff2cc, #ffcc4d 50%, #e69500);
-  --btn-primary-text: #2b1a00;
-  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
-  --btn-warn-text: #3a0a0f;
-
+  --lcd-scan: rgba(255, 176, 0, 0.025);
   --ansi-black: #4a3a14;
   --ansi-red: #ff4d4d;
   --ansi-green: #b8e05a;
@@ -350,7 +426,33 @@
   --ansi-bright-white: #fff4dc;
 }
 
-/* Names the components use, drawn as panel content. */
+[data-theme="sunburnt"][data-panel="dark"] {
+  --led-off: #2a1206;
+  --lcd-scan: rgba(255, 160, 40, 0.03);
+  --ansi-blue: #ff9f40;
+  --ansi-cyan: #ffcf3f;
+  --ansi-magenta: #ff7a8a;
+  --ansi-bright-blue: #ffbf73;
+  --ansi-bright-cyan: #ffe08a;
+}
+
+[data-theme="sunburnt"][data-panel="light"] {
+  --ansi-cyan: #c25a00;
+  --ansi-bright-cyan: #d9730f;
+}
+
+[data-theme="palesun"][data-panel="light"] {
+  --ansi-cyan: #a8700f;
+  --ansi-bright-cyan: #c08a1c;
+}
+
+[data-theme="palesun"][data-panel="dark"] {
+  --led-off: #221d0e;
+  --ansi-cyan: #ffd75e;
+  --ansi-bright-cyan: #ffe9a0;
+}
+
+/* ── Names the components use, drawn as panel content ───────────────────── */
 :root {
   --bg-primary: var(--lcd-bg);
   --bg-secondary: var(--lcd-bg);
@@ -430,7 +532,7 @@ a:hover {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(90deg, var(--metal-1), var(--metal-3));
+  background: var(--btn-face);
   border: 1px solid var(--metal-edge);
   box-shadow: inset 1px 1px 0 var(--metal-hi);
 }

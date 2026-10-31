@@ -41,7 +41,7 @@ interface KindSpec {
 export const KINDS: Record<Kind, KindSpec> = {
   status: { size: { w: 330, h: 112 }, min: { w: 290, h: 104 }, members: 1, persist: true, closable: false },
   controls: { size: { w: 330, h: 92 }, min: { w: 290, h: 84 }, members: 1, persist: true, closable: false },
-  skins: { size: { w: 330, h: 124 }, min: { w: 250, h: 96 }, members: 1, persist: true, closable: true },
+  skins: { size: { w: 330, h: 182 }, min: { w: 270, h: 176 }, members: 1, persist: true, closable: true },
   library: { size: { w: 290, h: 300 }, min: { w: 220, h: 140 }, members: 1, persist: true, closable: true },
   backend: { size: { w: 380, h: 200 }, min: { w: 300, h: 150 }, members: 1, persist: false, closable: true },
   dhm: { size: { w: 300, h: 214 }, min: { w: 260, h: 180 }, members: 1, persist: true, closable: true },

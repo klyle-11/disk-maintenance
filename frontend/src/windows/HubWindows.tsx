@@ -5,7 +5,7 @@
 import { formatBytes } from "../api";
 import { BackendStatus } from "../components/BackendStatus";
 import { SKINS } from "../skins";
-import { appStore, backendFailed, loadTips, retryBackend, setSkin, useApp } from "../state/app";
+import { appStore, backendFailed, loadTips, retryBackend, setPanel, setSkin, useApp } from "../state/app";
 import { newCompare } from "../state/compare";
 import { newScan } from "../state/scan";
 import { useStore } from "../store";
@@ -137,27 +137,54 @@ export function ControlsWindow({ view, controls }: WindowArgs) {
 
 export function SkinsWindow({ view, controls }: WindowArgs) {
   const current = useApp((s) => s.skin);
+  const panels = useApp((s) => s.panels);
+  const info = SKINS.find((s) => s.id === current);
   return (
-    <Window title="SKINS" shadeInfo={SKINS.find((s) => s.id === current)?.label} view={view} controls={controls} className="kind-skins">
-      <div className="skins" role="radiogroup" aria-label="Skin">
-        {SKINS.map((skin) => (
-          <button
-            key={skin.id}
-            type="button"
-            role="radio"
-            aria-checked={skin.id === current}
-            className={`skin-swatch ${skin.id === current ? "is-on" : ""}`}
-            onClick={() => setSkin(skin.id)}
-            title={skin.label}
-          >
-            <span className="skin-preview" style={{ background: skin.swatch[0] }}>
-              <span style={{ background: skin.swatch[1] }}>
-                <span style={{ background: skin.swatch[2] }} />
+    <Window
+      title="SKINS"
+      shadeInfo={`${info?.label} · ${panels[current] === "dark" ? "dark" : "white"} inside`}
+      view={view}
+      controls={controls}
+      className="kind-skins"
+    >
+      <div className="skins">
+        <div className="skin-grid" role="radiogroup" aria-label="Skin">
+          {SKINS.map((skin) => (
+            <button
+              key={skin.id}
+              type="button"
+              role="radio"
+              aria-checked={skin.id === current}
+              className={`skin-swatch ${skin.id === current ? "is-on" : ""}`}
+              onClick={() => setSkin(skin.id)}
+              title={skin.label}
+            >
+              <span className="skin-preview" style={{ background: skin.swatch.frame }}>
+                <span style={{ background: panels[skin.id] === "dark" ? skin.swatch.dark : skin.swatch.light }}>
+                  <span style={{ background: skin.swatch.accent }} />
+                </span>
               </span>
-            </span>
-            <span className="skin-name">{skin.label}</span>
-          </button>
-        ))}
+              <span className="skin-name">{skin.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="field-row">
+          <span className="field">INSIDE</span>
+          <div className="seg is-wide" role="radiogroup" aria-label="Inside">
+            {(["dark", "light"] as const).map((panel) => (
+              <button
+                key={panel}
+                type="button"
+                role="radio"
+                aria-checked={panels[current] === panel}
+                className={`seg-btn ${panels[current] === panel ? "is-on" : ""}`}
+                onClick={() => setPanel(panel)}
+              >
+                {panel === "dark" ? "DARK" : "WHITE"}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     </Window>
   );

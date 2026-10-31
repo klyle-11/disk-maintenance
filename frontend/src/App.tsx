@@ -54,13 +54,15 @@ function renderUnit(view: UnitView, controls: UnitControls) {
 function App() {
   const wm = useStore(wmStore, (s) => s);
   const skin = useApp((s) => s.skin);
+  const panel = useApp((s) => s.panels[s.skin]);
   const connected = useApp((s) => s.connected);
   const baseUrl = useApp((s) => s.backend?.baseUrl);
   const failed = useApp(backendFailed);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", skin);
-  }, [skin]);
+    document.documentElement.setAttribute("data-panel", panel);
+  }, [skin, panel]);
 
   // Follow the backend supervisor in the main process. It knows the port the
   // backend actually landed on, which is not always 8001, and why it failed
