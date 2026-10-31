@@ -1562,7 +1562,8 @@ async def run_du_hast_much(request: DuHastMuchRequest):
     ]
 
     total_size = sum(r.size for r in results)
-    total_files = progress_state["files_scanned"]
+    # The progress counter restarts for each folder; the results have the real count.
+    total_files = sum(r.files for r in results)
 
     return DuHastMuchResponse(
         results=results,
@@ -1648,7 +1649,8 @@ async def stream_du_hast_much(
             elapsed = time.time() - start
             all_results = scan_task.result()
             total_size = sum(r["size"] for r in all_results)
-            total_files = files_scanned[0]
+            # files_scanned restarts for each folder; the results have the real count.
+            total_files = sum(r["files"] for r in all_results)
 
             logger.info(f"[du-hast-much/stream] Scan completed: {root_path} ({total_files} files, {elapsed:.1f}s)")
             yield f"data: {json.dumps({'event_type': 'done', 'total_size': total_size, 'total_files': total_files, 'elapsed_seconds': elapsed})}\n\n"
