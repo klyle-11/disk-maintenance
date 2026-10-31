@@ -2,7 +2,7 @@
  * Skins: the frame every window is made of. Each one can have a dark display
  * or white paper inside (its panel), and remembers which.
  */
-export type Skin = "steel" | "silver" | "palesun" | "sunburnt" | "frost" | "gunmetal" | "obsidian";
+export type Skin = "steel" | "silver" | "butter" | "sunmetal" | "frost" | "gunmetal" | "obsidian";
 export type Panel = "dark" | "light";
 
 export interface SkinInfo {
@@ -16,11 +16,11 @@ export interface SkinInfo {
 
 export const SKINS: SkinInfo[] = [
   { id: "steel", label: "Cold Steel", panel: "dark", swatch: { frame: "#a7b0ba", dark: "#04070a", light: "#ffffff", accent: "#36c6ff" } },
-  { id: "silver", label: "Silver", panel: "light", swatch: { frame: "#cdd3da", dark: "#06080a", light: "#ffffff", accent: "#1f6fd1" } },
-  { id: "palesun", label: "Pale Sun", panel: "light", swatch: { frame: "#f8eeb4", dark: "#0d0b04", light: "#fffef8", accent: "#d9a21f" } },
+  { id: "silver", label: "Silver", panel: "light", swatch: { frame: "#dde2e7", dark: "#06080a", light: "#ffffff", accent: "#1f6fd1" } },
+  { id: "butter", label: "Butter", panel: "light", swatch: { frame: "#f2c94c", dark: "#0e0a02", light: "#fffdf6", accent: "#c96f00" } },
   {
-    id: "sunburnt",
-    label: "Sunburnt",
+    id: "sunmetal",
+    label: "Sun Metal",
     panel: "dark",
     swatch: { frame: "linear-gradient(160deg, #ffd45a, #f7862a 50%, #c24d10)", dark: "#120602", light: "#fffaf3", accent: "#ffcf3f" },
   },
@@ -32,8 +32,8 @@ export const SKINS: SkinInfo[] = [
 const SKIN_KEY = "skin";
 const PANELS_KEY = "skin-panels";
 
-/** Skins that were renamed, so a saved choice still finds its way. */
-const RENAMED: Record<string, Skin> = { butter: "palesun" };
+/** Skins that were renamed or folded into another, so a saved choice still finds its way. */
+const RENAMED: Record<string, Skin> = { palesun: "butter", sunburnt: "sunmetal" };
 
 export function readSkin(): Skin {
   try {
@@ -59,6 +59,9 @@ export function readPanels(): Record<Skin, Panel> {
   const panels = Object.fromEntries(SKINS.map((s) => [s.id, s.panel])) as Record<Skin, Panel>;
   try {
     const saved = JSON.parse(localStorage.getItem(PANELS_KEY) || "{}");
+    for (const [old, id] of Object.entries(RENAMED)) {
+      if (saved[old] && !saved[id]) saved[id] = saved[old];
+    }
     for (const s of SKINS) {
       if (saved[s.id] === "dark" || saved[s.id] === "light") panels[s.id] = saved[s.id];
     }

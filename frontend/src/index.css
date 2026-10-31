@@ -62,20 +62,20 @@
   --l-accent: #1677c9;
 }
 
-/* Silver: brighter, cooler brushed silver. */
+/* Silver: bright, light brushed silver. */
 [data-theme="silver"] {
-  --metal-hi: #f1f4f7;
-  --metal-1: #cdd3da;
-  --metal-2: #aeb6bf;
-  --metal-3: #8d96a0;
-  --metal-lo: #5a626c;
-  --metal-edge: #22272d;
-  --metal-inset: #9aa3ad;
+  --metal-hi: #fcfdfe;
+  --metal-1: #dfe4e9;
+  --metal-2: #c6cdd4;
+  --metal-3: #a8b0b9;
+  --metal-lo: #6f7781;
+  --metal-edge: #2c3238;
+  --metal-inset: #b6bec7;
   --chrome-text: #151b22;
   --chrome-text-dim: #3a434d;
-  --emboss: rgba(255, 255, 255, 0.6);
-  --groove-dark: #6f7882;
-  --groove-light: #f3f6f9;
+  --emboss: rgba(255, 255, 255, 0.7);
+  --groove-dark: #848d97;
+  --groove-light: #ffffff;
   --glow: #2f8cff;
   --glow-soft: rgba(47, 140, 255, 0.25);
   --btn-primary: linear-gradient(to bottom, #eef5ff, #a9cdff 50%, #5b97ea);
@@ -103,49 +103,49 @@
   --l-accent: #1f6fd1;
 }
 
-/* Pale Sun: soft lemon enamel, washed out by the light. */
-[data-theme="palesun"] {
-  --metal-hi: #fffef4;
-  --metal-1: #fbf2c4;
-  --metal-2: #f6e8a2;
-  --metal-3: #ebd67f;
-  --metal-lo: #b8a24f;
-  --metal-edge: #6b5a1c;
-  --metal-inset: #f0df90;
-  --chrome-text: #4a3d0c;
-  --chrome-text-dim: #7a6a2c;
-  --emboss: rgba(255, 255, 245, 0.75);
-  --groove-dark: #cbb35a;
-  --groove-light: #fffcea;
-  --glow: #f2a91c;
-  --glow-soft: rgba(242, 169, 28, 0.25);
-  --btn-primary: linear-gradient(to bottom, #fffdf0, #ffeeb0 50%, #f7d36a);
-  --btn-primary-text: #3d2f00;
+/* Butter: buttery yellow enamel. */
+[data-theme="butter"] {
+  --metal-hi: #fff7cf;
+  --metal-1: #f8dc6a;
+  --metal-2: #eec544;
+  --metal-3: #d9a82c;
+  --metal-lo: #9c7417;
+  --metal-edge: #4a3608;
+  --metal-inset: #e0b640;
+  --chrome-text: #3a2a05;
+  --chrome-text-dim: #6b5214;
+  --emboss: rgba(255, 252, 228, 0.65);
+  --groove-dark: #a7801d;
+  --groove-light: #fff4c4;
+  --glow: #ff8a00;
+  --glow-soft: rgba(255, 138, 0, 0.25);
+  --btn-primary: linear-gradient(to bottom, #fff1d6, #ffc266 50%, #f08c00);
+  --btn-primary-text: #3a1d00;
 
-  --d-bg: #0d0b04;
-  --d-bg-2: #16130a;
-  --d-hover: #262011;
-  --d-line: #221d0e;
-  --d-line-2: #3a3218;
-  --d-text: #f2e3a2;
-  --d-strong: #fffbe6;
-  --d-dim: #8f8150;
-  --d-accent: #ffd75e;
-  --d-glow: rgba(255, 215, 94, 0.45);
+  --d-bg: #0e0a02;
+  --d-bg-2: #171106;
+  --d-hover: #2a1f0a;
+  --d-line: #241a08;
+  --d-line-2: #3d2d0e;
+  --d-text: #f5c96a;
+  --d-strong: #fff1cf;
+  --d-dim: #8f7038;
+  --d-accent: #ffb02e;
+  --d-glow: rgba(255, 176, 46, 0.45);
 
-  --l-bg: #fffef8;
-  --l-bg-2: #fffaea;
-  --l-hover: #fff3cf;
-  --l-line: #f3ebcf;
-  --l-line-2: #e6d9a8;
-  --l-text: #4d4224;
-  --l-strong: #231d08;
-  --l-dim: #a39566;
-  --l-accent: #b7791f;
+  --l-bg: #fffdf6;
+  --l-bg-2: #fff7e2;
+  --l-hover: #ffefc6;
+  --l-line: #f2e6c4;
+  --l-line-2: #e4d09c;
+  --l-text: #4a3b1f;
+  --l-strong: #241a06;
+  --l-dim: #a08a63;
+  --l-accent: #c96f00;
 }
 
-/* Sunburnt: hot orange metal, baked yellow where the sun hits it. */
-[data-theme="sunburnt"] {
+/* Sun Metal: hot orange metal, baked yellow where the sun hits it. */
+[data-theme="sunmetal"] {
   --metal-hi: #ffeaa6;
   --metal-1: #ffad4a;
   --metal-2: #f58a2c;
@@ -426,7 +426,7 @@
   --ansi-bright-white: #fff4dc;
 }
 
-[data-theme="sunburnt"][data-panel="dark"] {
+[data-theme="sunmetal"][data-panel="dark"] {
   --led-off: #2a1206;
   --lcd-scan: rgba(255, 160, 40, 0.03);
   --ansi-blue: #ff9f40;
@@ -436,20 +436,15 @@
   --ansi-bright-cyan: #ffe08a;
 }
 
-[data-theme="sunburnt"][data-panel="light"] {
+[data-theme="sunmetal"][data-panel="light"] {
   --ansi-cyan: #c25a00;
   --ansi-bright-cyan: #d9730f;
 }
 
-[data-theme="palesun"][data-panel="light"] {
-  --ansi-cyan: #a8700f;
-  --ansi-bright-cyan: #c08a1c;
-}
-
-[data-theme="palesun"][data-panel="dark"] {
-  --led-off: #221d0e;
-  --ansi-cyan: #ffd75e;
-  --ansi-bright-cyan: #ffe9a0;
+[data-theme="butter"][data-panel="dark"] {
+  --led-off: #241a08;
+  --ansi-cyan: #ffc23d;
+  --ansi-bright-cyan: #ffdc8a;
 }
 
 /* ── Names the components use, drawn as panel content ───────────────────── */
