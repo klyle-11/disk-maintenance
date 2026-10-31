@@ -21,6 +21,10 @@ interface WindowProps {
   closable?: boolean;
   /** Overrides the close button (e.g. to confirm first). */
   onClose?: () => void;
+  /** Label for the close button, e.g. "Quit". */
+  closeLabel?: string;
+  /** Adds a minimise button (the app has no OS frame to minimise from). */
+  onMinimize?: () => void;
   children: ReactNode;
 }
 
@@ -34,6 +38,8 @@ export function Window({
   className = "",
   closable = true,
   onClose,
+  closeLabel = "Close",
+  onMinimize,
   children,
 }: WindowProps) {
   const shaded = view.unit.shaded;
@@ -100,6 +106,9 @@ export function Window({
         {shaded && shadeInfo ? <span className="wm-shade-info">{shadeInfo}</span> : null}
         <span className="wm-grooves" aria-hidden />
         <span className="wm-buttons" onPointerDown={stop}>
+          {onMinimize ? (
+            <button type="button" className="wm-btn wm-btn-min" onClick={onMinimize} aria-label="Minimise" title="Minimise" />
+          ) : null}
           <button
             type="button"
             className="wm-btn wm-btn-shade"
@@ -112,8 +121,8 @@ export function Window({
               type="button"
               className="wm-btn wm-btn-close"
               onClick={onClose ?? controls.close}
-              aria-label="Close"
-              title="Close"
+              aria-label={closeLabel}
+              title={closeLabel}
             />
           ) : null}
         </span>

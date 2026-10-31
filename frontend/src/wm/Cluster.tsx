@@ -8,6 +8,7 @@
  */
 import { Fragment, useEffect, useRef, useState, type Dispatch, type ReactNode } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { useHoverClickThrough, updateShape } from "./clickThrough";
 import { bounds, fits, type Point, type Rect } from "./layout";
 import { CLUSTER_PAD as PAD, KINDS, type Unit, type WmAction, type WmState } from "./state";
 
@@ -121,6 +122,28 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
   };
   const offset = frozen ?? centred;
 
+  useHoverClickThrough();
+
+  // Linux shapes the window to its windows; keep the shape following them,
+  // including where they are headed while they animate.
+  const shapeKey = `${JSON.stringify(state.rects)}|${offset.x},${offset.y}|${JSON.stringify(interaction)}|${state.units.length}`;
+  useEffect(() => {
+    const desk = desktopRef.current;
+    if (!desk) return;
+    const frame = requestAnimationFrame(() => {
+      const origin = desk.getBoundingClientRect();
+      const targets = Object.values(state.rects).map((r) => ({
+        x: Math.floor(origin.left + r.x + offset.x - desk.scrollLeft),
+        y: Math.floor(origin.top + r.y + offset.y - desk.scrollTop),
+        w: r.w + 1,
+        h: r.h + 1,
+      }));
+      updateShape(targets);
+    });
+    return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- shapeKey covers what moves
+  }, [shapeKey]);
+
   const beginDrag = (id: string, e: ReactPointerEvent) => {
     if (e.button !== 0) return;
     const startX = e.clientX;
@@ -215,6 +238,7 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
   return (
     <div
       ref={desktopRef}
+      onScroll={() => updateShape([])}
       className={[
         "wm-desktop",
         ready ? "is-ready" : "",

@@ -105,10 +105,10 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
       1 errors in `test_integration_security.py`. PHASE5_COMPLETE.md reports these as done.
 - [ ] **Frontend security tests can't run.** `frontend/src/tests/security/frontend-security.test.ts`
       exists but there's no vitest dependency or `test` script.
-- [ ] Pre-existing TypeScript errors: the `App.tsx` and `DuHastMuch.tsx` ones are fixed (the
+- [ ] Pre-existing TypeScript errors: the `App.tsx` and `DuHastMuch.tsx` ones are gone (the
       window rewrite); `vite.config.ts` (`telemetry` isn't a Vite option) and the security test
-      file remain. ESLint still flags `any`s in `api.ts`, `Date.now()` during render in
-      `DuHastMuch.tsx` and components created during render in `FindingsTable.tsx`.
+      file remain. ESLint still flags `any`s in `api.ts` and components created during render
+      in `FindingsTable.tsx`.
 - [ ] Stray file `frontend/src-tauri/sqlite:disk_intelligence.db`, created by a SQLite URL
       used as a literal path. Delete it along with the leftover `frontend/src-tauri/gen/`.
 
@@ -133,6 +133,10 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
       would be a new window kind in `frontend/src/windows/`.
 - [ ] di window: an interactive mode, so the pick-to-delete prompt works there too (needs a
       stdin channel to the running di, e.g. a POST per typed line).
+- [ ] Floating windows: the overlay covers one display (the one the pointer was on at launch).
+      Let the cluster move to another display, e.g. by dragging the status window with a modifier.
+- [ ] Floating windows: test click-through on real macOS and Windows desktops (Linux `setShape`
+      was checked under Xvfb), including multi-monitor setups and a taskbar on the left/top.
 
 ## Security (open items from the audit docs)
 

@@ -3,12 +3,16 @@
  * ==========================================
  * Creates the window, supervises the Python backend, and wires up IPC.
  *
+ * The app is its windows floating on the desktop: one transparent, frameless
+ * window covers the screen's work area, and clicks pass through it wherever
+ * the renderer has no window of its own.
+ *
  * The window is created immediately and the backend starts alongside it, so
  * the app is never a blank screen while a 27MB bundle unpacks. Backend status
  * is pushed to the renderer, which shows it inline.
  */
 
-const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -19,6 +23,11 @@ const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5176
 
 let mainWindow = null;
 let backend = null;
+
+// Transparent windows on Linux need an ARGB visual.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('enable-transparent-visuals');
+}
 
 // Only one instance: a second one would fight over the port and the database.
 const gotLock = app.requestSingleInstanceLock();
@@ -55,20 +64,35 @@ function loadDevServer(win, attempt = 0) {
   req.on('timeout', retry);
 }
 
+/** The work area (screen minus menu bar, dock and taskbar) the app floats in. */
+function workArea() {
+  const display = mainWindow && !mainWindow.isDestroyed()
+    ? screen.getDisplayMatching(mainWindow.getBounds())
+    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  return display.workArea;
+}
+
+function fitToWorkArea() {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBounds(workArea());
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1000,
-    minHeight: 700,
-    backgroundColor: '#07090c',
+    ...workArea(),
+    transparent: true,
+    backgroundColor: '#00000000',
+    frame: false,
+    hasShadow: false,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    roundedCorners: false,
+    title: 'Disk Intelligence',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs'),
     },
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    frame: process.platform !== 'darwin',
     show: false,
   });
 
@@ -76,7 +100,8 @@ function createWindow() {
     // Electron and Vite start together, so the dev server is often not up
     // yet. Loading straight away gave a blank window that never recovered.
     loadDevServer(mainWindow);
-    mainWindow.webContents.openDevTools();
+    // Detached: docked, it would sit inside the transparent overlay.
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
@@ -134,6 +159,35 @@ ipcMain.handle('backend:openLog', async () => {
   return true;
 });
 
+// Floating windows: the renderer says where its windows are, so clicks
+// anywhere else reach whatever is underneath.
+ipcMain.on('window:ignoreMouse', (event, ignore) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  // forward: keep sending mouse moves, so the renderer notices when the
+  // pointer comes back over one of its windows (macOS and Windows).
+  if (win) win.setIgnoreMouseEvents(ignore === true, { forward: true });
+});
+
+ipcMain.on('window:shape', (event, rects) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || typeof win.setShape !== 'function') return;
+  // An empty list makes the whole window take clicks again (used mid-gesture).
+  const shape = Array.isArray(rects)
+    ? rects.slice(0, 256).flatMap((r) =>
+        r && [r.x, r.y, r.width, r.height].every(Number.isFinite) && r.width > 0 && r.height > 0
+          ? [{ x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }]
+          : [],
+      )
+    : [];
+  win.setShape(shape);
+});
+
+ipcMain.on('window:minimize', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
+});
+
+ipcMain.on('app:quit', () => app.quit());
+
 ipcMain.handle('shell:showItem', async (_event, targetPath) => {
   if (typeof targetPath !== 'string' || !targetPath) return false;
   // Only ever reveal in the file manager. Never open or execute.
@@ -161,6 +215,10 @@ app.whenReady().then(() => {
   // "starting…" state, which beats staring at nothing for 30 seconds.
   createWindow();
   backend.start();
+
+  // Follow resolution changes and docks/taskbars moving.
+  screen.on('display-metrics-changed', fitToWorkArea);
+  screen.on('display-removed', fitToWorkArea);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

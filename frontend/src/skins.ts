@@ -1,9 +1,19 @@
-export type Skin = "steel" | "gunmetal" | "frost";
+export type Skin = "steel" | "silver" | "butter" | "frost" | "gunmetal" | "obsidian";
 
-export const SKINS: { id: Skin; label: string }[] = [
-  { id: "steel", label: "Cold Steel" },
-  { id: "gunmetal", label: "Gunmetal" },
-  { id: "frost", label: "Frost" },
+export interface SkinInfo {
+  id: Skin;
+  label: string;
+  /** For the picker: frame metal, panel, and accent colours. */
+  swatch: [string, string, string];
+}
+
+export const SKINS: SkinInfo[] = [
+  { id: "steel", label: "Cold Steel", swatch: ["#a7b0ba", "#04070a", "#36c6ff"] },
+  { id: "silver", label: "Silver & White", swatch: ["#c3cad2", "#ffffff", "#1f6fd1"] },
+  { id: "butter", label: "Warm Yellow", swatch: ["#f2c94c", "#fffdf5", "#c96f00"] },
+  { id: "frost", label: "Frost", swatch: ["#e3e9ef", "#d6e3ec", "#0a6fb8"] },
+  { id: "gunmetal", label: "Gunmetal", swatch: ["#4a5159", "#030405", "#8fb3ff"] },
+  { id: "obsidian", label: "Obsidian", swatch: ["#24262a", "#000000", "#ffb000"] },
 ];
 
 const SKIN_KEY = "skin";

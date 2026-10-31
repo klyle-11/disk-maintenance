@@ -126,36 +126,42 @@ or every time when the disk is low). Set `DI_TIPS=0` to turn that off.
 
 ## Desktop app
 
-The app is a cluster of steel-skinned windows, Winamp style, docked edge to
-edge around a centre point. Every window is resizable; none floats free. Drag a
-title bar onto another window to swap the two (a drop anywhere else snaps back),
-double-click a title bar to shade it down to one line, and use ARRANGE in the hub
-to re-pack everything. Opening, closing and resizing re-dock the rest, and the
-arrangement is remembered between launches.
+The app has no main window: it is a cluster of small skinned windows, Winamp
+style, floating straight on your desktop with nothing behind them. They dock
+edge to edge around a centre point and never come apart. Clicks on the
+desktop between them go through to whatever is underneath.
 
-- **Hub**: backend status, free space, and the buttons that open everything else.
-  It can't be closed, so the cluster always has a centre.
-- **Scan** (one window per scan): large folders, old large folders,
-  cache/regenerable folders, duplicate-name folders and files, cold archives, and a
-  breakdown by file extension.
-- **Compare** (a pair of windows, source and target, side by side like a diff):
-  mirror or backup validation with optional hash verification. Both windows share
-  one filter, one set of open folders and one scroll position; PATHS lists each
-  side's differing files as copyable paths. Design:
-  `docs/plans/2026-01-15-folder-comparison-design.md`.
-- **Library**: saved scans and comparisons. Opening one gives it its own window
-  (or flashes the one it already has) and quietly refreshes it.
-- **du-hast-much**: quick per-folder sizing with live progress and history.
-- **di**: the real `di` command line in a window. Commands run as `di` processes
-  in the backend and stream their coloured output live. Anything that deletes or
-  schedules something (`clean --yes`, `caches --yes`, `guard --install/--auto`,
-  `ballast set/release`, `forget`) asks first; the pick-to-delete prompt stays a
-  terminal-only feature.
-- **Keeping space free**: tips relevant to this machine (Docker, snapshots, swap,
-  Xcode, Homebrew ...) with copyable commands, served from the same list as `di tips`.
-- **Skins**: Cold Steel, Gunmetal, Frost.
+- **Moving**: drag a title bar onto another window to swap the two (a drop
+  anywhere else snaps back). ARRANGE re-packs everything.
+- **Resizing**: drag any edge or the corner grip; neighbours act as walls and
+  the rest re-dock around it. Double-click a title bar to shade a window down to
+  one line. New windows open at whatever size fits the free space.
+- **Closing**: a tool's windows belong together and close together (closing a
+  scan's control window closes its findings and types too). The arrangement is
+  remembered between launches.
+
+The windows:
+
+| Window | What it does |
+|---|---|
+| Disk Intelligence | Status, free space, a scrolling marquee. Minimise and quit live here (there is no OS frame). |
+| Controls | Opens everything else: SCAN, COMPARE, DHM, DI, LIB, TIPS, SKINS, ARRANGE. |
+| Scan (one per scan) | Folder, progress, totals, SAVE. Opens **Findings** (large and old folders, caches, duplicates, cold archives) and **Types** (sizes by extension) beside it. |
+| Compare (one per comparison) | Source and target folders, optional hash check, status filters, TREE/PATHS, SAVE. Opens a hinged **Source / Target** pair that reads like a diff: same rows, one scroll position. PATHS lists each side's differing files as copyable paths. Design: `docs/plans/2026-01-15-folder-comparison-design.md`. |
+| Library | Saved scans and comparisons; opening one gives it windows of its own and quietly refreshes it. |
+| du-hast-much + DHM output | Settings and recent scans; the CLI-style table with live progress. |
+| di + di commands | The real `di` command line, and its suggestions: quick commands and every command with its help. Anything that deletes or schedules something (`clean --yes`, `caches --yes`, `guard --install/--auto`, `ballast set/release`, `forget`) asks first; the pick-to-delete prompt stays terminal-only. |
+| Tips (one per tip) | Each way to keep freed space free, with its command to copy (the list `di tips` prints). TIPS opens the ones that apply to this machine. |
+| Skins | Cold Steel, Silver & White, Warm Yellow, Frost, Gunmetal, Obsidian. |
+| Backend | Appears by itself if the backend can't start: why, retry, and the log. |
 
 Apart from the di window, the app only analyses; cleanup lives in `di`.
+
+How the floating works: Electron opens one transparent, frameless window over
+the screen's work area. On macOS and Windows it ignores the mouse except over a
+window of ours (`setIgnoreMouseEvents` with forwarding); on Linux the window is
+shaped to the windows (`setShape`), so no compositor is needed. In a plain
+browser tab (`npm run dev:vite`) the windows sit on the page instead.
 
 ## Architecture
 
@@ -177,8 +183,9 @@ di / di.cmd ──► backend/diskcli/  stdlib only: walker, store (SQLite basel
 | `backend/diskcli/` | The `di` CLI. `walker.py` is the fast single-pass scanner; `maint.py` holds clean/caches/guard/ballast |
 | `backend/security/` | Path validator, input sanitiser, secure logger, security headers, encryption helper |
 | `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` is the HTTP client |
-| `frontend/src/wm/` | The window manager: `layout.ts` packs the docked cluster, `state.ts` is its reducer, `Cluster`/`Window` draw it |
-| `frontend/src/windows/` | One component per window kind: hub, scan, compare pair, library, du-hast-much, di, tips |
+| `frontend/src/wm/` | The window manager: `layout.ts` packs the docked cluster, `state.ts` is its reducer, `Cluster`/`Window` draw it, `clickThrough.ts` lets clicks reach the desktop |
+| `frontend/src/windows/` | The windows, grouped by tool (hub, scan, compare, dhm, di, tips, library) |
+| `frontend/src/state/` | Shared state for each tool, so its separate windows show the same scan, comparison or terminal |
 | `frontend/electron/` | Main process, preload bridge, backend supervisor |
 | `scripts/` | Build, package, verify and audit scripts |
 

@@ -1,10 +1,13 @@
 /*
- * Skins. Each one sets three families of colour:
- *   --metal-*  the brushed-steel chrome every window is made of
- *   --lcd-*    the dark display panels the content sits on
+ * Skins. Each one sets:
+ *   --metal-*  the frame every window is made of
+ *   --lcd-*    the panels the content sits on (dark displays, or white paper)
  *   --ansi-*   terminal colours for di and du-hast-much output
+ *   --btn-*    the lit buttons
  * The older --bg-* / --text-* / --accent-* names the components were written
- * against are mapped onto the LCD palette, so they draw as display content.
+ * against are mapped onto the panel palette, so they draw as panel content.
+ *
+ * There is no page background: the windows float on the desktop.
  */
 * {
   box-sizing: border-box;
@@ -13,9 +16,6 @@
 /* Cold Steel (default): blue-grey brushed metal, ice-blue display. */
 :root,
 [data-theme="steel"] {
-  --desk-1: #141b24;
-  --desk-2: #07090c;
-
   --metal-hi: #d2d9e0;
   --metal-1: #a7b0ba;
   --metal-2: #858f9a;
@@ -44,6 +44,13 @@
   --lcd-warn: #ffc457;
   --lcd-bad: #ff5f6d;
   --lcd-glow: rgba(54, 198, 255, 0.55);
+  --lcd-scan: rgba(255, 255, 255, 0.018);
+  --led-off: #1b2228;
+
+  --btn-primary: linear-gradient(to bottom, #e3f6ff, #8fd6ff 50%, #4fb3ea);
+  --btn-primary-text: #062033;
+  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
+  --btn-warn-text: #3a0a0f;
 
   --ansi-black: #3a4652;
   --ansi-red: #ff5f6d;
@@ -63,63 +70,120 @@
   --ansi-bright-white: #f2f8fc;
 }
 
-/* Gunmetal: darker, heavier metal with a steel-white display. */
-[data-theme="gunmetal"] {
-  --desk-1: #101215;
-  --desk-2: #040506;
+/* Silver & White: the same brushed silver, with white paper inside. */
+[data-theme="silver"] {
+  --metal-hi: #f1f4f7;
+  --metal-1: #cdd3da;
+  --metal-2: #aeb6bf;
+  --metal-3: #8d96a0;
+  --metal-lo: #5a626c;
+  --metal-edge: #22272d;
+  --metal-inset: #9aa3ad;
+  --chrome-text: #151b22;
+  --chrome-text-dim: #3a434d;
+  --emboss: rgba(255, 255, 255, 0.6);
+  --groove-dark: #6f7882;
+  --groove-light: #f3f6f9;
+  --glow: #2f8cff;
+  --glow-soft: rgba(47, 140, 255, 0.25);
 
-  --metal-hi: #8d959e;
-  --metal-1: #616a73;
-  --metal-2: #4a5159;
-  --metal-3: #373d44;
-  --metal-lo: #1e2227;
-  --metal-edge: #000;
-  --metal-inset: #2c3137;
-  --chrome-text: #dfe5ea;
-  --chrome-text-dim: #9ea7b0;
-  --emboss: rgba(0, 0, 0, 0.7);
-  --groove-dark: #16191c;
-  --groove-light: #6f7881;
-  --glow: #8fb3ff;
-  --glow-soft: rgba(143, 179, 255, 0.35);
+  --lcd-bg: #ffffff;
+  --lcd-bg-2: #f3f6f9;
+  --lcd-hover: #e7f0fa;
+  --lcd-line: #e3e8ee;
+  --lcd-line-2: #cbd4dd;
+  --lcd-text: #2a3644;
+  --lcd-strong: #0b1118;
+  --lcd-dim: #7d8a97;
+  --lcd-accent: #1f6fd1;
+  --lcd-good: #12804a;
+  --lcd-warn: #b06d00;
+  --lcd-bad: #c62a3a;
+  --lcd-glow: transparent;
+  --lcd-scan: transparent;
+  --led-off: #b7c0c9;
 
-  --lcd-bg: #030405;
-  --lcd-bg-2: #0a0c0f;
-  --lcd-hover: #161b22;
-  --lcd-line: #171b20;
-  --lcd-line-2: #262c34;
-  --lcd-text: #bac8d6;
-  --lcd-strong: #f1f5f9;
-  --lcd-dim: #5d6876;
-  --lcd-accent: #8fb3ff;
-  --lcd-good: #7fe0a8;
-  --lcd-warn: #e8b85c;
-  --lcd-bad: #ff6b6b;
-  --lcd-glow: rgba(143, 179, 255, 0.45);
+  --btn-primary: linear-gradient(to bottom, #eef5ff, #a9cdff 50%, #5b97ea);
+  --btn-primary-text: #06203f;
+  --btn-warn: linear-gradient(to bottom, #ffe8ea, #ffaab2 50%, #e86b77);
+  --btn-warn-text: #3a0a0f;
 
-  --ansi-black: #3f454c;
-  --ansi-red: #ff6b6b;
-  --ansi-green: #7fe0a8;
-  --ansi-yellow: #e8c46c;
-  --ansi-blue: #7ea6ff;
-  --ansi-magenta: #c79bff;
-  --ansi-cyan: #7fd3e8;
-  --ansi-white: #c8d0d8;
-  --ansi-bright-black: #646c75;
-  --ansi-bright-red: #ff9a9a;
-  --ansi-bright-green: #a9f0c6;
-  --ansi-bright-yellow: #f3dc9d;
-  --ansi-bright-blue: #abc4ff;
-  --ansi-bright-magenta: #dcc2ff;
-  --ansi-bright-cyan: #aee6f3;
-  --ansi-bright-white: #f6f8fa;
+  --ansi-black: #2b3a47;
+  --ansi-red: #c62a3a;
+  --ansi-green: #12804a;
+  --ansi-yellow: #9a6a00;
+  --ansi-blue: #1660b8;
+  --ansi-magenta: #8a3fb5;
+  --ansi-cyan: #0a7894;
+  --ansi-white: #4a5a6a;
+  --ansi-bright-black: #8592a0;
+  --ansi-bright-red: #e04454;
+  --ansi-bright-green: #1f9d63;
+  --ansi-bright-yellow: #b88310;
+  --ansi-bright-blue: #2a7bd8;
+  --ansi-bright-magenta: #a457cf;
+  --ansi-bright-cyan: #138fb0;
+  --ansi-bright-white: #0b1118;
+}
+
+/* Warm Yellow: buttery yellow enamel, white paper inside. */
+[data-theme="butter"] {
+  --metal-hi: #fff7cf;
+  --metal-1: #f8dc6a;
+  --metal-2: #eec544;
+  --metal-3: #d9a82c;
+  --metal-lo: #9c7417;
+  --metal-edge: #4a3608;
+  --metal-inset: #e0b640;
+  --chrome-text: #3a2a05;
+  --chrome-text-dim: #6b5214;
+  --emboss: rgba(255, 252, 228, 0.65);
+  --groove-dark: #a7801d;
+  --groove-light: #fff4c4;
+  --glow: #ff8a00;
+  --glow-soft: rgba(255, 138, 0, 0.25);
+
+  --lcd-bg: #fffdf6;
+  --lcd-bg-2: #fff7e2;
+  --lcd-hover: #ffefc6;
+  --lcd-line: #f2e6c4;
+  --lcd-line-2: #e4d09c;
+  --lcd-text: #4a3b1f;
+  --lcd-strong: #241a06;
+  --lcd-dim: #a08a63;
+  --lcd-accent: #c96f00;
+  --lcd-good: #3f8a2e;
+  --lcd-warn: #b45f00;
+  --lcd-bad: #c0392b;
+  --lcd-glow: transparent;
+  --lcd-scan: transparent;
+  --led-off: #d8c28a;
+
+  --btn-primary: linear-gradient(to bottom, #fff1d6, #ffc266 50%, #f08c00);
+  --btn-primary-text: #3a1d00;
+  --btn-warn: linear-gradient(to bottom, #ffe6e2, #ffa79b 50%, #e2604f);
+  --btn-warn-text: #3a0a05;
+
+  --ansi-black: #4a3b1f;
+  --ansi-red: #c0392b;
+  --ansi-green: #3f8a2e;
+  --ansi-yellow: #a36300;
+  --ansi-blue: #2b67b0;
+  --ansi-magenta: #9b3f8f;
+  --ansi-cyan: #1f7f86;
+  --ansi-white: #6b5a3a;
+  --ansi-bright-black: #a99872;
+  --ansi-bright-red: #e0533f;
+  --ansi-bright-green: #55a83f;
+  --ansi-bright-yellow: #c98000;
+  --ansi-bright-blue: #3d7fd0;
+  --ansi-bright-magenta: #b95aab;
+  --ansi-bright-cyan: #2b9aa2;
+  --ansi-bright-white: #241a06;
 }
 
 /* Frost: pale anodised aluminium with a backlit grey-blue LCD. */
 [data-theme="frost"] {
-  --desk-1: #b7c4d0;
-  --desk-2: #7d8d9c;
-
   --metal-hi: #ffffff;
   --metal-1: #e3e9ef;
   --metal-2: #c9d2db;
@@ -148,6 +212,13 @@
   --lcd-warn: #a3620a;
   --lcd-bad: #c42b3a;
   --lcd-glow: transparent;
+  --lcd-scan: rgba(255, 255, 255, 0.12);
+  --led-off: #9aabba;
+
+  --btn-primary: linear-gradient(to bottom, #e3f3ff, #8cc8f0 50%, #3d97d6);
+  --btn-primary-text: #062033;
+  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
+  --btn-warn-text: #3a0a0f;
 
   --ansi-black: #2b3a47;
   --ansi-red: #c42b3a;
@@ -167,7 +238,119 @@
   --ansi-bright-white: #06121c;
 }
 
-/* Names the components use, drawn as display content. */
+/* Gunmetal: darker, heavier metal with a steel-white display. */
+[data-theme="gunmetal"] {
+  --metal-hi: #858d96;
+  --metal-1: #59616a;
+  --metal-2: #434950;
+  --metal-3: #31363c;
+  --metal-lo: #1a1d21;
+  --metal-edge: #000;
+  --metal-inset: #262a2f;
+  --chrome-text: #dfe5ea;
+  --chrome-text-dim: #9ea7b0;
+  --emboss: rgba(0, 0, 0, 0.7);
+  --groove-dark: #121417;
+  --groove-light: #6a737c;
+  --glow: #8fb3ff;
+  --glow-soft: rgba(143, 179, 255, 0.35);
+
+  --lcd-bg: #030405;
+  --lcd-bg-2: #0a0c0f;
+  --lcd-hover: #161b22;
+  --lcd-line: #171b20;
+  --lcd-line-2: #262c34;
+  --lcd-text: #bac8d6;
+  --lcd-strong: #f1f5f9;
+  --lcd-dim: #5d6876;
+  --lcd-accent: #8fb3ff;
+  --lcd-good: #7fe0a8;
+  --lcd-warn: #e8b85c;
+  --lcd-bad: #ff6b6b;
+  --lcd-glow: rgba(143, 179, 255, 0.45);
+  --lcd-scan: rgba(255, 255, 255, 0.018);
+  --led-off: #15181b;
+
+  --btn-primary: linear-gradient(to bottom, #dfe7ff, #9fb7f0 50%, #6688d8);
+  --btn-primary-text: #0b1530;
+  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
+  --btn-warn-text: #3a0a0f;
+
+  --ansi-black: #3f454c;
+  --ansi-red: #ff6b6b;
+  --ansi-green: #7fe0a8;
+  --ansi-yellow: #e8c46c;
+  --ansi-blue: #7ea6ff;
+  --ansi-magenta: #c79bff;
+  --ansi-cyan: #7fd3e8;
+  --ansi-white: #c8d0d8;
+  --ansi-bright-black: #646c75;
+  --ansi-bright-red: #ff9a9a;
+  --ansi-bright-green: #a9f0c6;
+  --ansi-bright-yellow: #f3dc9d;
+  --ansi-bright-blue: #abc4ff;
+  --ansi-bright-magenta: #dcc2ff;
+  --ansi-bright-cyan: #aee6f3;
+  --ansi-bright-white: #f6f8fa;
+}
+
+/* Obsidian: black anodised metal and an amber display. The darkest. */
+[data-theme="obsidian"] {
+  --metal-hi: #4e5258;
+  --metal-1: #2f3237;
+  --metal-2: #23262a;
+  --metal-3: #191b1e;
+  --metal-lo: #0c0d0f;
+  --metal-edge: #000;
+  --metal-inset: #121316;
+  --chrome-text: #c9cdd2;
+  --chrome-text-dim: #7e848b;
+  --emboss: rgba(0, 0, 0, 0.85);
+  --groove-dark: #000;
+  --groove-light: #3d4147;
+  --glow: #ffb000;
+  --glow-soft: rgba(255, 176, 0, 0.3);
+
+  --lcd-bg: #000;
+  --lcd-bg-2: #0b0905;
+  --lcd-hover: #1d1606;
+  --lcd-line: #1a1408;
+  --lcd-line-2: #2e230c;
+  --lcd-text: #ffb000;
+  --lcd-strong: #ffd27a;
+  --lcd-dim: #8a5f00;
+  --lcd-accent: #ffcc33;
+  --lcd-good: #b8e05a;
+  --lcd-warn: #ff8c1a;
+  --lcd-bad: #ff4d4d;
+  --lcd-glow: rgba(255, 176, 0, 0.5);
+  --lcd-scan: rgba(255, 176, 0, 0.025);
+  --led-off: #141414;
+
+  --btn-primary: linear-gradient(to bottom, #fff2cc, #ffcc4d 50%, #e69500);
+  --btn-primary-text: #2b1a00;
+  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
+  --btn-warn-text: #3a0a0f;
+
+  --ansi-black: #4a3a14;
+  --ansi-red: #ff4d4d;
+  --ansi-green: #b8e05a;
+  --ansi-yellow: #ffcc33;
+  --ansi-blue: #ff9f40;
+  --ansi-magenta: #ff7a59;
+  --ansi-cyan: #ffd27a;
+  --ansi-white: #e8c27a;
+  --ansi-bright-black: #8a5f00;
+  --ansi-bright-red: #ff7a7a;
+  --ansi-bright-green: #d4f08a;
+  --ansi-bright-yellow: #ffe08a;
+  --ansi-bright-blue: #ffbf73;
+  --ansi-bright-magenta: #ffa088;
+  --ansi-bright-cyan: #ffe6b0;
+  --ansi-bright-white: #fff4dc;
+}
+
+/* Names the components use, drawn as panel content. */
 :root {
   --bg-primary: var(--lcd-bg);
   --bg-secondary: var(--lcd-bg);
@@ -193,9 +376,6 @@
   --danger: var(--lcd-bad);
   --info: var(--lcd-accent);
 
-  --console-bg: var(--lcd-bg);
-  --console-border: var(--lcd-line);
-
   --font-chrome: Tahoma, Verdana, "Segoe UI", "DejaVu Sans", sans-serif;
   --font-lcd: "SF Mono", Menlo, Consolas, "Cascadia Mono", "DejaVu Sans Mono", "Liberation Mono", monospace;
 }
@@ -205,12 +385,12 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  background: transparent;
 }
 
 body {
   font-family: var(--font-chrome);
   font-size: 12px;
-  background: var(--desk-2);
   color: var(--lcd-text);
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
@@ -238,7 +418,7 @@ a:hover {
   text-decoration: underline;
 }
 
-/* Scrollbars: a steel thumb in a dark channel, Winamp playlist style. */
+/* Scrollbars: a metal thumb in a panel-coloured channel, Winamp playlist style. */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;

@@ -2,33 +2,58 @@
  * Window manager state: which windows are open, in what order, at what size.
  *
  * Every change runs through `wmReducer`, which re-packs the cluster in the
- * same step, so positions never lag behind the windows they belong to.
+ * same step, so positions never lag behind the windows they belong to. The
+ * state lives in `wmStore` so any window (or a finishing scan) can open and
+ * close others.
  */
+import { createStore } from "../store";
 import { bounds, fits, packCluster, type Point, type Rect, type Size } from "./layout";
 
-export type Kind = "main" | "di" | "dhm" | "library" | "tips" | "scan" | "compare";
+export type Kind =
+  | "status"
+  | "controls"
+  | "skins"
+  | "library"
+  | "backend"
+  | "dhm"
+  | "dhm-out"
+  | "di"
+  | "di-cmds"
+  | "tip"
+  | "scan"
+  | "findings"
+  | "types"
+  | "compare"
+  | "cmp-pair";
 
 interface KindSpec {
   /** Default size of each member window. */
   size: Size;
   min: Size;
-  /** 2 for a pair of windows that dock and move as one (comparison). */
+  /** 2 for a pair of windows that dock and move as one (comparison trees). */
   members: 1 | 2;
-  /** Only one window of this kind; opening it again focuses that one. */
-  single: boolean;
   /** Reopened, at the same size and place, on the next launch. */
   persist: boolean;
+  /** Has a close button. */
   closable: boolean;
 }
 
 export const KINDS: Record<Kind, KindSpec> = {
-  main: { size: { w: 380, h: 142 }, min: { w: 340, h: 142 }, members: 1, single: true, persist: true, closable: false },
-  dhm: { size: { w: 660, h: 380 }, min: { w: 400, h: 200 }, members: 1, single: true, persist: true, closable: true },
-  di: { size: { w: 660, h: 380 }, min: { w: 380, h: 180 }, members: 1, single: true, persist: true, closable: true },
-  library: { size: { w: 320, h: 360 }, min: { w: 240, h: 150 }, members: 1, single: true, persist: true, closable: true },
-  tips: { size: { w: 360, h: 320 }, min: { w: 260, h: 140 }, members: 1, single: true, persist: true, closable: true },
-  scan: { size: { w: 620, h: 420 }, min: { w: 400, h: 230 }, members: 1, single: false, persist: false, closable: true },
-  compare: { size: { w: 440, h: 440 }, min: { w: 300, h: 230 }, members: 2, single: false, persist: false, closable: true },
+  status: { size: { w: 330, h: 112 }, min: { w: 290, h: 104 }, members: 1, persist: true, closable: false },
+  controls: { size: { w: 330, h: 92 }, min: { w: 290, h: 84 }, members: 1, persist: true, closable: false },
+  skins: { size: { w: 330, h: 124 }, min: { w: 250, h: 96 }, members: 1, persist: true, closable: true },
+  library: { size: { w: 290, h: 300 }, min: { w: 220, h: 140 }, members: 1, persist: true, closable: true },
+  backend: { size: { w: 380, h: 200 }, min: { w: 300, h: 150 }, members: 1, persist: false, closable: true },
+  dhm: { size: { w: 300, h: 214 }, min: { w: 260, h: 180 }, members: 1, persist: true, closable: true },
+  "dhm-out": { size: { w: 640, h: 330 }, min: { w: 380, h: 160 }, members: 1, persist: true, closable: true },
+  di: { size: { w: 640, h: 330 }, min: { w: 360, h: 160 }, members: 1, persist: true, closable: true },
+  "di-cmds": { size: { w: 270, h: 330 }, min: { w: 210, h: 140 }, members: 1, persist: true, closable: true },
+  tip: { size: { w: 290, h: 176 }, min: { w: 220, h: 120 }, members: 1, persist: true, closable: true },
+  scan: { size: { w: 310, h: 178 }, min: { w: 270, h: 160 }, members: 1, persist: false, closable: true },
+  findings: { size: { w: 580, h: 330 }, min: { w: 360, h: 160 }, members: 1, persist: false, closable: true },
+  types: { size: { w: 320, h: 330 }, min: { w: 240, h: 150 }, members: 1, persist: false, closable: true },
+  compare: { size: { w: 330, h: 206 }, min: { w: 290, h: 190 }, members: 1, persist: false, closable: true },
+  "cmp-pair": { size: { w: 420, h: 380 }, min: { w: 260, h: 180 }, members: 2, persist: false, closable: true },
 };
 
 /** Height of a title bar, which is all a shaded window shows. */
@@ -46,8 +71,10 @@ export interface Unit {
   /** One size per member window; members of a pair share a height. */
   sizes: Size[];
   shaded: boolean;
-  /** Saved snapshot this window shows, if any. */
-  snapshotId?: string;
+  /** What the window shows: a scan or comparison session id, a tip id. */
+  ref?: string;
+  /** The window this one belongs to. It opens beside it and closes with it. */
+  parent?: string;
 }
 
 export interface WmState {
@@ -70,7 +97,6 @@ export type WmAction =
   | { type: "resize"; id: string; sizes: Size[]; candidates: Rect[] }
   | { type: "swap"; a: string; b: string }
   | { type: "move"; id: string; delta: -1 | 1 }
-  | { type: "patch"; id: string; patch: Partial<Pick<Unit, "snapshotId">> }
   | { type: "arrange" }
   | { type: "view"; size: Size };
 
@@ -118,12 +144,14 @@ function reshape(state: WmState, id: string, change: (u: Unit) => Unit, candidat
 }
 
 /**
- * Open a unit at the largest size that keeps the cluster on screen. When
- * nothing fits, it opens small and the desktop scrolls.
+ * Open a unit at the largest size that keeps the cluster on screen (when
+ * nothing fits, it opens small and the desktop scrolls). A unit with a parent
+ * is placed as close to it as it will go.
  */
 function placeNew(state: WmState, unit: Unit): { units: Unit[]; rects: Record<string, Rect> } {
   const min = KINDS[unit.kind].min;
   const room = { w: state.view.w - CLUSTER_PAD * 2, h: state.view.h - CLUSTER_PAD * 2 };
+  const parent = unit.parent ? state.rects[unit.parent] : undefined;
   let fallback: { units: Unit[]; rects: Record<string, Rect> } | null = null;
   for (const scale of OPEN_SCALES) {
     const sized = {
@@ -133,8 +161,15 @@ function placeNew(state: WmState, unit: Unit): { units: Unit[]; rects: Record<st
         h: Math.max(min.h, Math.round(s.h * scale)),
       })),
     };
+    const { w, h } = outerSize(sized);
+    const hints = parent
+      ? {
+          ...state.rects,
+          [unit.id]: { x: Math.round(parent.x + parent.w / 2 - w / 2), y: Math.round(parent.y + parent.h / 2 - h / 2), w, h },
+        }
+      : state.rects;
     const units = [...state.units, sized];
-    const rects = relayout(units, state.rects, state.view);
+    const rects = relayout(units, hints, state.view);
     const box = bounds(Object.values(rects));
     if (box.w <= room.w && box.h <= room.h) return { units, rects };
     fallback = { units, rects };
@@ -163,6 +198,22 @@ function swap(state: WmState, a: string, b: string): WmState {
   return { ...state, units, rects: relayout(units, hints, state.view), activeId: a };
 }
 
+/** A unit and everything that belongs to it, however deep. */
+function withChildren(units: Unit[], id: string): Set<string> {
+  const ids = new Set([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const u of units) {
+      if (u.parent && ids.has(u.parent) && !ids.has(u.id)) {
+        ids.add(u.id);
+        grew = true;
+      }
+    }
+  }
+  return ids;
+}
+
 export function wmReducer(state: WmState, action: WmAction): WmState {
   switch (action.type) {
     case "open": {
@@ -179,14 +230,15 @@ export function wmReducer(state: WmState, action: WmAction): WmState {
     }
     case "close": {
       if (!state.units.some((u) => u.id === action.id)) return state;
-      const units = state.units.filter((u) => u.id !== action.id);
+      const gone = withChildren(state.units, action.id);
+      const units = state.units.filter((u) => !gone.has(u.id));
       const rects = { ...state.rects };
-      delete rects[action.id];
+      for (const id of gone) delete rects[id];
       return {
         ...state,
         units,
         rects: relayout(units, rects, state.view),
-        activeId: state.activeId === action.id ? null : state.activeId,
+        activeId: state.activeId && gone.has(state.activeId) ? null : state.activeId,
       };
     }
     case "focus": {
@@ -223,11 +275,6 @@ export function wmReducer(state: WmState, action: WmAction): WmState {
       const other = state.units[i + action.delta];
       return i < 0 || !other ? state : swap(state, action.id, other.id);
     }
-    case "patch":
-      return {
-        ...state,
-        units: state.units.map((u) => (u.id === action.id ? { ...u, ...action.patch } : u)),
-      };
     case "arrange":
       return { ...state, rects: relayout(state.units, {}, state.view) };
     case "view":
@@ -241,7 +288,7 @@ export function wmReducer(state: WmState, action: WmAction): WmState {
 // Persistence: the persistent windows' order, sizes and places.
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = "wm-layout-v1";
+const STORAGE_KEY = "wm-layout-v2";
 
 interface Saved {
   units: Unit[];
@@ -250,26 +297,28 @@ interface Saved {
 
 function clampSizes(unit: Unit): Unit {
   const spec = KINDS[unit.kind];
-  const h = Math.max(spec.min.h, Math.round(unit.sizes[0]?.h || spec.size.h));
+  const h = Math.max(spec.min.h, Math.round(unit.sizes?.[0]?.h || spec.size.h));
   const sizes = Array.from({ length: spec.members }, (_, i) => ({
-    w: Math.max(spec.min.w, Math.round(unit.sizes[i]?.w || spec.size.w)),
+    w: Math.max(spec.min.w, Math.round(unit.sizes?.[i]?.w || spec.size.w)),
     h,
   }));
-  return { id: unit.id, kind: unit.kind, sizes, shaded: !!unit.shaded };
+  return { id: unit.id, kind: unit.kind, sizes, shaded: !!unit.shaded, ref: unit.ref, parent: unit.parent };
 }
 
-export function initialState(defaults: Unit[], view: Size): WmState {
+function initialState(defaults: Unit[], view: Size): WmState {
   let units = defaults;
   let rects: Record<string, Rect> = {};
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const saved = JSON.parse(raw) as Saved;
-      const restored = (saved.units || [])
-        .filter((u) => u && KINDS[u.kind]?.persist)
-        .map(clampSizes);
-      if (!restored.some((u) => u.kind === "main")) restored.unshift(defaults[0]);
-      units = restored;
+      const restored = (saved.units || []).filter((u) => u && KINDS[u.kind]?.persist).map(clampSizes);
+      // The windows that can't be closed are always there.
+      for (const fixed of defaults.filter((d) => !KINDS[d.kind].closable).reverse()) {
+        if (!restored.some((u) => u.id === fixed.id)) restored.unshift(fixed);
+      }
+      const ids = new Set(restored.map((u) => u.id));
+      units = restored.map((u) => (u.parent && !ids.has(u.parent) ? { ...u, parent: undefined } : u));
       rects = saved.rects || {};
     }
   } catch {
@@ -278,7 +327,7 @@ export function initialState(defaults: Unit[], view: Size): WmState {
   return { units, rects: relayout(units, rects, view), view, activeId: null, flash: null };
 }
 
-export function saveState(state: WmState): void {
+function saveState(state: WmState): void {
   const units = state.units.filter((u) => KINDS[u.kind].persist);
   const rects: Record<string, Rect> = {};
   for (const u of units) if (state.rects[u.id]) rects[u.id] = state.rects[u.id];
@@ -287,4 +336,47 @@ export function saveState(state: WmState): void {
   } catch {
     // Storage unavailable: the layout just won't be remembered.
   }
+}
+
+// ---------------------------------------------------------------------------
+// The live window manager.
+// ---------------------------------------------------------------------------
+
+/** First launch: status and controls in the middle, the two CLIs and the library around them. */
+const DEFAULT_UNITS: Unit[] = [
+  newUnit("status", "status"),
+  newUnit("controls", "controls"),
+  newUnit("dhm", "dhm"),
+  newUnit("dhm-out", "dhm-out", { parent: "dhm" }),
+  newUnit("di", "di"),
+  newUnit("di-cmds", "di-cmds", { parent: "di" }),
+  newUnit("library", "library"),
+];
+
+export const wmStore = createStore<WmState>(
+  initialState(DEFAULT_UNITS, { w: window.innerWidth, h: window.innerHeight }),
+);
+
+export function wmDispatch(action: WmAction): void {
+  wmStore.set((state) => wmReducer(state, action));
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+wmStore.subscribe(() => {
+  // Remember the arrangement a moment after it stops changing.
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveState(wmStore.get()), 400);
+});
+
+/** Open a window, or flash it if it's already open. */
+export function openWindow(kind: Kind, id: string = kind, extra?: Partial<Unit>): void {
+  wmDispatch({ type: "open", unit: newUnit(kind, id, extra) });
+}
+
+export function closeWindow(id: string): void {
+  wmDispatch({ type: "close", id });
+}
+
+export function isOpen(id: string): boolean {
+  return wmStore.get().units.some((u) => u.id === id);
 }
