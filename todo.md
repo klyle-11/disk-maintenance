@@ -105,8 +105,10 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
       1 errors in `test_integration_security.py`. PHASE5_COMPLETE.md reports these as done.
 - [ ] **Frontend security tests can't run.** `frontend/src/tests/security/frontend-security.test.ts`
       exists but there's no vitest dependency or `test` script.
-- [ ] Pre-existing TypeScript errors: `App.tsx` (Snapshot vs ComparisonSnapshot types around
-      lines 256–284), unused import in `DuHastMuch.tsx`. `vite build` still succeeds.
+- [ ] Pre-existing TypeScript errors: the `App.tsx` and `DuHastMuch.tsx` ones are fixed (the
+      window rewrite); `vite.config.ts` (`telemetry` isn't a Vite option) and the security test
+      file remain. ESLint still flags `any`s in `api.ts`, `Date.now()` during render in
+      `DuHastMuch.tsx` and components created during render in `FindingsTable.tsx`.
 - [ ] Stray file `frontend/src-tauri/sqlite:disk_intelligence.db`, created by a SQLite URL
       used as a literal path. Delete it along with the leftover `frontend/src-tauri/gen/`.
 
@@ -127,7 +129,10 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
       via a quick `di recent`.
 - [ ] `di clean`: `--interactive` picker (a TUI) for choosing projects.
 - [ ] `di` install script (`scripts/install-cli.sh`) that symlinks into `~/.local/bin`.
-- [ ] TODOs already in `App.tsx`: treemap, disk-change timeline, custom detection rules UI.
+- [ ] Treemap, disk-change timeline, custom detection rules UI (were TODOs in `App.tsx`); each
+      would be a new window kind in `frontend/src/windows/`.
+- [ ] di window: an interactive mode, so the pick-to-delete prompt works there too (needs a
+      stdin channel to the running di, e.g. a POST per typed line).
 
 ## Security (open items from the audit docs)
 

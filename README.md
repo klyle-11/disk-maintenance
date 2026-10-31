@@ -8,7 +8,8 @@ Two front ends share one Python core and one database:
 - **`di`**: a fast, dependency-free command line tool for scanning, growth
   tracking, cleanup and a free-space guard.
 - **Desktop app**: Electron + React UI over a local FastAPI backend, with scan
-  findings, snapshots, folder comparison and space-keeping tips.
+  findings, snapshots, folder comparison, space-keeping tips, and `di` itself
+  in a terminal window.
 
 Everything runs locally. Nothing leaves the machine (see [Security](#security)).
 
@@ -125,18 +126,36 @@ or every time when the disk is low). Set `DI_TIPS=0` to turn that off.
 
 ## Desktop app
 
-- **Scan & findings**: large folders, old large folders, cache/regenerable
-  folders, duplicate-name folders and files, cold archives, and a breakdown by
-  file extension.
-- **Du-hast-much**: quick per-folder sizing with live progress and history.
-- **Folder comparison**: source vs target (mirror or backup validation) with
-  optional hash verification. Design: `docs/plans/2026-01-15-folder-comparison-design.md`.
-- **Snapshots**: save scans and comparisons, reopen and refresh them later.
-- **Keeping space free**: tips relevant to this Mac (Docker, snapshots, swap,
-  Xcode, Homebrew ...) with copyable commands, served from the same list as `di tips`.
-- **Themes**: Light, Dark, Sepia, Dark Sepia.
+The app is a cluster of steel-skinned windows, Winamp style, docked edge to
+edge around a centre point. Every window is resizable; none floats free. Drag a
+title bar onto another window to swap the two (a drop anywhere else snaps back),
+double-click a title bar to shade it down to one line, and use ARRANGE in the hub
+to re-pack everything. Opening, closing and resizing re-dock the rest, and the
+arrangement is remembered between launches.
 
-The app only analyses; cleanup lives in `di`.
+- **Hub**: backend status, free space, and the buttons that open everything else.
+  It can't be closed, so the cluster always has a centre.
+- **Scan** (one window per scan): large folders, old large folders,
+  cache/regenerable folders, duplicate-name folders and files, cold archives, and a
+  breakdown by file extension.
+- **Compare** (a pair of windows, source and target, side by side like a diff):
+  mirror or backup validation with optional hash verification. Both windows share
+  one filter, one set of open folders and one scroll position; PATHS lists each
+  side's differing files as copyable paths. Design:
+  `docs/plans/2026-01-15-folder-comparison-design.md`.
+- **Library**: saved scans and comparisons. Opening one gives it its own window
+  (or flashes the one it already has) and quietly refreshes it.
+- **du-hast-much**: quick per-folder sizing with live progress and history.
+- **di**: the real `di` command line in a window. Commands run as `di` processes
+  in the backend and stream their coloured output live. Anything that deletes or
+  schedules something (`clean --yes`, `caches --yes`, `guard --install/--auto`,
+  `ballast set/release`, `forget`) asks first; the pick-to-delete prompt stays a
+  terminal-only feature.
+- **Keeping space free**: tips relevant to this machine (Docker, snapshots, swap,
+  Xcode, Homebrew ...) with copyable commands, served from the same list as `di tips`.
+- **Skins**: Cold Steel, Gunmetal, Frost.
+
+Apart from the di window, the app only analyses; cleanup lives in `di`.
 
 ## Architecture
 
@@ -146,16 +165,20 @@ Electron main (frontend/electron/)
   └── React UI (frontend/src/)  ── HTTP/SSE on 127.0.0.1 ──►  FastAPI (backend/main.py)
                                                                 ├── security/   path validation, sanitising, headers, redacting logger
                                                                 ├── database.py SQLAlchemy / SQLite snapshots
-                                                                └── diskcli/tips.py  shared tips
+                                                                ├── diskcli/tips.py  shared tips
+                                                                └── di_runner.py  runs `backend --di …` for the di window
 di / di.cmd ──► backend/diskcli/  stdlib only: walker, store (SQLite baselines), commands, maint, tips
 ```
 
 | Path | Contents |
 |---|---|
-| `backend/main.py` | FastAPI app: scan (+SSE stream), findings, extensions, snapshots, compare, du-hast-much, tips |
+| `backend/main.py` | FastAPI app: scan (+SSE stream), findings, extensions, snapshots, compare, du-hast-much, tips, di runs. `main.py --di <args>` runs di |
+| `backend/di_runner.py` | Starts di processes for the di window, streams their output, gates destructive commands |
 | `backend/diskcli/` | The `di` CLI. `walker.py` is the fast single-pass scanner; `maint.py` holds clean/caches/guard/ballast |
 | `backend/security/` | Path validator, input sanitiser, secure logger, security headers, encryption helper |
 | `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` is the HTTP client |
+| `frontend/src/wm/` | The window manager: `layout.ts` packs the docked cluster, `state.ts` is its reducer, `Cluster`/`Window` draw it |
+| `frontend/src/windows/` | One component per window kind: hub, scan, compare pair, library, du-hast-much, di, tips |
 | `frontend/electron/` | Main process, preload bridge, backend supervisor |
 | `scripts/` | Build, package, verify and audit scripts |
 

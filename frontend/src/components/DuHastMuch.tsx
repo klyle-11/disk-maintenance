@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { runDuHastMuch, formatBytes, saveDuHastMuchToHistory, getDuHastMuchHistory, streamDuHastMuch, type DuHastMuchResult } from "../api";
+import { useState, useEffect, useRef, useMemo, type JSX } from "react";
+import { formatBytes, saveDuHastMuchToHistory, streamDuHastMuch, type DuHastMuchResult } from "../api";
 import "./DuHastMuch.css";
 
 interface DuHastMuchProps {
@@ -298,12 +298,13 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
           currentStyle = { ...currentStyle, color: colors[code - 90] };
         } else if (code === 38 && codes.length > 2 && codes[1] === 5) {
           const color256 = codes[2];
+          // The output's accent shades, drawn in the skin's colours.
           const colorMap: Record<number, string> = {
-            141: "#8b7ec8",
-            147: "#9b8ed8",
-            177: "#a89ce4",
-            183: "#b8a4f0",
-            189: "#c8b4f8",
+            141: "var(--lcd-accent)",
+            147: "var(--lcd-text)",
+            177: "var(--lcd-strong)",
+            183: "var(--lcd-accent)",
+            189: "var(--lcd-strong)",
           };
           if (colorMap[color256]) {
             currentStyle = { ...currentStyle, color: colorMap[color256], fontWeight: "bold" };
@@ -333,10 +334,6 @@ export function DuHastMuch({ onScanStart, onScanComplete, initialResult }: DuHas
 
     return parts.length > 0 ? parts : line;
   };
-
-  const pathLabel = path
-    ? (path.length > 40 ? "\u2026" + path.slice(-39) : path)
-    : "select folder";
 
   return (
     <div className="du-hast-much">

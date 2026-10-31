@@ -931,3 +931,112 @@ export function clearDuHastMuchHistory(): void {
     console.error("Failed to clear du-hast-much history:", err);
   }
 }
+
+// ============================================================================
+// di (the command line, run from the di window)
+// ============================================================================
+
+export interface DiCommand {
+  name: string;
+  help: string;
+}
+
+/** di's commands with their one-line help. */
+export async function getDiCommands(): Promise<DiCommand[]> {
+  const data = await apiFetch<{ commands: DiCommand[] }>("/di/commands");
+  return data.commands;
+}
+
+/** Thrown when a di command changes the disk and needs the user's OK first. */
+export class DiConfirmError extends Error {}
+
+/**
+ * Register a di command with the backend. Resolves to the run id to stream.
+ * Rejects with a DiConfirmError for destructive commands unless `confirm`.
+ */
+export async function startDiRun(args: string[], columns: number, confirm = false): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(apiUrl("/di/runs"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ args, columns, confirm }),
+    });
+  } catch {
+    throw new Error(`Cannot connect to backend at ${activeApiBaseUrl} — is the server running?`);
+  }
+  const body = await response.json().catch(() => null);
+  if (response.ok) return body.runId;
+  const detail = body?.detail;
+  if (response.status === 409 && detail?.needsConfirm) throw new DiConfirmError(detail.message);
+  throw new Error(typeof detail === "string" ? detail : `di failed to start (${response.status})`);
+}
+
+export interface DiStreamHandlers {
+  /** di's output (stdout and stderr together, as a terminal shows them). */
+  onOutput: (text: string) => void;
+  onExit: (code: number, elapsedSeconds: number) => void;
+}
+
+/**
+ * Stream a registered run's output. Aborting the signal closes the stream,
+ * and the backend stops di when its client goes away.
+ */
+export function streamDiRun(runId: string, handlers: DiStreamHandlers, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const eventSource = new EventSource(apiUrl(`/di/runs/${encodeURIComponent(runId)}/stream`));
+    let finished = false;
+    const finish = (err?: Error) => {
+      if (finished) return;
+      finished = true;
+      eventSource.close();
+      if (err) reject(err);
+      else resolve();
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "out") {
+          handlers.onOutput(data.data);
+        } else if (data.type === "exit") {
+          handlers.onExit(data.code, data.elapsed);
+          finish();
+        }
+      } catch {
+        finish(new Error("Failed to parse di output"));
+      }
+    };
+    eventSource.onerror = () => finish(new Error("di stream connection failed"));
+    signal?.addEventListener("abort", () => finish(new Error("Stopped")));
+  });
+}
+
+/**
+ * Split a typed command line into arguments. Quotes group words; there are
+ * no backslash escapes, so Windows paths go through as typed.
+ */
+export function splitCommandLine(line: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  let inArg = false;
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      inArg = true;
+    } else if (/\s/.test(ch)) {
+      if (inArg) args.push(current);
+      current = "";
+      inArg = false;
+    } else {
+      current += ch;
+      inArg = true;
+    }
+  }
+  if (inArg) args.push(current);
+  return args;
+}
