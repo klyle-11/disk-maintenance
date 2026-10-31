@@ -262,7 +262,7 @@ _TIP_AFTER = {"insights", "scan", "recent", "growth", "reclaim", "clean", "cache
 
 
 def _maybe_tip(args) -> None:
-    if args.command not in _TIP_AFTER or getattr(args, "json", False) or not sys.stdout.isatty():
+    if args.command not in _TIP_AFTER or getattr(args, "json", False) or not (sys.stdout.isatty() or r.FORCED):
         return
     tip = tips.pick_tip()
     if tip:
@@ -270,15 +270,19 @@ def _maybe_tip(args) -> None:
         print(tips.format_tip(tip, r))
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    argv = sys.argv[1:] if argv is None else argv
-    # `di .` / `di ~/proj`: a path where a command would go means insights for it.
+def resolve_argv(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
+    """`di .` / `di ~/proj`: a path where a command would go means insights for it."""
     commands_by_name = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices
     if (argv and argv[0] not in commands_by_name and not argv[0].startswith("-")
             and os.path.isdir(os.path.expanduser(argv[0]))):
-        argv = ["insights", *argv]
-    args = parser.parse_args(argv)
+        return ["insights", *argv]
+    return argv
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    argv = sys.argv[1:] if argv is None else argv
+    args = parser.parse_args(resolve_argv(parser, argv))
 
     if not getattr(args, "command", None):
         _print_commands(parser)

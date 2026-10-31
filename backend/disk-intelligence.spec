@@ -21,6 +21,7 @@ a = Analysis(
     datas=[
         (os.path.join(BACKEND_DIR, 'security'), 'backend/security'),
         (os.path.join(BACKEND_DIR, 'du_hast_much.py'), 'backend'),
+        (os.path.join(BACKEND_DIR, 'di_runner.py'), 'backend'),
         (os.path.join(BACKEND_DIR, 'database.py'), 'backend'),
         (os.path.join(BACKEND_DIR, '__init__.py'), 'backend'),
         (os.path.join(BACKEND_DIR, 'diskcli'), 'backend/diskcli'),
@@ -39,6 +40,10 @@ a = Analysis(
         'security.headers', 'security.encryption',
         'database',
         'diskcli', 'diskcli.tips', 'diskcli.store',
+        # The di window runs every di command through `backend --di`.
+        'diskcli.__main__', 'diskcli.commands', 'diskcli.insights', 'diskcli.maint',
+        'diskcli.picker', 'diskcli.render', 'diskcli.summary', 'diskcli.walker',
+        'di_runner',
     ],
     hookspath=[],
     hooksconfig={},

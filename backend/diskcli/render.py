@@ -39,7 +39,11 @@ def _prepare_windows_console() -> bool:
 
 _ANSI_OK = _prepare_windows_console() if sys.platform == "win32" else True
 
-_USE_COLOR = (
+# The desktop app runs di on a pipe and draws the ANSI itself, so it asks for
+# colour (and the spinner) explicitly.
+FORCED = os.environ.get("DI_FORCE_COLOR") == "1"
+
+_USE_COLOR = FORCED or (
     _ANSI_OK
     and sys.stdout.isatty()
     and os.environ.get("NO_COLOR") is None
@@ -190,7 +194,7 @@ class Spinner:
 
     def __init__(self, label: str):
         self.label = label
-        self.enabled = _ANSI_OK and sys.stderr.isatty() and os.environ.get("NO_COLOR") is None
+        self.enabled = FORCED or (_ANSI_OK and sys.stderr.isatty() and os.environ.get("NO_COLOR") is None)
         self.i = 0
         self.last = 0.0
 
