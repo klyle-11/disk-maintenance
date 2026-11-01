@@ -1,0 +1,284 @@
+[
+  {
+    "id": "docker-disk",
+    "title": "Docker's disk image keeps what it grabs",
+    "body": "Docker.raw grows as images and volumes pile up. Pruning frees space inside the VM; Docker Desktop then hands it back to macOS. Lower Settings → Resources → Disk usage limit to cap how big it can get.",
+    "command": "docker system prune -a --volumes",
+    "when": [
+      "tool:docker",
+      "path:Library/Containers/com.docker.docker"
+    ],
+    "only": [
+      "darwin"
+    ]
+  },
+  {
+    "id": "wsl-vhdx",
+    "title": "WSL and Docker disks only ever grow",
+    "body": "WSL distros and Docker Desktop keep their files in .vhdx virtual disks that don't shrink when you delete things inside them. Prune Docker first, then make the disks sparse (WSL 2.0+) so freed space returns to Windows automatically.",
+    "command": "docker system prune -a --volumes; wsl --shutdown; wsl --manage <distro> --set-sparse true",
+    "when": [
+      "tool:wsl",
+      "tool:docker",
+      "path:%LOCALAPPDATA%/Docker/wsl"
+    ],
+    "only": [
+      "win32"
+    ]
+  },
+  {
+    "id": "hiberfil",
+    "title": "hiberfil.sys can be many GB",
+    "body": "Hibernation reserves a file sized to a large share of your RAM on C:. If you never hibernate, turn it off (admin terminal). Fast Startup also uses it.",
+    "command": "powercfg /hibernate off",
+    "when": [
+      "win32"
+    ],
+    "only": [
+      "win32"
+    ]
+  },
+  {
+    "id": "pagefile",
+    "title": "The page file lives on C:",
+    "body": "Windows grows pagefile.sys when memory runs short. Closing idle Electron apps and dev servers keeps it small; check its current size in Settings → System → About → Advanced system settings.",
+    "command": "Get-CimInstance Win32_PageFileUsage",
+    "when": [
+      "win32"
+    ],
+    "only": [
+      "win32"
+    ]
+  },
+  {
+    "id": "restore-points",
+    "title": "System Restore can hold a lot of space",
+    "body": "Restore points and shadow copies are capped as a percentage of the drive. Check the cap and lower it under System Protection → Configure if it's large.",
+    "command": "vssadmin list shadowstorage",
+    "when": [
+      "win32"
+    ],
+    "only": [
+      "win32"
+    ]
+  },
+  {
+    "id": "winsxs",
+    "title": "Old Windows Update components",
+    "body": "The component store (WinSxS) keeps superseded update files. Cleaning it is safe; run it from an admin terminal.",
+    "command": "Dism.exe /Online /Cleanup-Image /StartComponentCleanup",
+    "when": [
+      "win32"
+    ],
+    "only": [
+      "win32"
+    ]
+  },
+  {
+    "id": "storage-sense",
+    "title": "Storage Sense is Windows' built-in guard",
+    "body": "Turn it on in Settings → System → Storage to empty the Recycle Bin, temp files and old Downloads on a schedule. It pairs well with di guard for developer caches.",
+    "command": "start ms-settings:storagepolicies",
+    "when": [
+      "win32"
+    ],
+    "only": [
+      "win32"
+    ]
+  },
+  {
+    "id": "recycle-bin",
+    "title": "Deleted isn't freed until the Recycle Bin is empty",
+    "body": "Files in the Recycle Bin still count against your drive.",
+    "command": "Clear-RecycleBin -Force",
+    "when": [
+      "win32"
+    ],
+    "only": [
+      "win32"
+    ]
+  },
+  {
+    "id": "apfs-snapshots",
+    "title": "\"System Data\" is often snapshots",
+    "body": "Time Machine and macOS updates leave local APFS snapshots that hold on to deleted files. Update snapshots clear after the update finishes and you restart; Time Machine ones can be thinned.",
+    "command": "tmutil listlocalsnapshots /",
+    "when": [
+      "darwin"
+    ],
+    "only": [
+      "darwin"
+    ]
+  },
+  {
+    "id": "purgeable",
+    "title": "Finder's \"available\" counts space macOS hasn't freed yet",
+    "body": "Finder includes purgeable space (caches, snapshots) that macOS only frees under pressure. df shows what is actually free right now.",
+    "command": "df -h /System/Volumes/Data",
+    "when": [
+      "darwin"
+    ],
+    "only": [
+      "darwin"
+    ]
+  },
+  {
+    "id": "swap",
+    "title": "Swap lives on your disk",
+    "body": "When memory runs short, macOS writes swap files to /private/var/vm, and they can reach several GB. Quitting idle Electron apps and dev servers keeps swap small; a restart clears it.",
+    "command": "sysctl vm.swapusage",
+    "when": [
+      "darwin"
+    ],
+    "only": [
+      "darwin"
+    ]
+  },
+  {
+    "id": "headroom",
+    "title": "Leave 10–15% of the disk free",
+    "body": "APFS, swap and updates all need working room, and a nearly full SSD is slower. A ballast file holds a floor of space you can release in an emergency.",
+    "command": "di ballast set 5G",
+    "when": [
+      "low"
+    ]
+  },
+  {
+    "id": "guard",
+    "title": "Let di watch the disk for you",
+    "body": "The guard runs every couple of hours: it notifies you when space runs low, cleans safe caches, and releases the ballast when things get critical.",
+    "command": "di guard --auto --dev ~/dev --install"
+  },
+  {
+    "id": "dev-junk",
+    "title": "Old projects keep their node_modules forever",
+    "body": "Dependencies and build caches in projects you haven't touched in weeks are pure dead weight. Reinstalling takes one command when you come back.",
+    "command": "di clean ~/dev --older-than 14",
+    "when": [
+      "path:dev"
+    ]
+  },
+  {
+    "id": "pkg-caches",
+    "title": "Package managers never clean up after themselves",
+    "body": "npm, yarn, bun, pip, cargo and editor updaters keep every download. They are safe to clear and refill as needed.",
+    "command": "di caches"
+  },
+  {
+    "id": "brew",
+    "title": "Homebrew keeps old versions and downloads",
+    "body": "brew cleanup deletes old kegs and cached downloads; autoremove drops dependencies nothing uses.",
+    "command": "brew cleanup -s --prune=all && brew autoremove",
+    "when": [
+      "tool:brew"
+    ],
+    "only": [
+      "darwin",
+      "linux"
+    ]
+  },
+  {
+    "id": "xcode",
+    "title": "Xcode and simulators are space hogs",
+    "body": "DerivedData, old device support files and simulator runtimes for unavailable devices can take tens of GB.",
+    "command": "xcrun simctl delete unavailable",
+    "when": [
+      "path:Library/Developer"
+    ],
+    "only": [
+      "darwin"
+    ]
+  },
+  {
+    "id": "nvm",
+    "title": "Unused Node versions add up",
+    "body": "Each Node version under nvm is 50–100 MB, plus its global packages.",
+    "command": "nvm ls",
+    "when": [
+      "path:.nvm",
+      "path:%APPDATA%/nvm"
+    ]
+  },
+  {
+    "id": "conda",
+    "title": "Conda keeps every package tarball",
+    "body": "conda clean removes cached tarballs and unused packages.",
+    "command": "conda clean -a",
+    "when": [
+      "tool:conda"
+    ]
+  },
+  {
+    "id": "ios-backups",
+    "title": "Old iPhone backups",
+    "body": "Device backups live in MobileSync and can be many GB each. Manage them in Finder (select the device → Manage Backups), or in iTunes / Apple Devices on Windows.",
+    "command": "du -sh ~/Library/Application\\ Support/MobileSync/Backup",
+    "when": [
+      "path:Library/Application Support/MobileSync/Backup",
+      "path:%APPDATA%/Apple Computer/MobileSync/Backup",
+      "path:Apple/MobileSync/Backup"
+    ]
+  },
+  {
+    "id": "messages",
+    "title": "Messages attachments",
+    "body": "Photos and videos from Messages pile up in ~/Library/Messages. System Settings → General → Storage → Messages lets you review and remove large attachments.",
+    "command": "du -sh ~/Library/Messages/Attachments",
+    "when": [
+      "path:Library/Messages/Attachments"
+    ],
+    "only": [
+      "darwin"
+    ]
+  },
+  {
+    "id": "trash",
+    "title": "Deleted isn't freed until the Trash is empty",
+    "body": "Anything in the Trash still counts against your disk.",
+    "command": "du -sh ~/.local/share/Trash",
+    "when": [
+      "path:.Trash",
+      "path:.local/share/Trash"
+    ],
+    "only": [
+      "darwin",
+      "linux"
+    ]
+  },
+  {
+    "id": "apt-cache",
+    "title": "apt keeps every package it downloads",
+    "body": "Downloaded .deb files stay in /var/cache/apt/archives after install. autoremove also drops old kernels and dependencies nothing needs any more.",
+    "command": "sudo apt clean && sudo apt autoremove --purge",
+    "when": [
+      "tool:apt"
+    ],
+    "only": [
+      "linux"
+    ]
+  },
+  {
+    "id": "journald",
+    "title": "The system journal grows to its cap",
+    "body": "journald keeps logs until they hit a size limit that can be several GB, which hurts on a small SD card. Vacuum it now; set SystemMaxUse= in /etc/systemd/journald.conf to keep it down.",
+    "command": "sudo journalctl --vacuum-size=200M",
+    "when": [
+      "tool:journalctl"
+    ],
+    "only": [
+      "linux"
+    ]
+  },
+  {
+    "id": "docker-linux",
+    "title": "Docker images and volumes pile up",
+    "body": "Old images, stopped containers and dangling volumes live under /var/lib/docker.",
+    "command": "docker system df && docker system prune -a --volumes",
+    "when": [
+      "tool:docker"
+    ],
+    "only": [
+      "linux"
+    ]
+  }
+]

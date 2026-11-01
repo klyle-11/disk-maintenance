@@ -37,156 +37,24 @@ class Tip:
     only: tuple[str, ...] = ()
 
 
-TIPS: list[Tip] = [
-    Tip("docker-disk",
-        "Docker's disk image keeps what it grabs",
-        "Docker.raw grows as images and volumes pile up. Pruning frees space inside the VM; "
-        "Docker Desktop then hands it back to macOS. Lower Settings → Resources → Disk usage limit "
-        "to cap how big it can get.",
-        "docker system prune -a --volumes",
-        ("tool:docker", "path:Library/Containers/com.docker.docker"), only=("darwin",)),
-    Tip("wsl-vhdx",
-        "WSL and Docker disks only ever grow",
-        "WSL distros and Docker Desktop keep their files in .vhdx virtual disks that don't shrink when "
-        "you delete things inside them. Prune Docker first, then make the disks sparse (WSL 2.0+) "
-        "so freed space returns to Windows automatically.",
-        "docker system prune -a --volumes; wsl --shutdown; wsl --manage <distro> --set-sparse true",
-        ("tool:wsl", "tool:docker", "path:%LOCALAPPDATA%/Docker/wsl"), only=("win32",)),
-    Tip("hiberfil",
-        "hiberfil.sys can be many GB",
-        "Hibernation reserves a file sized to a large share of your RAM on C:. If you never hibernate, "
-        "turn it off (admin terminal). Fast Startup also uses it.",
-        "powercfg /hibernate off",
-        ("win32",), only=("win32",)),
-    Tip("pagefile",
-        "The page file lives on C:",
-        "Windows grows pagefile.sys when memory runs short. Closing idle Electron apps and dev servers "
-        "keeps it small; check its current size in Settings → System → About → Advanced system settings.",
-        "Get-CimInstance Win32_PageFileUsage",
-        ("win32",), only=("win32",)),
-    Tip("restore-points",
-        "System Restore can hold a lot of space",
-        "Restore points and shadow copies are capped as a percentage of the drive. Check the cap and lower "
-        "it under System Protection → Configure if it's large.",
-        "vssadmin list shadowstorage",
-        ("win32",), only=("win32",)),
-    Tip("winsxs",
-        "Old Windows Update components",
-        "The component store (WinSxS) keeps superseded update files. Cleaning it is safe; run it from "
-        "an admin terminal.",
-        "Dism.exe /Online /Cleanup-Image /StartComponentCleanup",
-        ("win32",), only=("win32",)),
-    Tip("storage-sense",
-        "Storage Sense is Windows' built-in guard",
-        "Turn it on in Settings → System → Storage to empty the Recycle Bin, temp files and old "
-        "Downloads on a schedule. It pairs well with di guard for developer caches.",
-        "start ms-settings:storagepolicies",
-        ("win32",), only=("win32",)),
-    Tip("recycle-bin",
-        "Deleted isn't freed until the Recycle Bin is empty",
-        "Files in the Recycle Bin still count against your drive.",
-        "Clear-RecycleBin -Force",
-        ("win32",), only=("win32",)),
-    Tip("apfs-snapshots",
-        "\"System Data\" is often snapshots",
-        "Time Machine and macOS updates leave local APFS snapshots that hold on to deleted files. "
-        "Update snapshots clear after the update finishes and you restart; Time Machine ones can be thinned.",
-        "tmutil listlocalsnapshots /",
-        ("darwin",), only=("darwin",)),
-    Tip("purgeable",
-        "Finder's \"available\" counts space macOS hasn't freed yet",
-        "Finder includes purgeable space (caches, snapshots) that macOS only frees under pressure. "
-        "df shows what is actually free right now.",
-        "df -h /System/Volumes/Data",
-        ("darwin",), only=("darwin",)),
-    Tip("swap",
-        "Swap lives on your disk",
-        "When memory runs short, macOS writes swap files to /private/var/vm, and they can reach several GB. "
-        "Quitting idle Electron apps and dev servers keeps swap small; a restart clears it.",
-        "sysctl vm.swapusage",
-        ("darwin",), only=("darwin",)),
-    Tip("headroom",
-        "Leave 10–15% of the disk free",
-        "APFS, swap and updates all need working room, and a nearly full SSD is slower. "
-        "A ballast file holds a floor of space you can release in an emergency.",
-        "di ballast set 5G",
-        ("low",)),
-    Tip("guard",
-        "Let di watch the disk for you",
-        "The guard runs every couple of hours: it notifies you when space runs low, cleans safe caches, "
-        "and releases the ballast when things get critical.",
-        "di guard --auto --dev ~/dev --install",
-        ("always",)),
-    Tip("dev-junk",
-        "Old projects keep their node_modules forever",
-        "Dependencies and build caches in projects you haven't touched in weeks are pure dead weight. "
-        "Reinstalling takes one command when you come back.",
-        "di clean ~/dev --older-than 14",
-        ("path:dev",)),
-    Tip("pkg-caches",
-        "Package managers never clean up after themselves",
-        "npm, yarn, bun, pip, cargo and editor updaters keep every download. They are safe to clear "
-        "and refill as needed.",
-        "di caches",
-        ("always",)),
-    Tip("brew",
-        "Homebrew keeps old versions and downloads",
-        "brew cleanup deletes old kegs and cached downloads; autoremove drops dependencies nothing uses.",
-        "brew cleanup -s --prune=all && brew autoremove",
-        ("tool:brew",), only=("darwin", "linux")),
-    Tip("xcode",
-        "Xcode and simulators are space hogs",
-        "DerivedData, old device support files and simulator runtimes for unavailable devices "
-        "can take tens of GB.",
-        "xcrun simctl delete unavailable",
-        ("path:Library/Developer",), only=("darwin",)),
-    Tip("nvm",
-        "Unused Node versions add up",
-        "Each Node version under nvm is 50–100 MB, plus its global packages.",
-        "nvm ls" if sys.platform != "win32" else "nvm list",
-        ("path:.nvm", "path:%APPDATA%/nvm")),
-    Tip("conda",
-        "Conda keeps every package tarball",
-        "conda clean removes cached tarballs and unused packages.",
-        "conda clean -a",
-        ("tool:conda",)),
-    Tip("ios-backups",
-        "Old iPhone backups",
-        "Device backups live in MobileSync and can be many GB each. Manage them in Finder "
-        "(select the device → Manage Backups), or in iTunes / Apple Devices on Windows.",
-        "du -sh ~/Library/Application\\ Support/MobileSync/Backup" if sys.platform != "win32"
-        else "explorer %APPDATA%\\Apple Computer\\MobileSync\\Backup",
-        ("path:Library/Application Support/MobileSync/Backup", "path:%APPDATA%/Apple Computer/MobileSync/Backup",
-         "path:Apple/MobileSync/Backup")),
-    Tip("messages",
-        "Messages attachments",
-        "Photos and videos from Messages pile up in ~/Library/Messages. System Settings → General → "
-        "Storage → Messages lets you review and remove large attachments.",
-        "du -sh ~/Library/Messages/Attachments",
-        ("path:Library/Messages/Attachments",), only=("darwin",)),
-    Tip("trash",
-        "Deleted isn't freed until the Trash is empty",
-        "Anything in the Trash still counts against your disk.",
-        "du -sh ~/.Trash" if sys.platform == "darwin" else "du -sh ~/.local/share/Trash",
-        ("path:.Trash", "path:.local/share/Trash"), only=("darwin", "linux")),
-    Tip("apt-cache",
-        "apt keeps every package it downloads",
-        "Downloaded .deb files stay in /var/cache/apt/archives after install. autoremove also drops "
-        "old kernels and dependencies nothing needs any more.",
-        "sudo apt clean && sudo apt autoremove --purge",
-        ("tool:apt",), only=("linux",)),
-    Tip("journald",
-        "The system journal grows to its cap",
-        "journald keeps logs until they hit a size limit that can be several GB, which hurts on a small "
-        "SD card. Vacuum it now; set SystemMaxUse= in /etc/systemd/journald.conf to keep it down.",
-        "sudo journalctl --vacuum-size=200M",
-        ("tool:journalctl",), only=("linux",)),
-    Tip("docker-linux",
-        "Docker images and volumes pile up",
-        "Old images, stopped containers and dangling volumes live under /var/lib/docker.",
-        "docker system df && docker system prune -a --volumes",
-        ("tool:docker",), only=("linux",)),
-]
+def _load_tips() -> list[Tip]:
+    """The tips live in tips.json, which the desktop app's Rust backend reads too."""
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "tips.json"), encoding="utf-8") as f:
+        rows = json.load(f)
+    return [
+        Tip(
+            row["id"],
+            row["title"],
+            row["body"],
+            row.get("command", ""),
+            tuple(row.get("when", ("always",))),
+            tuple(row.get("only", ())),
+        )
+        for row in rows
+    ]
+
+
+TIPS: list[Tip] = _load_tips()
 
 
 def free_bytes() -> int:

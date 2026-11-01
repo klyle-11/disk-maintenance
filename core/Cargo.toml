@@ -1,0 +1,25 @@
+[package]
+name = "diskcore"
+version = "0.1.0"
+edition = "2021"
+description = "Disk Intelligence core: scanning, findings, comparison, snapshots, tips, and running di"
+publish = false
+
+[dependencies]
+chrono = "0.4"
+dirs = "6"
+fs2 = "0.4"
+os_pipe = "1"
+rayon = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+which = "8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

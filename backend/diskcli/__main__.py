@@ -8,6 +8,8 @@ desktop app uses. Run `di --help` for the command list.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import sys
@@ -270,6 +272,90 @@ def _maybe_tip(args) -> None:
         print(tips.format_tip(tip, r))
 
 
+# ---------------------------------------------------------------------------
+# For the desktop app, which runs di in its di window. It asks di itself which
+# commands exist and which change the disk, so those rules live in one place.
+# ---------------------------------------------------------------------------
+
+# `serve` would start a second backend.
+APP_BLOCKED = {"serve"}
+
+
+def _subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:
+    return next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+
+
+def command_list() -> list[dict]:
+    """Every di command with its one-line help, for the app's suggestions."""
+    sub = _subparsers(build_parser())
+    return [
+        {"name": action.dest, "help": action.help or ""}
+        for action in sub._choices_actions
+        if action.dest not in APP_BLOCKED
+    ]
+
+
+def parse_quietly(argv: list[str]) -> argparse.Namespace | None:
+    """
+    Parse argv exactly as di will. None when di would reject it (or print
+    help and exit); running it then shows di's own message.
+    """
+    parser = build_parser()
+    sink = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            return parser.parse_args(resolve_argv(parser, argv))
+    except SystemExit:
+        return None
+
+
+def destructive_reason(argv: list[str]) -> str | None:
+    """
+    Why this command changes the disk or the system, or None for a read-only
+    one. Decided from di's own parser, so abbreviations (`--ye`) and bundled
+    short flags (`-vy`) are caught the same way di reads them.
+    """
+    args = parse_quietly(argv)
+    if args is None:
+        return None
+    command = getattr(args, "command", None)
+    if command in ("clean", "caches") and getattr(args, "yes", False):
+        return f"di {command} --yes deletes files"
+    if command == "guard":
+        if getattr(args, "install", False):
+            return "di guard --install schedules a background job"
+        if getattr(args, "uninstall", False):
+            return "di guard --uninstall removes the scheduled job"
+        if getattr(args, "auto", False):
+            return "di guard --auto cleans caches when space is low"
+    if command == "ballast" and getattr(args, "action", None) in ("set", "release"):
+        return f"di ballast {args.action} writes or deletes the ballast file"
+    if command == "forget":
+        return "di forget deletes a saved baseline"
+    return None
+
+
+def blocked_reason(argv: list[str]) -> str | None:
+    args = parse_quietly(argv)
+    command = getattr(args, "command", None) if args else None
+    return f"di {command} can't run inside the app" if command in APP_BLOCKED else None
+
+
+def _app_query(argv: list[str]) -> int | None:
+    """
+    `di --app-commands` and `di --app-check <args>`: JSON answers for the app.
+    None when argv is an ordinary command line.
+    """
+    if argv[:1] == ["--app-commands"]:
+        print(json.dumps({"commands": command_list()}))
+        return 0
+    if argv[:1] == ["--app-check"]:
+        rest = argv[1:]
+        print(json.dumps({"destructive": destructive_reason(rest), "blocked": blocked_reason(rest)}))
+        return 0
+    return None
+
+
 def resolve_argv(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
     """`di .` / `di ~/proj`: a path where a command would go means insights for it."""
     commands_by_name = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices
@@ -280,8 +366,11 @@ def resolve_argv(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
     argv = sys.argv[1:] if argv is None else argv
+    answered = _app_query(argv)
+    if answered is not None:
+        return answered
+    parser = build_parser()
     args = parser.parse_args(resolve_argv(parser, argv))
 
     if not getattr(args, "command", None):
