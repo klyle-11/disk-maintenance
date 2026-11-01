@@ -1,0 +1,26 @@
+[package]
+name = "disk-intelligence"
+version = "1.0.0"
+description = "Disk Intelligence desktop app (Tauri)"
+edition = "2021"
+publish = false
+
+[lib]
+name = "disk_intelligence_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+diskcore = { path = "../../core" }
+# macos-private-api: transparent windows on macOS (the app floats on the desktop).
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Already part of Tauri on Linux: used to shape the window to the UI.
+gtk = "0.18"

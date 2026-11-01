@@ -1,6 +1,6 @@
 # The Rust side of Disk Intelligence: the core library and the Tauri app.
 [workspace]
-members = ["core"]
+members = ["core", "frontend/src-tauri"]
 resolver = "2"
 
 [profile.release]

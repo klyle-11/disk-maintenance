@@ -1,7 +1,13 @@
 /**
- * Frontend API client for Disk Intelligence backend.
- * Handles all HTTP communication with the FastAPI backend via fetch.
+ * Frontend API client for the Disk Intelligence backend.
+ *
+ * In the Tauri app every call is a Tauri command (the Rust backend runs in the
+ * app itself); in the Electron app or a browser tab on the dev server it is
+ * HTTP to the Python backend. Both answer with the same JSON, so the
+ * conversions below serve both.
  */
+
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 // ============================================================================
 // Configuration
@@ -84,6 +90,13 @@ export function getApiBaseUrl(): string {
 
 /** Resolved per call so a port change takes effect without a reload. */
 const apiUrl = (path: string): string => `${activeApiBaseUrl}/api${path}`;
+
+/** Running inside the Tauri app. */
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+function toError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(typeof err === "string" ? err : String(err));
+}
 
 // ============================================================================
 // Types
@@ -291,6 +304,54 @@ async function apiFetch<T>(
   }
 }
 
+/**
+ * Call the backend: the Tauri command `command` with `args`, or the HTTP
+ * endpoint `path`. Both return the same JSON.
+ */
+async function backend<T>(
+  command: string,
+  args: Record<string, unknown>,
+  path: string,
+  options?: RequestInit & { timeoutMs?: number }
+): Promise<T> {
+  if (!isTauri) return apiFetch<T>(path, options);
+  console.log(`[API] ${command}`);
+  try {
+    return await invoke<T>(command, args);
+  } catch (err) {
+    console.error(`[API] ${command} failed:`, err);
+    throw toError(err);
+  }
+}
+
+/**
+ * Run a streaming Tauri command. Resolves with what `finish` returns once both
+ * the command has returned and its final message has arrived (a channel's
+ * messages and the command's reply don't share an order). Aborting asks the
+ * backend to stop the run.
+ */
+function tauriStream<M, R>(
+  command: string,
+  args: Record<string, unknown>,
+  onMessage: (message: M, finish: (result: R) => void) => void,
+  signal?: AbortSignal
+): Promise<R> {
+  const runId = crypto.randomUUID();
+  const channel = new Channel<M>();
+  let finish!: (result: R) => void;
+  const finished = new Promise<R>((resolve) => (finish = resolve));
+  channel.onmessage = (message) => onMessage(message, finish);
+  const stop = () => void invoke("cancel_run", { runId }).catch(() => {});
+  signal?.addEventListener("abort", stop);
+  const call = invoke(command, { ...args, runId, onEvent: channel });
+  return Promise.all([call, finished])
+    .then(([, result]) => result)
+    .catch((err) => {
+      throw signal?.aborted ? new Error("Scan cancelled") : toError(err);
+    })
+    .finally(() => signal?.removeEventListener("abort", stop));
+}
+
 // ============================================================================
 // API functions
 // ============================================================================
@@ -326,11 +387,34 @@ export async function scan(rootPath: string, signal?: AbortSignal): Promise<Scan
  * @param signal - Optional AbortSignal to cancel the scan.
  * @returns A ScanResponse with scan_id and metadata.
  */
+function toScanResponse(response: any): ScanResponse {
+  return {
+    scanId: response.scan_id,
+    rootPath: response.root_path,
+    startedAt: response.started_at,
+    completedAt: response.completed_at,
+    totalFiles: response.total_files,
+    totalFolders: response.total_folders,
+    totalSizeBytes: response.total_size_bytes,
+  };
+}
+
 export async function scanWithProgress(
   rootPath: string,
   onProgress: (event: ProgressEventData) => void,
   signal?: AbortSignal
 ): Promise<ScanResponse> {
+  if (isTauri) {
+    return tauriStream<ProgressEventData, ScanResponse>(
+      "scan_stream",
+      { rootPath },
+      (data, finish) => {
+        if (data.event_type === "progress") onProgress(data);
+        else if (data.event_type === "complete" && data.scan_response) finish(toScanResponse(data.scan_response));
+      },
+      signal
+    );
+  }
   return new Promise((resolve, reject) => {
     const url = apiUrl(`/scan/stream?root_path=${encodeURIComponent(rootPath)}`);
     const eventSource = new EventSource(url);
@@ -343,16 +427,7 @@ export async function scanWithProgress(
           onProgress(data);
         } else if (data.event_type === 'complete' && data.scan_response) {
           eventSource.close();
-          const response = data.scan_response;
-          resolve({
-            scanId: (response as any).scan_id,
-            rootPath: (response as any).root_path,
-            startedAt: (response as any).started_at,
-            completedAt: (response as any).completed_at,
-            totalFiles: (response as any).total_files,
-            totalFolders: (response as any).total_folders,
-            totalSizeBytes: (response as any).total_size_bytes,
-          });
+          resolve(toScanResponse(data.scan_response));
         }
       } catch (err) {
         eventSource.close();
@@ -380,7 +455,7 @@ export async function scanWithProgress(
  * @returns An array of Finding objects.
  */
 export async function getFindings(scanId: string): Promise<Finding[]> {
-  const data = await apiFetch<any[]>(`/findings?scan_id=${scanId}`, {
+  const data = await backend<any[]>("get_findings", { scanId }, `/findings?scan_id=${scanId}`, {
     timeoutMs: LONG_TIMEOUT_MS,
   });
   return data.map((item) => ({
@@ -400,7 +475,7 @@ export async function getFindings(scanId: string): Promise<Finding[]> {
 export async function getExtensionSummary(
   scanId: string
 ): Promise<ExtensionSummary[]> {
-  const data = await apiFetch<any[]>(`/extensions-summary?scan_id=${scanId}`, {
+  const data = await backend<any[]>("get_extension_summary", { scanId }, `/extensions-summary?scan_id=${scanId}`, {
     timeoutMs: LONG_TIMEOUT_MS,
   });
   return data.map((item) => ({
@@ -415,7 +490,7 @@ export async function getExtensionSummary(
  * @returns A health status object.
  */
 export async function healthCheck(): Promise<{ status: string; api?: number }> {
-  return apiFetch<{ status: string; api?: number }>("/health", { timeoutMs: HEALTH_TIMEOUT_MS });
+  return backend<{ status: string; api?: number }>("health", {}, "/health", { timeoutMs: HEALTH_TIMEOUT_MS });
 }
 
 /**
@@ -443,7 +518,7 @@ export interface SpaceTips {
  * Tips for keeping freed space from filling back up (shared with `di tips`).
  */
 export async function getSpaceTips(): Promise<SpaceTips> {
-  const data = await apiFetch<any>("/tips");
+  const data = await backend<any>("get_tips", {}, "/tips");
   return { freeBytes: data.free_bytes, lowSpace: data.low_space, tips: data.tips };
 }
 
@@ -457,7 +532,7 @@ export async function saveSnapshot(
   scanId: string,
   rootPath: string
 ): Promise<Snapshot> {
-  const item = await apiFetch<any>("/snapshots", {
+  const item = await backend<any>("save_snapshot", { scanId, rootPath }, "/snapshots", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scan_id: scanId, root_path: rootPath }),
@@ -585,7 +660,7 @@ function transformSnapshot(item: any): ComparisonSnapshot {
  * @returns An array of snapshots.
  */
 export async function getSnapshots(): Promise<ComparisonSnapshot[]> {
-  const data = await apiFetch<any[]>("/snapshots", {
+  const data = await backend<any[]>("get_snapshots", {}, "/snapshots", {
     timeoutMs: LONG_TIMEOUT_MS,
   });
   return data.map(transformSnapshot);
@@ -597,7 +672,7 @@ export async function getSnapshots(): Promise<ComparisonSnapshot[]> {
  * @returns The snapshot data.
  */
 export async function getSnapshot(snapshotId: string): Promise<Snapshot> {
-  const item = await apiFetch<any>(`/snapshots/${snapshotId}`, {
+  const item = await backend<any>("get_snapshot", { snapshotId }, `/snapshots/${snapshotId}`, {
     timeoutMs: LONG_TIMEOUT_MS,
   });
   return {
@@ -628,7 +703,7 @@ export async function getSnapshot(snapshotId: string): Promise<Snapshot> {
  * @returns The updated snapshot.
  */
 export async function updateSnapshot(snapshotId: string): Promise<Snapshot> {
-  const item = await apiFetch<any>(`/snapshots/${snapshotId}`, {
+  const item = await backend<any>("update_snapshot", { snapshotId }, `/snapshots/${snapshotId}`, {
     method: "PUT",
     timeoutMs: LONG_TIMEOUT_MS,
   });
@@ -662,7 +737,7 @@ export async function updateSnapshot(snapshotId: string): Promise<Snapshot> {
 export async function deleteSnapshot(
   snapshotId: string
 ): Promise<{ message: string }> {
-  return apiFetch<{ message: string }>(`/snapshots/${snapshotId}`, {
+  return backend<{ message: string }>("delete_snapshot", { snapshotId }, `/snapshots/${snapshotId}`, {
     method: "DELETE",
   });
 }
@@ -683,7 +758,7 @@ export async function compareDirectories(
   targetPath: string,
   deepScan: boolean = false
 ): Promise<ComparisonResponse> {
-  const data = await apiFetch<any>("/compare", {
+  const data = await backend<any>("compare_directories", { sourcePath, targetPath, deepScan }, "/compare", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -719,7 +794,7 @@ export async function saveComparisonSnapshot(
     comparison_id: comparisonId,
   });
 
-  const item = await apiFetch<any>(`/snapshots/comparison?${params}`, {
+  const item = await backend<any>("save_comparison_snapshot", { sourcePath, targetPath, comparisonId }, `/snapshots/comparison?${params}`, {
     method: "POST",
     timeoutMs: LONG_TIMEOUT_MS,
   });
@@ -733,7 +808,7 @@ export async function saveComparisonSnapshot(
 export async function updateComparisonSnapshot(
   snapshotId: string
 ): Promise<ComparisonSnapshot> {
-  const item = await apiFetch<any>(`/snapshots/comparison/${snapshotId}`, {
+  const item = await backend<any>("update_comparison_snapshot", { snapshotId }, `/snapshots/comparison/${snapshotId}`, {
     method: "PUT",
     timeoutMs: LONG_TIMEOUT_MS,
   });
@@ -849,6 +924,31 @@ export function streamDuHastMuch(
   onResult: (result: DuHastMuchResult) => void,
   signal?: AbortSignal
 ): Promise<{ totalSize: number; totalFiles: number; elapsedSeconds: number }> {
+  if (isTauri) {
+    return tauriStream<any, { totalSize: number; totalFiles: number; elapsedSeconds: number }>(
+      "dhm_stream",
+      { path: request.path, exclude: request.exclude ?? [] },
+      (data, finish) => {
+        if (data.event_type === "result") {
+          onResult({
+            name: data.name,
+            path: data.path,
+            size: data.size,
+            files: data.files,
+            latest_mtime: data.latest_mtime,
+            avg_file_size: data.avg_file_size,
+          });
+        } else if (data.event_type === "done") {
+          finish({
+            totalSize: data.total_size || 0,
+            totalFiles: data.total_files || 0,
+            elapsedSeconds: data.elapsed_seconds || 0,
+          });
+        }
+      },
+      signal
+    );
+  }
   return new Promise((resolve, reject) => {
     const params = new URLSearchParams({
       path: request.path,
@@ -949,7 +1049,7 @@ export interface DiCommand {
 
 /** di's commands with their one-line help. */
 export async function getDiCommands(): Promise<DiCommand[]> {
-  const data = await apiFetch<{ commands: DiCommand[] }>("/di/commands");
+  const data = await backend<{ commands: DiCommand[] }>("di_commands", {}, "/di/commands");
   return data.commands;
 }
 
@@ -961,6 +1061,16 @@ export class DiConfirmError extends Error {}
  * Rejects with a DiConfirmError for destructive commands unless `confirm`.
  */
 export async function startDiRun(args: string[], columns: number, confirm = false): Promise<string> {
+  if (isTauri) {
+    try {
+      const reply = await invoke<{ runId: string }>("di_register", { args, columns, confirm });
+      return reply.runId;
+    } catch (err) {
+      const message = toError(err).message;
+      if (message.startsWith("CONFIRM:")) throw new DiConfirmError(message.slice("CONFIRM:".length));
+      throw new Error(message);
+    }
+  }
   let response: Response;
   try {
     response = await fetch(apiUrl("/di/runs"), {
@@ -989,6 +1099,26 @@ export interface DiStreamHandlers {
  * and the backend stops di when its client goes away.
  */
 export function streamDiRun(runId: string, handlers: DiStreamHandlers, signal?: AbortSignal): Promise<void> {
+  if (isTauri) {
+    const channel = new Channel<{ type: string; data?: string; code?: number; elapsed?: number }>();
+    let exited!: () => void;
+    const exit = new Promise<void>((resolve) => (exited = resolve));
+    channel.onmessage = (message) => {
+      if (message.type === "out" && message.data) handlers.onOutput(message.data);
+      else if (message.type === "exit") {
+        handlers.onExit(message.code ?? -1, message.elapsed ?? 0);
+        exited();
+      }
+    };
+    const stop = () => void invoke("cancel_run", { runId }).catch(() => {});
+    signal?.addEventListener("abort", stop);
+    return Promise.all([invoke("di_stream", { runId, onEvent: channel }), exit])
+      .then(() => undefined)
+      .catch((err) => {
+        throw signal?.aborted ? new Error("Stopped") : toError(err);
+      })
+      .finally(() => signal?.removeEventListener("abort", stop));
+  }
   return new Promise((resolve, reject) => {
     const eventSource = new EventSource(apiUrl(`/di/runs/${encodeURIComponent(runId)}/stream`));
     let finished = false;

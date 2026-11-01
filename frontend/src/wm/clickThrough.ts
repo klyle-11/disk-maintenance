@@ -1,10 +1,47 @@
 /**
  * Floating windows: the app is one transparent window over the desktop, so it
- * has to tell Electron where its windows are. Clicks anywhere else go through
- * to whatever is underneath.
+ * has to tell the app shell (Tauri or Electron) where its windows are. Clicks
+ * anywhere else go through to whatever is underneath.
  */
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect } from "react";
+import { isTauri } from "../api";
 import type { Rect } from "./layout";
+
+/**
+ * Tauri: the app reports where its windows are, and whether a drag or resize
+ * is under way (the pointer can leave every window mid-drag, and must keep
+ * coming here until the button comes up). Linux cuts the window to these
+ * regions; macOS and Windows watch the pointer against them.
+ */
+const tauriOverlay = { regions: [] as Rect[], interacting: false };
+
+function reportTauri(): void {
+  void invoke("overlay_regions", tauriOverlay).catch(() => {});
+}
+
+function useTauriInteraction(): void {
+  useEffect(() => {
+    if (!isTauri) return;
+    const set = (interacting: boolean) => {
+      if (tauriOverlay.interacting === interacting) return;
+      tauriOverlay.interacting = interacting;
+      reportTauri();
+    };
+    const down = () => set(true);
+    const up = () => set(false);
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    window.addEventListener("blur", up);
+    return () => {
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+      window.removeEventListener("blur", up);
+    };
+  }, []);
+}
 
 /**
  * macOS and Windows: ignore the mouse except while it is over a window.
@@ -12,6 +49,7 @@ import type { Rect } from "./layout";
  * pointer coming back.
  */
 export function useHoverClickThrough(): void {
+  useTauriInteraction();
   useEffect(() => {
     const api = window.electronAPI;
     if (!api?.setIgnoreMouse || api.platform === "linux") return;
@@ -52,6 +90,16 @@ let settleTimer: ReturnType<typeof setTimeout> | null = null;
  * window: without a compositor, that would paint the screen black.
  */
 export function updateShape(targets: Rect[]): void {
+  if (isTauri) {
+    tauriOverlay.regions = [...measured(), ...targets];
+    reportTauri();
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      tauriOverlay.regions = measured();
+      reportTauri();
+    }, 350);
+    return;
+  }
   const api = window.electronAPI;
   if (api?.platform !== "linux" || !api.setShape) return;
   const send = (rects: Rect[]) =>
