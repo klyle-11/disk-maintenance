@@ -6,7 +6,7 @@
 //! detection. Sizes are on-disk bytes from lstat (symlinks are not followed),
 //! and a hard-linked file is counted once per scan.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -100,7 +100,19 @@ struct Walker<'a> {
     folders: Mutex<Vec<Folder>>,
     extensions: Mutex<HashMap<String, (u64, u64)>>,
     large_files: Mutex<Vec<(String, u64)>>,
-    seen_inodes: Mutex<HashSet<(u64, u64)>>,
+    shared: Mutex<Vec<SharedFile>>,
+}
+
+/// A file with other hard links. Its bytes are counted once, settled after the
+/// walk so the same copy always gets them, whatever order threads reach them.
+struct SharedFile {
+    key: (u64, u64),
+    path: PathBuf,
+    disk_size: u64,
+    apparent: u64,
+    modified: f64,
+    accessed: f64,
+    extension: String,
 }
 
 struct FileInfo {
@@ -163,6 +175,7 @@ impl Walker<'_> {
         let mut subdirs: Vec<PathBuf> = Vec::new();
         let mut extensions: HashMap<String, (u64, u64)> = HashMap::new();
         let mut large: Vec<(String, u64)> = Vec::new();
+        let mut shared: Vec<SharedFile> = Vec::new();
 
         for entry in entries.flatten() {
             let Ok(kind) = entry.file_type() else { continue };
@@ -182,18 +195,26 @@ impl Walker<'_> {
             own.files += 1;
             self.progress.files.fetch_add(1, Ordering::Relaxed);
 
-            // A hard-linked file's bytes count once per scan.
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // A hard-linked file still counts as a file here; its bytes are
+            // settled once the walk is done (see settle_hard_links).
             if let Some(key) = info.shared {
-                if !self.seen_inodes.lock().unwrap().insert(key) {
-                    continue;
-                }
+                shared.push(SharedFile {
+                    key,
+                    path,
+                    disk_size: info.disk_size,
+                    apparent: info.apparent,
+                    modified: info.modified,
+                    accessed: info.accessed,
+                    extension: extension_of(&name),
+                });
+                continue;
             }
             own.size += info.disk_size;
             own.modified = own.modified.max(info.modified);
             own.accessed = own.accessed.max(info.accessed);
             self.progress.bytes.fetch_add(info.disk_size, Ordering::Relaxed);
 
-            let name = entry.file_name().to_string_lossy().into_owned();
             let ext = extensions.entry(extension_of(&name)).or_default();
             ext.0 += 1;
             ext.1 += info.disk_size;
@@ -212,6 +233,9 @@ impl Walker<'_> {
         }
         if !large.is_empty() {
             self.large_files.lock().unwrap().extend(large);
+        }
+        if !shared.is_empty() {
+            self.shared.lock().unwrap().extend(shared);
         }
 
         if top_level {
@@ -253,7 +277,7 @@ pub fn scan(root: &Path, progress: &Progress, cancel: &AtomicBool) -> Option<Sca
         folders: Mutex::new(Vec::new()),
         extensions: Mutex::new(HashMap::new()),
         large_files: Mutex::new(Vec::new()),
-        seen_inodes: Mutex::new(HashSet::new()),
+        shared: Mutex::new(Vec::new()),
     };
     let totals = walker.walk(root, true).unwrap_or_default();
     if cancel.load(Ordering::Relaxed) {
@@ -270,16 +294,61 @@ pub fn scan(root: &Path, progress: &Progress, cancel: &AtomicBool) -> Option<Sca
             last_accessed: 0.0,
         });
     }
-    folders.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut extensions = walker.extensions.into_inner().unwrap();
     let mut large_files = walker.large_files.into_inner().unwrap();
+    let mut total_size = totals.size;
+    settle_hard_links(
+        root,
+        walker.shared.into_inner().unwrap(),
+        &mut folders,
+        &mut extensions,
+        &mut large_files,
+        &mut total_size,
+        progress,
+    );
+    folders.sort_by(|a, b| a.path.cmp(&b.path));
     large_files.sort();
-    Some(ScanData {
-        folders,
-        extensions: walker.extensions.into_inner().unwrap(),
-        large_files,
-        total_files: totals.files,
-        total_size: totals.size,
-    })
+    Some(ScanData { folders, extensions, large_files, total_files: totals.files, total_size })
+}
+
+/// Count each hard-linked file's bytes once, against its alphabetically first
+/// path: that copy's folder and every folder above it.
+fn settle_hard_links(
+    root: &Path,
+    mut shared: Vec<SharedFile>,
+    folders: &mut [Folder],
+    extensions: &mut HashMap<String, (u64, u64)>,
+    large_files: &mut Vec<(String, u64)>,
+    total_size: &mut u64,
+    progress: &Progress,
+) {
+    if shared.is_empty() {
+        return;
+    }
+    shared.sort_by(|a, b| a.key.cmp(&b.key).then_with(|| a.path.cmp(&b.path)));
+    shared.dedup_by(|later, first| later.key == first.key);
+    let index: HashMap<String, usize> = folders.iter().enumerate().map(|(i, f)| (f.path.clone(), i)).collect();
+    for file in shared {
+        for dir in file.path.ancestors().skip(1) {
+            if let Some(&i) = index.get(dir.to_string_lossy().as_ref()) {
+                let folder = &mut folders[i];
+                folder.total_size += file.disk_size;
+                folder.last_modified = folder.last_modified.max(file.modified);
+                folder.last_accessed = folder.last_accessed.max(file.accessed);
+            }
+            if dir == root {
+                break;
+            }
+        }
+        *total_size += file.disk_size;
+        progress.bytes.fetch_add(file.disk_size, Ordering::Relaxed);
+        let slot = extensions.entry(file.extension).or_default();
+        slot.0 += 1;
+        slot.1 += file.disk_size;
+        if file.apparent >= LARGE_FILE_THRESHOLD {
+            large_files.push((file.path.to_string_lossy().into_owned(), file.apparent));
+        }
+    }
 }
 
 /// A snapshot of the counters, as the progress event the UI shows.
@@ -323,6 +392,7 @@ mod tests {
         let a = by_path[&root.join("a").to_string_lossy().into_owned()];
 
         assert_eq!(data.folders.len(), 4);
+        // a/one.bin sorts before c/link.bin, so a gets the bytes, every time.
         assert!(a.total_size >= 2 * 1024 * 1024 + 10_000);
         assert_eq!(a.file_count, 2);
         #[cfg(unix)]
