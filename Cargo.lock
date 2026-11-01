@@ -626,6 +626,7 @@ name = "disk-intelligence"
 version = "1.0.0"
 dependencies = [
  "diskcore",
+ "gtk",
  "serde",
  "serde_json",
  "tauri",

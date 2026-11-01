@@ -116,6 +116,22 @@ pub fn default_db_path() -> PathBuf {
 }
 
 /// Checks a folder the user asked to scan or compare, and returns it absolute.
+/// Drop `.` and resolve `..` in the path's text, so scans store clean paths.
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 pub fn existing_dir(path: &str, what: &str) -> Result<PathBuf, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -123,6 +139,9 @@ pub fn existing_dir(path: &str, what: &str) -> Result<PathBuf, String> {
     }
     if trimmed.contains('\0') {
         return Err(format!("{what} contains a NUL character"));
+    }
+    if trimmed.len() > 4096 {
+        return Err(format!("{what} is too long"));
     }
     let expanded = if trimmed == "~" {
         home_dir()
@@ -132,6 +151,7 @@ pub fn existing_dir(path: &str, what: &str) -> Result<PathBuf, String> {
         PathBuf::from(trimmed)
     };
     let absolute = if expanded.is_absolute() { expanded } else { std::env::current_dir().map_err(|e| e.to_string())?.join(expanded) };
+    let absolute = normalize(&absolute);
     if !absolute.exists() {
         return Err(format!("{what} does not exist: {}", absolute.display()));
     }
@@ -155,6 +175,16 @@ mod tests {
             assert!(!should_ignore(Path::new("/usrlocal")));
             assert!(!should_ignore(Path::new("/home/me/usr")));
         }
+    }
+
+    #[test]
+    fn folder_paths_are_checked_and_cleaned() {
+        let tmp = std::env::temp_dir();
+        let messy = format!("{}/./x/..", tmp.display());
+        assert_eq!(existing_dir(&messy, "Folder").unwrap(), normalize(&tmp));
+        assert!(existing_dir("  ", "Folder").unwrap_err().contains("empty"));
+        assert!(existing_dir("/no/such/place", "Folder").unwrap_err().contains("does not exist"));
+        assert!(existing_dir(&"a".repeat(5000), "Folder").unwrap_err().contains("too long"));
     }
 
     #[test]

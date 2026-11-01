@@ -21,12 +21,12 @@ app scanner 20.9s / ~450 MB. Disk metadata I/O is the speed floor, not Python.
       files, GBs for a home-folder scan on an 8 GB Mac, which pushes it into swap (itself
       "System Data"). Keep per-folder totals + top-N largest files instead, like
       `diskcli/walker.py` (25 MB). That covers every current finding.
-- [ ] **4. The backend freezes during a scan.** `scan_async` walks on the event-loop thread, so
+- [x] **4. The backend freezes during a scan.** (Tauri: scans run on worker threads.) `scan_async` walks on the event-loop thread, so
       health checks and every other request stall until it finishes. Run the walk in a
       thread (`asyncio.to_thread`) and feed progress through a queue.
-- [ ] **5. Old scans are never freed.** The in-memory `scans` dict keeps every scan until the
+- [x] **5. Old scans are never freed.** (Tauri: the last 3 scans and comparisons are kept.) The in-memory `scans` dict keeps every scan until the
       backend restarts. Keep the last 2–3 (LRU), or drop a scan once it's saved as a snapshot.
-- [ ] **6. One scanner, not four.** `DiskScanner`, `du_hast_much._walk_size`,
+- [x] **6. One scanner, not four.** (Tauri: the scan, dhm and compare walks live in one crate, `core/`; caches are reported at the outermost match only and progress is sent 4× a second.) `DiskScanner`, `du_hast_much._walk_size`,
       `FolderComparator` and `diskcli.walker` each walk the disk their own way. Consolidate
       on the walker. While there: `_analyze_cache_candidates` counts nested matches twice
       (every folder under a match, and everything under a `/tmp`-looking path). Keep only the
@@ -56,18 +56,30 @@ Where the pain actually comes from:
 Recommendation: yes, but only as **Tauri + Rust backend**. Switching the shell alone keeps
 the worst packaging pain. Suggested order:
 
-- [ ] Fix item 1 in Python now (tiny, user-visible).
-- [ ] Write the Rust core as a library crate (`core/`): walker (per-folder aggregation,
+- [x] Fix item 1 in Python now (tiny, user-visible).
+- [x] Write the Rust core as a library crate (`core/`): walker (per-folder aggregation,
       lstat, inode dedupe, blocks, parallel walk), findings, compare, SQLite snapshots.
-- [ ] Tauri commands call the crate directly; the React UI switches from `api.ts` HTTP to
-      `invoke()` behind the same function signatures, so components don't change.
-- [ ] `di` stays Python for now (it's fast enough and has no packaging problem). Later it
-      could become a thin Rust binary over the same crate.
-- [ ] Port features in order of use: scan + findings → du-hast-much → snapshots → compare
-      → tips. Keep Electron building until the Tauri build reaches parity, then remove
-      `frontend/electron/`, `backend/main.py` and the PyInstaller spec.
-- [ ] Reuse from the branch where it fits (commands, models, Diesel schema), but fix its scanner
-      (`WalkDir` + per-file `Vec`s has the same memory shape as item 3).
+      Checked against the Python backend on the same folders (2026-11-01): identical
+      totals, folder sizes, extensions, compare and dhm results; the only differences
+      are the intended ones (outermost-only cache findings, no `/tmp` substring match,
+      hard links counted once).
+- [x] Tauri commands call the crate directly; `api.ts` sends each call to `invoke()` (or a
+      Channel for scan, dhm and di streams) behind the same function signatures, so
+      components didn't change.
+- [x] `di` stays Python for now (it's fast enough and has no packaging problem). The app
+      ships `diskcli/` and runs it with the system Python 3.10+. Later it could become a
+      thin Rust binary over the same crate.
+- [x] Port features: scan + findings, du-hast-much, snapshots, compare, tips, di, the
+      floating window (Linux: window shape; macOS/Windows: pointer polling + ignore cursor
+      events), native dialogs. Driven end to end on Linux under Xvfb with tauri-driver.
+      Linux .deb: 3.8 MB.
+- [ ] Try the Tauri build on macOS and Windows: the floating window's click-through
+      (pointer polling against the reported regions), transparency (macOS private API),
+      the folder dialog, and di finding Python (`py -3` on Windows).
+- [ ] Then remove `frontend/electron/`, `backend/main.py`, `backend/di_runner.py`, the
+      PyInstaller spec and the electron-builder config; drop FastAPI from requirements.
+- [x] The old branch's scanner was not reused (`WalkDir` + per-file `Vec`s has the same
+      memory shape as item 3); the core was written to items 2–6.
 
 ## Windows parity
 
@@ -109,13 +121,13 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
       window rewrite); `vite.config.ts` (`telemetry` isn't a Vite option) and the security test
       file remain. ESLint still flags `any`s in `api.ts` and components created during render
       in `FindingsTable.tsx`.
-- [ ] Stray file `frontend/src-tauri/sqlite:disk_intelligence.db`, created by a SQLite URL
-      used as a literal path. Delete it along with the leftover `frontend/src-tauri/gen/`.
+- [x] Stray file `frontend/src-tauri/sqlite:disk_intelligence.db` and the leftover
+      `frontend/src-tauri/gen/` are gone (gen/ is now ignored: Tauri regenerates it).
 
 ## Performance (after Priority 1)
 
-- [ ] A parallel walk (Rust `jwalk`/rayon, or macOS `getattrlistbulk`). Expected gain
-      ~2–3× over `du`; comes free with the Rust core if the Tauri port goes ahead.
+- [x] A parallel walk: the Rust core walks top-level folders in parallel with rayon.
+- [ ] macOS `getattrlistbulk` for the walker (fewer syscalls per folder).
 
 ## Features
 

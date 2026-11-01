@@ -596,6 +596,13 @@
   gap: 4px;
 }
 
+/* Options that may not fit a narrow window: the button wraps under them
+   rather than disappearing past the edge. */
+.field-row.is-wrap {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
 .field-row.is-end {
   justify-content: flex-end;
 }

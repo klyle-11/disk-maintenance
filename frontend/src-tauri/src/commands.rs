@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 /// The API this backend speaks (see API_VERSION in frontend/src/api.ts).
 const API_VERSION: u32 = 2;
@@ -560,6 +560,30 @@ pub async fn di_stream(app: AppHandle, state: State<'_, AppState>, run_id: Strin
 pub async fn select_directory(app: AppHandle) -> Result<Option<String>> {
     let picked = blocking(move || app.dialog().file().set_title("Select Directory to Scan").blocking_pick_folder()).await?;
     Ok(picked.and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// Ask before doing something: true for OK. (The page's own confirm() isn't
+/// shown by every webview.)
+#[tauri::command]
+pub async fn ask_dialog(app: AppHandle, message: String, ok: Option<String>) -> Result<bool> {
+    blocking(move || {
+        app.dialog()
+            .message(message)
+            .title("Disk Intelligence")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(ok.unwrap_or_else(|| "OK".into()), "Cancel".into()))
+            .blocking_show()
+    })
+    .await
+}
+
+/// Report a failure.
+#[tauri::command]
+pub async fn message_dialog(app: AppHandle, message: String) -> Result<()> {
+    blocking(move || {
+        app.dialog().message(message).title("Disk Intelligence").kind(MessageDialogKind::Error).blocking_show();
+    })
+    .await
 }
 
 /// Where the UI's windows are (CSS pixels in the page), so clicks anywhere

@@ -62,7 +62,7 @@ export function DhmWindow({ view, controls }: WindowArgs) {
             BROWSE
           </button>
         </div>
-        <div className="field-row">
+        <div className="field-row is-wrap">
           <label className="field">
             DEPTH
             <input

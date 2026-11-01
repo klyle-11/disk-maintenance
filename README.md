@@ -3,18 +3,17 @@
 Find what is eating your disk, see what changed since last time, and keep the
 space you free from filling straight back up.
 
-Two front ends share one Python core and one database:
+Two front ends share one database:
 
-- **`di`**: a fast, dependency-free command line tool for scanning, growth
-  tracking, cleanup and a free-space guard.
-- **Desktop app**: Electron + React UI over a local FastAPI backend, with scan
-  findings, snapshots, folder comparison, space-keeping tips, and `di` itself
-  in a terminal window.
+- **`di`**: a fast, dependency-free command line tool (Python) for scanning,
+  growth tracking, cleanup and a free-space guard.
+- **Desktop app**: a React UI with scan findings, snapshots, folder comparison,
+  space-keeping tips, and `di` itself in a terminal window. It is a Tauri app
+  over a Rust core (`core/`): one native binary, about 4 MB as a Linux .deb.
+  The older Electron + FastAPI build is still in the tree until the Tauri one
+  has been checked on macOS and Windows.
 
 Everything runs locally. Nothing leaves the machine (see [Security](#security)).
-
-> The `worktree-tauri-migration` branch holds an in-progress Tauri + Rust port.
-> `main` is Electron + Python; this README describes `main`.
 
 ## Quick start
 
@@ -31,10 +30,12 @@ di help
 ```
 
 ```bash
-
-# Desktop app (development)
-pip install -r backend/requirements.txt
+# Desktop app (development): needs Rust (rustup.rs) and, on Linux, libwebkit2gtk-4.1-dev
 npm run install-all
+npm run dev:tauri                      # Vite on :5176 + the Tauri app
+
+# The older Electron + Python build
+pip install -r backend/requirements.txt
 npm run dev                            # Python backend on :8001 + Vite on :5176 + Electron window
 ```
 
@@ -54,7 +55,8 @@ Everything works on macOS, Windows and Linux (x64 or ARM, including a Raspberry 
 | `di guard --install` | launchd agent | Task Scheduler task (`DiskIntelligenceGuard`, runs hidden via `pythonw`) | crontab entry |
 | Guard notifications | Notification Center | Windows toast | `notify-send` |
 | `di tips` | APFS snapshots, purgeable space, swap, Xcode, Messages … | WSL/Docker `.vhdx`, hiberfil, page file, restore points, WinSxS, Storage Sense … | apt cache, journald, Docker, Trash + shared tips |
-| Desktop app | Electron DMG (`npm run dist:mac`) | Electron NSIS installer (`npm run dist:win`, `scripts\package.bat`) | AppImage / .deb for the build machine's arch (`scripts/package-linux.sh`) |
+| Desktop app (Tauri) | .app / DMG (`npm run dist:tauri`) | MSI / NSIS installer (`npm run dist:tauri`; WebView2) | .deb / AppImage (`npm run dist:tauri`) |
+| Desktop app (Electron) | DMG (`npm run dist:mac`) | NSIS installer (`npm run dist:win`, `scripts\package.bat`) | AppImage / .deb for the build machine's arch (`scripts/package-linux.sh`) |
 
 ### Raspberry Pi (Raspberry Pi OS, arm64)
 
@@ -157,13 +159,32 @@ The windows:
 
 Apart from the di window, the app only analyses; cleanup lives in `di`.
 
-How the floating works: Electron opens one transparent, frameless window over
-the screen's work area. On macOS and Windows it ignores the mouse except over a
-window of ours (`setIgnoreMouseEvents` with forwarding); on Linux the window is
-shaped to the windows (`setShape`), so no compositor is needed. In a plain
+How the floating works: the app opens one transparent, frameless window over
+the screen's work area, and the UI reports where its windows are. On Linux the
+window is shaped to them (drawing and clicks), so no compositor is needed. On
+macOS and Windows the Tauri app watches the pointer and ignores the mouse
+everywhere else (Electron: `setIgnoreMouseEvents` with forwarding). In a plain
 browser tab (`npm run dev:vite`) the windows sit on the page instead.
 
 ## Architecture
+
+The Tauri app:
+
+```
+React UI (frontend/src/)  ── Tauri commands + channels ──►  frontend/src-tauri/  (the app: commands, floating window)
+                                                              └── core/  diskcore: walker, findings, compare, dhm,
+                                                                         snapshots (SQLite), tips, di runner
+                                                                         └── runs backend/diskcli (di) with the system Python
+```
+
+The Rust core does what the FastAPI backend did, with the scanner rebuilt as
+todo.md asked: a parallel walk with per-folder totals, `lstat` and on-disk
+sizes, hard links counted once, caches reported only at their outermost
+folder. Snapshots go in the same table of the same database, so the two builds
+and `di` see each other's data. `api.ts` sends each call to a Tauri command
+when it runs in Tauri and to HTTP otherwise; the replies are the same JSON.
+
+The Electron build:
 
 ```
 Electron main (frontend/electron/)
@@ -178,11 +199,13 @@ di / di.cmd ──► backend/diskcli/  stdlib only: walker, store (SQLite basel
 
 | Path | Contents |
 |---|---|
+| `core/` | The Rust core (diskcore): `scan.rs` walker, `analyze.rs` findings, `compare.rs`, `dhm.rs`, `store.rs` snapshots, `tips.rs`, `di.rs` |
+| `frontend/src-tauri/` | The Tauri app: `commands.rs` (what the UI calls), `lib.rs` (the floating window, click-through) |
 | `backend/main.py` | FastAPI app: scan (+SSE stream), findings, extensions, snapshots, compare, du-hast-much, tips, di runs. `main.py --di <args>` runs di |
 | `backend/di_runner.py` | Starts di processes for the di window, streams their output, gates destructive commands |
 | `backend/diskcli/` | The `di` CLI. `walker.py` is the fast single-pass scanner; `maint.py` holds clean/caches/guard/ballast |
 | `backend/security/` | Path validator, input sanitiser, secure logger, security headers, encryption helper |
-| `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` is the HTTP client |
+| `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` talks to the backend (Tauri commands or HTTP), `desktop.ts` to the app shell |
 | `frontend/src/wm/` | The window manager: `layout.ts` packs the docked cluster, `state.ts` is its reducer, `Cluster`/`Window` draw it, `clickThrough.ts` lets clicks reach the desktop |
 | `frontend/src/windows/` | The windows, grouped by tool (hub, scan, compare, dhm, di, tips, library) |
 | `frontend/src/state/` | Shared state for each tool, so its separate windows show the same scan, comparison or terminal |
@@ -194,7 +217,7 @@ di / di.cmd ──► backend/diskcli/  stdlib only: walker, store (SQLite basel
 | What | Where (macOS) |
 |---|---|
 | App snapshots (packaged) | `~/Library/Application Support/DiskIntelligence/disk_intelligence.db` |
-| App snapshots (dev) | `backend/disk_intelligence.db` |
+| App snapshots (Electron dev) | `backend/disk_intelligence.db` (the Tauri app always uses the path above) |
 | CLI baselines, guard log, ballast, tip state | `~/Library/Application Support/DiskIntelligence/` (override the DB with `DISK_INTELLIGENCE_DB`) |
 | Guard launchd agent | `~/Library/LaunchAgents/com.diskintelligence.guard.plist` |
 
@@ -203,7 +226,12 @@ Windows uses `%APPDATA%\DiskIntelligence` (the guard's Task Scheduler launcher i
 
 ## Building
 
-See [BUILD.md](BUILD.md). In short: `npm run package:mac` / `scripts/package.sh`
+See [BUILD.md](BUILD.md). The Tauri app: `npm run dist:tauri` (needs Rust)
+builds the platform's installers into `target/release/bundle/`. A Linux .deb is
+3.8 MB (a 9 MB binary); it uses the system webview, and the di window uses the
+system Python 3.10+.
+
+The Electron build: `npm run package:mac` / `scripts/package.sh`
 (macOS) or `scripts\package.bat` (Windows) builds the backend with PyInstaller,
 builds the frontend, and packages with electron-builder into `release/`.
 PyInstaller can't cross-compile, so build each OS's installer on that OS.
@@ -213,15 +241,20 @@ Packaging refuses a `backend/dist` binary that is older than the backend source
 (electron-builder ships whatever is there, and `npm run dist` doesn't rebuild
 it): run `scripts/build-backend.sh` first, or set `DI_ALLOW_STALE_BACKEND=1`.
 
-Size: a Linux build is about 270 MB unpacked. The Electron/Chromium runtime is
+Size: an Electron Linux build is about 270 MB unpacked. The Electron/Chromium runtime is
 ~230 MB of that and the PyInstaller backend (with its own Python) 30 MB; the UI
-itself is about 0.35 MB. Only the en-US Chromium locale is shipped. A Tauri
-build drops the bundled Chromium, which is where most of the gap to Tauri is
-(see todo.md).
+itself is about 0.35 MB. Only the en-US Chromium locale is shipped. The Tauri
+build drops both the bundled Chromium and the bundled Python.
 
 ## Security
 
-The app is designed to be local-only: backend bound to 127.0.0.1, CORS
+The Tauri app has no server and opens no ports: the UI calls the Rust core
+through Tauri's IPC, limited to the app's own window, under a CSP. Paths are
+checked (exists, is a folder, no NUL, length) before any scan or comparison,
+and di commands that delete or schedule something are confirmed first, as in
+the Electron build.
+
+The Electron build is designed to be local-only: backend bound to 127.0.0.1, CORS
 restricted to localhost origins, path validation and input sanitisation on
 every path-taking endpoint, security headers, CSP, redacted logging, Electron
 context isolation, and audited dependencies with telemetry disabled.

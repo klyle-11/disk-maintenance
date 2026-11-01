@@ -6,6 +6,7 @@
 import { DiConfirmError, getDiCommands, splitCommandLine, startDiRun, streamDiRun, type DiCommand } from "../api";
 import { parseAnsi, type AnsiSegment, type AnsiStyle } from "../ansi";
 import { createStore, useStore } from "../store";
+import { ask } from "../desktop";
 
 const MAX_LINES = 4000;
 const HISTORY_KEY = "di-history";
@@ -144,7 +145,7 @@ export async function runDi(text: string): Promise<void> {
       runId = await startDiRun(args, columns);
     } catch (err) {
       if (!(err instanceof DiConfirmError)) throw err;
-      if (!window.confirm(`${err.message}.\n\nRun “di ${args.join(" ")}” anyway?`)) {
+      if (!(await ask(`${err.message}.\n\nRun “di ${args.join(" ")}” anyway?`, "Run"))) {
         note("not run");
         return;
       }

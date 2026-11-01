@@ -124,22 +124,24 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
 
   useHoverClickThrough();
 
-  // Linux shapes the window to its windows; keep the shape following them,
-  // including where they are headed while they animate.
-  const shapeKey = `${JSON.stringify(state.rects)}|${offset.x},${offset.y}|${JSON.stringify(interaction)}|${state.units.length}`;
-  useEffect(() => {
+  // Tell the app shell where the windows are, so clicks elsewhere reach the
+  // desktop: where they are headed while they animate, and once a gesture
+  // ends, where the layout puts them.
+  const reportShape = () => {
     const desk = desktopRef.current;
     if (!desk) return;
-    const frame = requestAnimationFrame(() => {
-      const origin = desk.getBoundingClientRect();
-      const targets = Object.values(state.rects).map((r) => ({
-        x: Math.floor(origin.left + r.x + offset.x - desk.scrollLeft),
-        y: Math.floor(origin.top + r.y + offset.y - desk.scrollTop),
-        w: r.w + 1,
-        h: r.h + 1,
-      }));
-      updateShape(targets);
-    });
+    const origin = desk.getBoundingClientRect();
+    const targets = Object.values(state.rects).map((r) => ({
+      x: Math.floor(origin.left + r.x + offset.x - desk.scrollLeft),
+      y: Math.floor(origin.top + r.y + offset.y - desk.scrollTop),
+      w: r.w + 1,
+      h: r.h + 1,
+    }));
+    updateShape(targets, interaction !== null);
+  };
+  const shapeKey = `${JSON.stringify(state.rects)}|${offset.x},${offset.y}|${JSON.stringify(interaction)}|${state.units.length}`;
+  useEffect(() => {
+    const frame = requestAnimationFrame(reportShape);
     return () => cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shapeKey covers what moves
   }, [shapeKey]);
@@ -238,7 +240,7 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
   return (
     <div
       ref={desktopRef}
-      onScroll={() => updateShape([])}
+      onScroll={reportShape}
       className={[
         "wm-desktop",
         ready ? "is-ready" : "",

@@ -9,6 +9,7 @@ import { forgetScanSnapshot, openScanSnapshot, useOpenScanSnapshots } from "../s
 import { Window } from "../wm/Window";
 import { baseName, errorMessage, formatDate } from "./common";
 import type { WindowArgs } from "./HubWindows";
+import { ask, tell } from "../desktop";
 
 function open(snapshot: ComparisonSnapshot): void {
   if (snapshot.snapshotType === "comparison") openCompareSnapshot(snapshot);
@@ -22,7 +23,7 @@ async function remove(snapshot: ComparisonSnapshot): Promise<void> {
     forgetScanSnapshot(snapshot.id);
     forgetCompareSnapshot(snapshot.id);
   } catch (err) {
-    window.alert(`Failed to delete snapshot: ${errorMessage(err)}`);
+    void tell(`Failed to delete snapshot: ${errorMessage(err)}`);
   }
 }
 
@@ -78,7 +79,9 @@ export function LibraryWindow({ view, controls }: WindowArgs) {
                       aria-label={`Delete ${label}`}
                       title="Delete"
                       onClick={() => {
-                        if (window.confirm(`Delete this ${comparison ? "comparison" : "snapshot"}?\n\n${where}`)) void remove(s);
+                        void ask(`Delete this ${comparison ? "comparison" : "snapshot"}?\n\n${where}`, "Delete").then((yes) => {
+                          if (yes) void remove(s);
+                        });
                       }}
                     >
                       ×

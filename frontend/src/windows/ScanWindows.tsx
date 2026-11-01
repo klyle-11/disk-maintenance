@@ -42,7 +42,7 @@ export function ScanWindow({ view, controls }: WindowArgs) {
     open.split(" ").includes(windowId) ? closeWindow(windowId) : openWindow(kind, windowId, { ref: id, parent: id });
 
   return (
-    <Window title={title} shadeInfo={shadeInfo} view={view} controls={controls} className="kind-scan" onClose={() => closeScan(id)}>
+    <Window title={title} shadeInfo={shadeInfo} view={view} controls={controls} className="kind-scan" onClose={() => void closeScan(id)}>
       <div className="tool">
         {s.phase === "setup" || s.phase === "error" ? (
           <>

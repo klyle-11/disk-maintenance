@@ -2,6 +2,54 @@
 
 This document describes how to build and package Disk Intelligence for distribution.
 
+There are two desktop builds while the Tauri port is checked on every platform:
+
+- **Tauri** (the new one): one native binary over the Rust core (`core/`), using
+  the system webview. A Linux .deb is about 4 MB. See [Tauri build](#tauri-build).
+- **Electron + Python** (the old one): the rest of this document.
+
+## Tauri build
+
+### Prerequisites
+
+- Rust (stable, via [rustup](https://rustup.rs)) and Node.js 18+
+- macOS: Xcode Command Line Tools
+- Windows: Visual Studio Build Tools (C++); WebView2 comes with Windows 11 (the
+  installer fetches it on Windows 10)
+- Linux: `libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev`
+  (Debian/Ubuntu names)
+
+### Build
+
+```bash
+npm --prefix frontend install
+npm run dist:tauri            # tauri build: the platform's installers
+npm run dev:tauri             # or run it in development (Vite on :5176 + the app)
+```
+
+Output lands in `target/release/bundle/` (`deb/`, `appimage/`, `dmg/`, `macos/`,
+`msi/`, `nsis/`, depending on the platform). No PyInstaller step, no backend
+binary, no ports: the app calls the Rust core directly.
+
+The `di` window still runs the real `di` (Python, stdlib only): the package
+ships `backend/diskcli/` as a resource and runs it with the machine's Python
+3.10+ (`python3`, `python`, or `py -3`; set `DI_PYTHON` to pick one). The .deb
+depends on `python3`. Without Python everything else works and the di window
+says what's missing.
+
+### Checking a build
+
+`cargo test -p diskcore` runs the core's tests (walker, findings, compare,
+store, di runner). `scripts/e2e-tauri.mjs` drives a built app end to end over
+WebDriver on Linux (scan, findings, types, save snapshot, compare pair, dhm,
+di output, the destructive-command dialog):
+
+```bash
+cargo install tauri-driver            # once; also needs WebKitWebDriver (webkit2gtk-driver)
+tauri-driver &
+DISK_INTELLIGENCE_DB=/tmp/e2e.db node scripts/e2e-tauri.mjs target/release/disk-intelligence
+```
+
 ## Prerequisites
 
 ### Common
@@ -134,8 +182,8 @@ npm run dev
 ## Database Location
 
 The SQLite database is stored in:
-- **Development**: `backend/disk_intelligence.db`
-- **Production**:
+- **Development** (Electron + Python): `backend/disk_intelligence.db`
+- **Production**, and the Tauri app in development too:
   - Windows: `%APPDATA%\DiskIntelligence\disk_intelligence.db`
   - macOS: `~/Library/Application Support/DiskIntelligence/disk_intelligence.db`
   - Linux: `~/.local/share/DiskIntelligence/disk_intelligence.db`

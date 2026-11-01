@@ -84,20 +84,33 @@ function measured(): Rect[] {
 let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
+ * Once the windows have moved, send just where they are: where the layout put
+ * them, or mid-gesture, where they're drawn. (Not measured after a delay in
+ * general: a webview that renders slowly can still be mid-animation then, and
+ * the shape would stay on where the windows used to be.)
+ */
+function whenSettled(targets: Rect[], gesture: boolean, send: (rects: Rect[]) => void): void {
+  if (settleTimer) clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => {
+    settleTimer = null;
+    send(gesture ? measured() : targets);
+  }, 350);
+}
+
+/**
  * Linux: shape the window to its windows. While they move, the shape also
- * covers where they're headed, so nothing is clipped mid-animation; once the
- * animation settles it shrinks back to just the windows. Never the whole
+ * covers where they're headed, so nothing is clipped mid-animation; once they
+ * stop it shrinks back to just the windows. Never the whole
  * window: without a compositor, that would paint the screen black.
  */
-export function updateShape(targets: Rect[]): void {
+export function updateShape(targets: Rect[], gesture: boolean): void {
   if (isTauri) {
     tauriOverlay.regions = [...measured(), ...targets];
     reportTauri();
-    if (settleTimer) clearTimeout(settleTimer);
-    settleTimer = setTimeout(() => {
-      tauriOverlay.regions = measured();
+    whenSettled(targets, gesture, (rects) => {
+      tauriOverlay.regions = rects;
       reportTauri();
-    }, 350);
+    });
     return;
   }
   const api = window.electronAPI;
@@ -105,6 +118,5 @@ export function updateShape(targets: Rect[]): void {
   const send = (rects: Rect[]) =>
     api.setShape(rects.map((r) => ({ x: r.x, y: r.y, width: r.w, height: r.h })));
   send([...measured(), ...targets]);
-  if (settleTimer) clearTimeout(settleTimer);
-  settleTimer = setTimeout(() => send(measured()), 350);
+  whenSettled(targets, gesture, send);
 }

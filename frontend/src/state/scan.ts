@@ -18,6 +18,7 @@ import { createStore, useStore } from "../store";
 import { closeWindow, openWindow, wmDispatch, wmStore } from "../wm/state";
 import { errorMessage, snapshotProblem } from "../windows/common";
 import { isReady, setProblem, upsertSnapshot } from "./app";
+import { ask, tell } from "../desktop";
 
 export type ScanPhase = "setup" | "scanning" | "results" | "error";
 
@@ -178,7 +179,7 @@ export async function saveScan(id: string): Promise<void> {
     patchScan(id, { snapshotId: saved.id, savedAt: saved.savedAt, busy: null });
   } catch (err) {
     patchScan(id, { busy: null });
-    window.alert(`Couldn't save the snapshot: ${errorMessage(err)}`);
+    void tell(`Couldn't save the snapshot: ${errorMessage(err)}`);
   }
 }
 
@@ -208,10 +209,10 @@ export async function refreshScan(id: string): Promise<void> {
 }
 
 /** Close a scan's windows, asking first if it has unsaved results. */
-export function closeScan(id: string): void {
+export async function closeScan(id: string): Promise<void> {
   const session = store.get()[id];
   if (session?.phase === "results" && session.scanId && !session.snapshotId) {
-    if (!window.confirm("This scan isn't saved as a snapshot. Close it anyway?")) return;
+    if (!(await ask("This scan isn't saved as a snapshot. Close it anyway?", "Close"))) return;
   }
   cancelScan(id);
   closeWindow(id);

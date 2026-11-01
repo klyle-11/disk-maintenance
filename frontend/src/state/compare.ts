@@ -16,6 +16,7 @@ import { closeWindow, openWindow, wmDispatch, wmStore } from "../wm/state";
 import { errorMessage, snapshotProblem } from "../windows/common";
 import { folderKeys, topLevelFolders, visibleItems, type Side, type StatusFilter } from "../windows/compareTree";
 import { isReady, setProblem, upsertSnapshot } from "./app";
+import { ask, tell } from "../desktop";
 
 export interface CompareResult {
   comparisonId: string;
@@ -176,7 +177,7 @@ export async function saveCompare(id: string): Promise<void> {
     patchCompare(id, { snapshotId: saved.id, busy: null });
   } catch (err) {
     patchCompare(id, { busy: null });
-    window.alert(`Couldn't save the comparison: ${errorMessage(err)}`);
+    void tell(`Couldn't save the comparison: ${errorMessage(err)}`);
   }
 }
 
@@ -220,10 +221,10 @@ export function toggleFolder(id: string, key: string): void {
   });
 }
 
-export function closeCompare(id: string): void {
+export async function closeCompare(id: string): Promise<void> {
   const session = store.get()[id];
   if (session?.phase === "results" && !session.snapshotId) {
-    if (!window.confirm("This comparison isn't saved. Close it anyway?")) return;
+    if (!(await ask("This comparison isn't saved. Close it anyway?", "Close"))) return;
   }
   closeWindow(id);
   store.set((all) => {

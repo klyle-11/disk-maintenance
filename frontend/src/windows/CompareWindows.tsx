@@ -71,7 +71,7 @@ export function CompareWindow({ view, controls }: WindowArgs) {
       view={view}
       controls={controls}
       className="kind-compare"
-      onClose={() => closeCompare(id)}
+      onClose={() => void closeCompare(id)}
     >
       <div className="tool">
         {s.phase !== "results" ? (

@@ -109,6 +109,8 @@ pub fn run() {
             commands::di_register,
             commands::di_stream,
             commands::select_directory,
+            commands::ask_dialog,
+            commands::message_dialog,
             commands::overlay_regions,
             commands::minimize_app,
             commands::quit_app,
