@@ -8,7 +8,8 @@ Two front ends share one Python core and one database:
 - **`di`**: a fast, dependency-free command line tool for scanning, growth
   tracking, cleanup and a free-space guard.
 - **Desktop app**: Electron + React UI over a local FastAPI backend, with scan
-  findings, snapshots, folder comparison and space-keeping tips.
+  findings, snapshots, folder comparison, space-keeping tips, and `di` itself
+  in a terminal window.
 
 Everything runs locally. Nothing leaves the machine (see [Security](#security)).
 
@@ -151,18 +152,42 @@ or every time when the disk is low). Set `DI_TIPS=0` to turn that off.
 
 ## Desktop app
 
-- **Scan & findings**: large folders, old large folders, cache/regenerable
-  folders, duplicate-name folders and files, cold archives, and a breakdown by
-  file extension.
-- **Du-hast-much**: quick per-folder sizing with live progress and history.
-- **Folder comparison**: source vs target (mirror or backup validation) with
-  optional hash verification. Design: `docs/plans/2026-01-15-folder-comparison-design.md`.
-- **Snapshots**: save scans and comparisons, reopen and refresh them later.
-- **Keeping space free**: tips relevant to this Mac (Docker, snapshots, swap,
-  Xcode, Homebrew ...) with copyable commands, served from the same list as `di tips`.
-- **Themes**: Light, Dark, Sepia, Dark Sepia.
+The app has no main window: it is a cluster of small skinned windows, Winamp
+style, floating straight on your desktop with nothing behind them. They dock
+edge to edge around a centre point and never come apart. Clicks on the
+desktop between them go through to whatever is underneath.
 
-The app only analyses; cleanup lives in `di`.
+- **Moving**: drag a title bar onto another window to swap the two (a drop
+  anywhere else snaps back). ARRANGE re-packs everything.
+- **Resizing**: drag any edge or the corner grip; neighbours act as walls and
+  the rest re-dock around it. Double-click a title bar to shade a window down to
+  one line. New windows open at whatever size fits the free space.
+- **Closing**: a tool's windows belong together and close together (closing a
+  scan's control window closes its findings and types too). The arrangement is
+  remembered between launches.
+
+The windows:
+
+| Window | What it does |
+|---|---|
+| Disk Intelligence | Status, free space, a scrolling marquee. Minimise and quit live here (there is no OS frame). |
+| Controls | Opens everything else: SCAN, COMPARE, DHM, DI, LIB, TIPS, SKINS, ARRANGE. |
+| Scan (one per scan) | Folder, progress, totals, SAVE. Opens **Findings** (large and old folders, caches, duplicates, cold archives) and **Types** (sizes by extension) beside it. |
+| Compare (one per comparison) | Source and target folders, optional hash check, status filters, TREE/PATHS, SAVE. Opens a hinged **Source / Target** pair that reads like a diff: same rows, one scroll position. PATHS lists each side's differing files as copyable paths. Design: `docs/plans/2026-01-15-folder-comparison-design.md`. |
+| Library | Saved scans and comparisons; opening one gives it windows of its own and quietly refreshes it. |
+| du-hast-much + DHM output | Settings and recent scans; the CLI-style table with live progress. |
+| di + di commands | The real `di` command line, and its suggestions: quick commands and every command with its help. Anything that deletes or schedules something (`clean --yes`, `caches --yes`, `guard --install/--auto`, `ballast set/release`, `forget`) asks first; the pick-to-delete prompt stays terminal-only. |
+| Tips (one per tip) | Each way to keep freed space free, with its command to copy (the list `di tips` prints). TIPS opens the ones that apply to this machine. |
+| Skins | Cold Steel, Silver, Butter, Sun Metal (hot orange metal fading to yellow), Frost, Gunmetal, Obsidian. Any of them can have a DARK display or WHITE paper inside; each skin remembers which. |
+| Backend | Appears by itself if the backend can't start: why, retry, and the log. |
+
+Apart from the di window, the app only analyses; cleanup lives in `di`.
+
+How the floating works: Electron opens one transparent, frameless window over
+the screen's work area. On macOS and Windows it ignores the mouse except over a
+window of ours (`setIgnoreMouseEvents` with forwarding); on Linux the window is
+shaped to the windows (`setShape`), so no compositor is needed. In a plain
+browser tab (`npm run dev:vite`) the windows sit on the page instead.
 
 ## Architecture
 
@@ -172,16 +197,21 @@ Electron main (frontend/electron/)
   └── React UI (frontend/src/)  ── HTTP/SSE on 127.0.0.1 ──►  FastAPI (backend/main.py)
                                                                 ├── security/   path validation, sanitising, headers, redacting logger
                                                                 ├── database.py SQLAlchemy / SQLite snapshots
-                                                                └── diskcli/tips.py  shared tips
+                                                                ├── diskcli/tips.py  shared tips
+                                                                └── di_runner.py  runs `backend --di …` for the di window
 di / di.cmd ──► backend/diskcli/  stdlib only: walker, store (SQLite baselines), commands, maint, tips
 ```
 
 | Path | Contents |
 |---|---|
-| `backend/main.py` | FastAPI app: scan (+SSE stream), findings, extensions, snapshots, compare, du-hast-much, tips |
+| `backend/main.py` | FastAPI app: scan (+SSE stream), findings, extensions, snapshots, compare, du-hast-much, tips, di runs. `main.py --di <args>` runs di |
+| `backend/di_runner.py` | Starts di processes for the di window, streams their output, gates destructive commands |
 | `backend/diskcli/` | The `di` CLI. `walker.py` is the fast single-pass scanner; `maint.py` holds clean/caches/guard/ballast |
 | `backend/security/` | Path validator, input sanitiser, secure logger, security headers, encryption helper |
 | `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` is the HTTP client |
+| `frontend/src/wm/` | The window manager: `layout.ts` packs the docked cluster, `state.ts` is its reducer, `Cluster`/`Window` draw it, `clickThrough.ts` lets clicks reach the desktop |
+| `frontend/src/windows/` | The windows, grouped by tool (hub, scan, compare, dhm, di, tips, library) |
+| `frontend/src/state/` | Shared state for each tool, so its separate windows show the same scan, comparison or terminal |
 | `frontend/electron/` | Main process, preload bridge, backend supervisor |
 | `scripts/` | Build, package, verify and audit scripts |
 
@@ -204,6 +234,16 @@ See [BUILD.md](BUILD.md). In short: `npm run package:mac` / `scripts/package.sh`
 builds the frontend, and packages with electron-builder into `release/`.
 PyInstaller can't cross-compile, so build each OS's installer on that OS.
 `npm run verify` checks the packaged app.
+
+Packaging refuses a `backend/dist` binary that is older than the backend source
+(electron-builder ships whatever is there, and `npm run dist` doesn't rebuild
+it): run `scripts/build-backend.sh` first, or set `DI_ALLOW_STALE_BACKEND=1`.
+
+Size: a Linux build is about 270 MB unpacked. The Electron/Chromium runtime is
+~230 MB of that and the PyInstaller backend (with its own Python) 30 MB; the UI
+itself is about 0.35 MB. Only the en-US Chromium locale is shipped. A Tauri
+build drops the bundled Chromium, which is where most of the gap to Tauri is
+(see todo.md).
 
 ## Security
 
@@ -230,6 +270,12 @@ Background documents (written during the March 2026 hardening pass; see
 - **App says "Backend unavailable"**: the banner has Retry and a log link. In
   dev, check `npm run dev:backend` output. The backend moves to the next free
   port if 8001 is taken.
+- **"Backend out of date", or di / tips fail with 404**: the app found a backend
+  older than itself, either an old install or `python backend/main.py` from an
+  older checkout still running on port 8001, or a stale `backend/dist` that was
+  packaged. The app no longer reuses an older backend on 8001 (it starts its own
+  on the next port); quit the old one, or rebuild with `scripts/build-backend.sh`
+  and package again.
 - **Packaged backend killed on first launch (macOS)**: the supervisor clears the
   quarantine flag; if it persists, run `xattr -dr com.apple.quarantine "/Applications/Disk Intelligence.app"`.
 - **`di guard` notifications don't appear**: on macOS, allow notifications for

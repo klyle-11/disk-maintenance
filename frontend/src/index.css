@@ -1,145 +1,513 @@
-/* Global Styles - Light & Dark Themes */
+/*
+ * Skins come in two halves.
+ *
+ * The frame (data-theme): what every window is made of.
+ *   --metal-*, --frame-bg, --btn-face   the metal, its gradient, the buttons
+ *   --glow, --btn-primary, ...          lit details
+ *   --d-* / --l-*                       the skin's tint for a dark / white inside
+ *
+ * The panel (data-panel = dark | light): the inside each window's content sits
+ * on, a dark display or white paper, drawn in the frame's tint. Any skin can
+ * have either.
+ *
+ * The older --bg-* / --text-* / --accent-* names the components were written
+ * against map onto the panel. There is no page background: the windows float
+ * on the desktop.
+ */
 * {
   box-sizing: border-box;
 }
 
-/* Light Theme (Default) - Warm with Periwinkle */
-:root, [data-theme="light"] {
-  --bg-primary: #faf9f7;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #f5f3f0;
-  --bg-hover: #efecea;
+/* ── Frames ──────────────────────────────────────────────────────────────── */
 
-  --accent-primary: #8b7ec8;
-  --accent-secondary: #a599d4;
-  --accent-light: #c7bfe6;
-  --accent-pale: #e8e4f4;
-  --accent-hover: #7a6db8;
-  --accent-dark: #6a5da8;
+/* Cold Steel (default): blue-grey brushed metal. */
+:root,
+[data-theme="steel"] {
+  --metal-hi: #d2d9e0;
+  --metal-1: #a7b0ba;
+  --metal-2: #858f9a;
+  --metal-3: #646d78;
+  --metal-lo: #3a414a;
+  --metal-edge: #0c0f12;
+  --metal-inset: #545c66;
+  --chrome-text: #10151a;
+  --chrome-text-dim: #2c343c;
+  --emboss: rgba(255, 255, 255, 0.45);
+  --groove-dark: #3d454e;
+  --groove-light: #c3cbd3;
+  --glow: #59c8ff;
+  --glow-soft: rgba(89, 200, 255, 0.35);
+  --btn-primary: linear-gradient(to bottom, #e3f6ff, #8fd6ff 50%, #4fb3ea);
+  --btn-primary-text: #062033;
 
-  --text-primary: #3d3a36;
-  --text-secondary: #6b6660;
-  --text-muted: #9a948c;
+  --d-bg: #04070a;
+  --d-bg-2: #0a1118;
+  --d-hover: #10202e;
+  --d-line: #16232f;
+  --d-line-2: #22384a;
+  --d-text: #9ed6ff;
+  --d-strong: #e4f5ff;
+  --d-dim: #4f7590;
+  --d-accent: #36c6ff;
+  --d-glow: rgba(54, 198, 255, 0.55);
 
-  --border-light: #e8e4df;
-  --border-medium: #d4cfc8;
-
-  --success: #6b9e78;
-  --warning: #c9a654;
-  --danger: #c76b6b;
-  --info: #7a9ec9;
+  --l-bg: #ffffff;
+  --l-bg-2: #f2f6fa;
+  --l-hover: #e4eef8;
+  --l-line: #e1e8ef;
+  --l-line-2: #c7d3de;
+  --l-text: #22313f;
+  --l-strong: #0a121a;
+  --l-dim: #7a8896;
+  --l-accent: #1677c9;
 }
 
-/* Dark Theme - Catppuccin Mocha */
-[data-theme="dark"] {
-  --bg-primary: #11111b;
-  --bg-secondary: #1e1e2e;
-  --bg-tertiary: #313244;
-  --bg-hover: #45475a;
+/* Silver: bright, light brushed silver. */
+[data-theme="silver"] {
+  --metal-hi: #fcfdfe;
+  --metal-1: #dfe4e9;
+  --metal-2: #c6cdd4;
+  --metal-3: #a8b0b9;
+  --metal-lo: #6f7781;
+  --metal-edge: #2c3238;
+  --metal-inset: #b6bec7;
+  --chrome-text: #151b22;
+  --chrome-text-dim: #3a434d;
+  --emboss: rgba(255, 255, 255, 0.7);
+  --groove-dark: #848d97;
+  --groove-light: #ffffff;
+  --glow: #2f8cff;
+  --glow-soft: rgba(47, 140, 255, 0.25);
+  --btn-primary: linear-gradient(to bottom, #eef5ff, #a9cdff 50%, #5b97ea);
+  --btn-primary-text: #06203f;
 
-  --accent-primary: #89b4fa;
-  --accent-secondary: #b4befe;
-  --accent-light: #74c7ec;
-  --accent-pale: rgba(137, 180, 250, 0.15);
-  --accent-hover: #74a8f5;
-  --accent-dark: #5f9cfa;
+  --d-bg: #06080a;
+  --d-bg-2: #0d1114;
+  --d-hover: #1a2129;
+  --d-line: #1a1f25;
+  --d-line-2: #2a323b;
+  --d-text: #cfd8e2;
+  --d-strong: #ffffff;
+  --d-dim: #6b7682;
+  --d-accent: #7ab8ff;
+  --d-glow: rgba(122, 184, 255, 0.45);
 
-  --text-primary: #cdd6f4;
-  --text-secondary: #a6adc8;
-  --text-muted: #6c7086;
-
-  --border-light: #313244;
-  --border-medium: #45475a;
-
-  --success: #a6e3a1;
-  --warning: #f9e2af;
-  --danger: #f38ba8;
-  --info: #89dceb;
+  --l-bg: #ffffff;
+  --l-bg-2: #f3f6f9;
+  --l-hover: #e7f0fa;
+  --l-line: #e3e8ee;
+  --l-line-2: #cbd4dd;
+  --l-text: #2a3644;
+  --l-strong: #0b1118;
+  --l-dim: #7d8a97;
+  --l-accent: #1f6fd1;
 }
 
-/* Sepia Theme - Light Earthy Tones */
-[data-theme="sepia"] {
-  --bg-primary: #f5f0e6;
-  --bg-secondary: #faf8f3;
-  --bg-tertiary: #ebe4d6;
-  --bg-hover: #e0d8c7;
+/* Butter: buttery yellow enamel. */
+[data-theme="butter"] {
+  --metal-hi: #fff7cf;
+  --metal-1: #f8dc6a;
+  --metal-2: #eec544;
+  --metal-3: #d9a82c;
+  --metal-lo: #9c7417;
+  --metal-edge: #4a3608;
+  --metal-inset: #e0b640;
+  --chrome-text: #3a2a05;
+  --chrome-text-dim: #6b5214;
+  --emboss: rgba(255, 252, 228, 0.65);
+  --groove-dark: #a7801d;
+  --groove-light: #fff4c4;
+  --glow: #ff8a00;
+  --glow-soft: rgba(255, 138, 0, 0.25);
+  --btn-primary: linear-gradient(to bottom, #fff1d6, #ffc266 50%, #f08c00);
+  --btn-primary-text: #3a1d00;
 
-  --accent-primary: #8b6914;
-  --accent-secondary: #a67c00;
-  --accent-light: #c9a227;
-  --accent-pale: rgba(139, 105, 20, 0.1);
-  --accent-hover: #7a5c12;
-  --accent-dark: #6a4f10;
+  --d-bg: #0e0a02;
+  --d-bg-2: #171106;
+  --d-hover: #2a1f0a;
+  --d-line: #241a08;
+  --d-line-2: #3d2d0e;
+  --d-text: #f5c96a;
+  --d-strong: #fff1cf;
+  --d-dim: #8f7038;
+  --d-accent: #ffb02e;
+  --d-glow: rgba(255, 176, 46, 0.45);
 
-  --text-primary: #4a3f35;
-  --text-secondary: #6d6155;
-  --text-muted: #8f8275;
-
-  --border-light: #d9cfc2;
-  --border-medium: #c4b8a9;
-
-  --success: #5d8f4a;
-  --warning: #b8860b;
-  --danger: #c25c4e;
-  --info: #5b8fa8;
+  --l-bg: #fffdf6;
+  --l-bg-2: #fff7e2;
+  --l-hover: #ffefc6;
+  --l-line: #f2e6c4;
+  --l-line-2: #e4d09c;
+  --l-text: #4a3b1f;
+  --l-strong: #241a06;
+  --l-dim: #a08a63;
+  --l-accent: #c96f00;
 }
 
-/* Dark Sepia Theme - Dark Earthy Tones with Bold Gold */
-[data-theme="dark-sepia"] {
-  --bg-primary: #2a2218;
-  --bg-secondary: #352b20;
-  --bg-tertiary: #403528;
-  --bg-hover: #4b3f30;
+/* Sun Metal: hot orange metal, baked yellow where the sun hits it. */
+[data-theme="sunmetal"] {
+  --metal-hi: #ffeaa6;
+  --metal-1: #ffad4a;
+  --metal-2: #f58a2c;
+  --metal-3: #dc6a18;
+  --metal-lo: #8f3a0a;
+  --metal-edge: #3d1502;
+  --metal-inset: #d96a1c;
+  --chrome-text: #3a1300;
+  --chrome-text-dim: #6e2e05;
+  --emboss: rgba(255, 236, 170, 0.6);
+  --groove-dark: #9c3f0a;
+  --groove-light: #ffe08a;
+  --glow: #ffe14d;
+  --glow-soft: rgba(255, 225, 77, 0.35);
+  --btn-primary: linear-gradient(to bottom, #fff6c2, #ffd84a 50%, #ffae1a);
+  --btn-primary-text: #3a1a00;
+  --frame-bg:
+    radial-gradient(ellipse 70% 55% at 88% 0%, rgba(255, 238, 140, 0.55), transparent 70%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0 1px, rgba(0, 0, 0, 0.04) 1px 3px),
+    linear-gradient(165deg, #ffcf55 0%, #ffa83c 20%, #f7862a 48%, #e5661a 78%, #c24d10 100%);
+  --btn-face: linear-gradient(to bottom, #fff0a8, #ffc24d 45%, #f98f2e);
+  --btn-face-hover: linear-gradient(to bottom, #fff7cc, #ffd56b 45%, #ffa23f);
 
-  --accent-primary: #ffd700;
-  --accent-secondary: #ffb700;
-  --accent-light: #ffe066;
-  --accent-pale: rgba(255, 215, 0, 0.15);
-  --accent-hover: #ffcc00;
-  --accent-dark: #e6c200;
+  --d-bg: #120602;
+  --d-bg-2: #1c0b04;
+  --d-hover: #2e1406;
+  --d-line: #2a1106;
+  --d-line-2: #4a2009;
+  --d-text: #ffb866;
+  --d-strong: #ffe9c2;
+  --d-dim: #9a5a26;
+  --d-accent: #ffcf3f;
+  --d-glow: rgba(255, 160, 40, 0.5);
 
-  --text-primary: #f0e6d8;
-  --text-secondary: #c4b8a8;
-  --text-muted: #8a8074;
-
-  --border-light: #403528;
-  --border-medium: #4b3f30;
-
-  --success: #7cb342;
-  --warning: #ffb300;
-  --danger: #ef5350;
-  --info: #42a5f5;
+  --l-bg: #fffaf3;
+  --l-bg-2: #fff1df;
+  --l-hover: #ffe3c2;
+  --l-line: #f5dfc4;
+  --l-line-2: #ecc597;
+  --l-text: #4a2a12;
+  --l-strong: #200d02;
+  --l-dim: #a5774f;
+  --l-accent: #d9530b;
 }
 
-html, body {
+/* Frost: pale anodised aluminium. */
+[data-theme="frost"] {
+  --metal-hi: #ffffff;
+  --metal-1: #e3e9ef;
+  --metal-2: #c9d2db;
+  --metal-3: #aab6c2;
+  --metal-lo: #7d8b99;
+  --metal-edge: #4a5663;
+  --metal-inset: #b4bfca;
+  --chrome-text: #14212e;
+  --chrome-text-dim: #44546a;
+  --emboss: rgba(255, 255, 255, 0.8);
+  --groove-dark: #8796a5;
+  --groove-light: #ffffff;
+  --glow: #0a84d6;
+  --glow-soft: rgba(10, 132, 214, 0.3);
+  --btn-primary: linear-gradient(to bottom, #e3f3ff, #8cc8f0 50%, #3d97d6);
+  --btn-primary-text: #062033;
+
+  --d-bg: #050a10;
+  --d-bg-2: #0b131c;
+  --d-hover: #13202e;
+  --d-line: #142130;
+  --d-line-2: #20364b;
+  --d-text: #b9d8f0;
+  --d-strong: #f0f8ff;
+  --d-dim: #557089;
+  --d-accent: #5ab4f0;
+  --d-glow: rgba(90, 180, 240, 0.45);
+
+  --l-bg: #eef4f9;
+  --l-bg-2: #e2ebf3;
+  --l-hover: #d5e3ef;
+  --l-line: #d1dde8;
+  --l-line-2: #b6c8d7;
+  --l-text: #1b3a52;
+  --l-strong: #06121c;
+  --l-dim: #5f7d93;
+  --l-accent: #0a6fb8;
+}
+
+/* Gunmetal: darker, heavier metal. */
+[data-theme="gunmetal"] {
+  --metal-hi: #858d96;
+  --metal-1: #59616a;
+  --metal-2: #434950;
+  --metal-3: #31363c;
+  --metal-lo: #1a1d21;
+  --metal-edge: #000;
+  --metal-inset: #262a2f;
+  --chrome-text: #dfe5ea;
+  --chrome-text-dim: #9ea7b0;
+  --emboss: rgba(0, 0, 0, 0.7);
+  --groove-dark: #121417;
+  --groove-light: #6a737c;
+  --glow: #8fb3ff;
+  --glow-soft: rgba(143, 179, 255, 0.35);
+  --btn-primary: linear-gradient(to bottom, #dfe7ff, #9fb7f0 50%, #6688d8);
+  --btn-primary-text: #0b1530;
+
+  --d-bg: #030405;
+  --d-bg-2: #0a0c0f;
+  --d-hover: #161b22;
+  --d-line: #171b20;
+  --d-line-2: #262c34;
+  --d-text: #bac8d6;
+  --d-strong: #f1f5f9;
+  --d-dim: #5d6876;
+  --d-accent: #8fb3ff;
+  --d-glow: rgba(143, 179, 255, 0.45);
+
+  --l-bg: #fcfcfd;
+  --l-bg-2: #f1f3f5;
+  --l-hover: #e6eaf0;
+  --l-line: #e3e6ea;
+  --l-line-2: #c9ced5;
+  --l-text: #2a2f36;
+  --l-strong: #0b0d10;
+  --l-dim: #7c838c;
+  --l-accent: #3d5fc4;
+}
+
+/* Obsidian: black anodised metal; an amber display when dark. The darkest. */
+[data-theme="obsidian"] {
+  --metal-hi: #4e5258;
+  --metal-1: #2f3237;
+  --metal-2: #23262a;
+  --metal-3: #191b1e;
+  --metal-lo: #0c0d0f;
+  --metal-edge: #000;
+  --metal-inset: #121316;
+  --chrome-text: #c9cdd2;
+  --chrome-text-dim: #7e848b;
+  --emboss: rgba(0, 0, 0, 0.85);
+  --groove-dark: #000;
+  --groove-light: #3d4147;
+  --glow: #ffb000;
+  --glow-soft: rgba(255, 176, 0, 0.3);
+  --btn-primary: linear-gradient(to bottom, #fff2cc, #ffcc4d 50%, #e69500);
+  --btn-primary-text: #2b1a00;
+
+  --d-bg: #000;
+  --d-bg-2: #0b0905;
+  --d-hover: #1d1606;
+  --d-line: #1a1408;
+  --d-line-2: #2e230c;
+  --d-text: #ffb000;
+  --d-strong: #ffd27a;
+  --d-dim: #8a5f00;
+  --d-accent: #ffcc33;
+  --d-glow: rgba(255, 176, 0, 0.5);
+
+  --l-bg: #fffdf8;
+  --l-bg-2: #f7f3ea;
+  --l-hover: #f0e7d2;
+  --l-line: #ece5d6;
+  --l-line-2: #d8cdb4;
+  --l-text: #2b2418;
+  --l-strong: #000;
+  --l-dim: #8a7d63;
+  --l-accent: #b06e00;
+}
+
+/* Shared frame details, built from each skin's metal unless it has its own
+   (:where keeps these weaker than any skin's own values). */
+:where(:root) {
+  --frame-bg:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, rgba(0, 0, 0, 0.035) 1px 3px),
+    linear-gradient(to bottom, var(--metal-1), var(--metal-2) 40%, var(--metal-3));
+  --btn-face: linear-gradient(to bottom, var(--metal-hi), var(--metal-1) 45%, var(--metal-2));
+  --btn-face-hover: linear-gradient(to bottom, var(--metal-hi), var(--metal-hi) 20%, var(--metal-1));
+  --btn-warn: linear-gradient(to bottom, #ffe1e4, #ff9aa4 50%, #e2606c);
+  --btn-warn-text: #3a0a0f;
+}
+
+/* ── Panels ──────────────────────────────────────────────────────────────── */
+
+/* Dark: a display, glowing in the frame's colour. */
+:root,
+[data-panel="dark"] {
+  --lcd-bg: var(--d-bg);
+  --lcd-bg-2: var(--d-bg-2);
+  --lcd-hover: var(--d-hover);
+  --lcd-line: var(--d-line);
+  --lcd-line-2: var(--d-line-2);
+  --lcd-text: var(--d-text);
+  --lcd-strong: var(--d-strong);
+  --lcd-dim: var(--d-dim);
+  --lcd-accent: var(--d-accent);
+  --lcd-glow: var(--d-glow);
+  --lcd-scan: rgba(255, 255, 255, 0.018);
+  --lcd-good: #5cf2a0;
+  --lcd-warn: #ffc457;
+  --lcd-bad: #ff5f6d;
+  --led-off: #1b2228;
+
+  --ansi-black: #3a4652;
+  --ansi-red: #ff5f6d;
+  --ansi-green: #5cf2a0;
+  --ansi-yellow: #ffd166;
+  --ansi-blue: #4aa3ff;
+  --ansi-magenta: #d38cff;
+  --ansi-cyan: #36d6ff;
+  --ansi-white: #c9d6e2;
+  --ansi-bright-black: #5c6b78;
+  --ansi-bright-red: #ff8a94;
+  --ansi-bright-green: #8dffc0;
+  --ansi-bright-yellow: #ffe199;
+  --ansi-bright-blue: #84c1ff;
+  --ansi-bright-magenta: #e6b5ff;
+  --ansi-bright-cyan: #85e8ff;
+  --ansi-bright-white: #f2f8fc;
+}
+
+/* White: paper, printed in the frame's colour. */
+[data-panel="light"] {
+  --lcd-bg: var(--l-bg);
+  --lcd-bg-2: var(--l-bg-2);
+  --lcd-hover: var(--l-hover);
+  --lcd-line: var(--l-line);
+  --lcd-line-2: var(--l-line-2);
+  --lcd-text: var(--l-text);
+  --lcd-strong: var(--l-strong);
+  --lcd-dim: var(--l-dim);
+  --lcd-accent: var(--l-accent);
+  --lcd-glow: transparent;
+  --lcd-scan: transparent;
+  --lcd-good: #12804a;
+  --lcd-warn: #b06d00;
+  --lcd-bad: #c62a3a;
+  --led-off: #c3cbd3;
+
+  --ansi-black: #2b3a47;
+  --ansi-red: #c62a3a;
+  --ansi-green: #12804a;
+  --ansi-yellow: #9a6a00;
+  --ansi-blue: #1660b8;
+  --ansi-magenta: #8a3fb5;
+  --ansi-cyan: #0a7894;
+  --ansi-white: #4a5a6a;
+  --ansi-bright-black: #8592a0;
+  --ansi-bright-red: #e04454;
+  --ansi-bright-green: #1f9d63;
+  --ansi-bright-yellow: #b88310;
+  --ansi-bright-blue: #2a7bd8;
+  --ansi-bright-magenta: #a457cf;
+  --ansi-bright-cyan: #138fb0;
+  --ansi-bright-white: #0b1118;
+}
+
+/* Warm skins keep their terminals warm on a dark display. */
+[data-theme="obsidian"][data-panel="dark"] {
+  --lcd-good: #b8e05a;
+  --lcd-warn: #ff8c1a;
+  --lcd-bad: #ff4d4d;
+  --led-off: #141414;
+  --lcd-scan: rgba(255, 176, 0, 0.025);
+  --ansi-black: #4a3a14;
+  --ansi-red: #ff4d4d;
+  --ansi-green: #b8e05a;
+  --ansi-yellow: #ffcc33;
+  --ansi-blue: #ff9f40;
+  --ansi-magenta: #ff7a59;
+  --ansi-cyan: #ffd27a;
+  --ansi-white: #e8c27a;
+  --ansi-bright-black: #8a5f00;
+  --ansi-bright-red: #ff7a7a;
+  --ansi-bright-green: #d4f08a;
+  --ansi-bright-yellow: #ffe08a;
+  --ansi-bright-blue: #ffbf73;
+  --ansi-bright-magenta: #ffa088;
+  --ansi-bright-cyan: #ffe6b0;
+  --ansi-bright-white: #fff4dc;
+}
+
+[data-theme="sunmetal"][data-panel="dark"] {
+  --led-off: #2a1206;
+  --lcd-scan: rgba(255, 160, 40, 0.03);
+  --ansi-blue: #ff9f40;
+  --ansi-cyan: #ffcf3f;
+  --ansi-magenta: #ff7a8a;
+  --ansi-bright-blue: #ffbf73;
+  --ansi-bright-cyan: #ffe08a;
+}
+
+[data-theme="sunmetal"][data-panel="light"] {
+  --ansi-cyan: #c25a00;
+  --ansi-bright-cyan: #d9730f;
+}
+
+[data-theme="butter"][data-panel="dark"] {
+  --led-off: #241a08;
+  --ansi-cyan: #ffc23d;
+  --ansi-bright-cyan: #ffdc8a;
+}
+
+/* ── Names the components use, drawn as panel content ───────────────────── */
+:root {
+  --bg-primary: var(--lcd-bg);
+  --bg-secondary: var(--lcd-bg);
+  --bg-tertiary: var(--lcd-bg-2);
+  --bg-hover: var(--lcd-hover);
+
+  --accent-primary: var(--lcd-accent);
+  --accent-secondary: var(--lcd-accent);
+  --accent-light: var(--lcd-text);
+  --accent-pale: var(--lcd-hover);
+  --accent-hover: var(--lcd-strong);
+  --accent-dark: var(--lcd-accent);
+
+  --text-primary: var(--lcd-text);
+  --text-secondary: var(--lcd-text);
+  --text-muted: var(--lcd-dim);
+
+  --border-light: var(--lcd-line);
+  --border-medium: var(--lcd-line-2);
+
+  --success: var(--lcd-good);
+  --warning: var(--lcd-warn);
+  --danger: var(--lcd-bad);
+  --info: var(--lcd-accent);
+
+  --font-chrome: Tahoma, Verdana, "Segoe UI", "DejaVu Sans", sans-serif;
+  --font-lcd: "SF Mono", Menlo, Consolas, "Cascadia Mono", "DejaVu Sans Mono", "Liberation Mono", monospace;
+}
+
+html,
+body {
   margin: 0;
   padding: 0;
-  min-height: 100vh;
+  height: 100%;
+  background: transparent;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  line-height: 1.5;
+  font-family: var(--font-chrome);
+  font-size: 12px;
+  color: var(--lcd-text);
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
 }
 
 #root {
-  min-height: 100vh;
+  height: 100%;
 }
 
-button {
-  font-family: inherit;
-}
-
-input, select, textarea {
+button,
+input,
+select,
+textarea {
   font-family: inherit;
 }
 
 a {
-  color: var(--accent-primary);
+  color: var(--lcd-accent);
   text-decoration: none;
 }
 
@@ -147,25 +515,28 @@ a:hover {
   text-decoration: underline;
 }
 
-/* Scrollbar */
+/* Scrollbars: a metal thumb in a panel-coloured channel, Winamp playlist style. */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-tertiary);
+  background: var(--lcd-bg-2);
+  border-left: 1px solid var(--lcd-line);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-medium);
-  border-radius: 4px;
+  background: var(--btn-face);
+  border: 1px solid var(--metal-edge);
+  box-shadow: inset 1px 1px 0 var(--metal-hi);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+::-webkit-scrollbar-corner {
+  background: var(--lcd-bg-2);
 }
 
 ::selection {
-  background: var(--accent-pale);
+  background: var(--lcd-accent);
+  color: var(--lcd-bg);
 }

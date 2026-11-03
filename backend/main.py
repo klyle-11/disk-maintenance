@@ -8,6 +8,18 @@ To run:
     2. Run server: uvicorn main:app --reload --port 8000
 """
 
+import sys
+
+# `disk-intelligence-backend --di <args>` runs the di CLI. The packaged app has
+# no Python of its own, so the di window runs di through the backend binary.
+# Handled before the server imports so di starts as fast as it does in a shell.
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "--di":
+    import os
+    if not getattr(sys, "frozen", False):
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from backend.diskcli.__main__ import main as _di_main
+    sys.exit(_di_main(sys.argv[2:]))
+
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -16,7 +28,6 @@ from typing import Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 import os
-import sys
 import uuid
 import logging
 import asyncio
@@ -39,6 +50,7 @@ else:
 from backend.database import get_db, SnapshotDB, serialize_snapshot, deserialize_snapshot
 from backend.du_hast_much import scan_directory, format_size
 from backend.diskcli.tips import tips_payload
+from backend import di_runner
 from backend.security.path_validator import PathValidator, InvalidPathError, create_default_validator
 from backend.security.input_sanitizer import InputSanitizer, ValidationError
 from backend.security.secure_logger import SecureLogger
@@ -67,6 +79,15 @@ def sanitize_string(s: str) -> str:
 # Default port. The launcher may move the backend to the next free one, so
 # nothing downstream should assume this value.
 DEFAULT_PORT = 8001
+
+# The API this backend speaks, reported by /api/health. Bump it when the app
+# starts relying on new endpoints, along with API_VERSION in
+# frontend/electron/backend.cjs and frontend/src/api.ts: the app refuses an
+# older backend (an old install left running, or a stale build that got
+# packaged) instead of half-working against it.
+#   1: scans, snapshots, compare, du-hast-much, tips
+#   2: di runs (/api/di/*)
+API_VERSION = 2
 
 
 def _local_origins() -> list[str]:
@@ -964,8 +985,8 @@ class FolderComparator:
 
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "ok"}
+    """Health check endpoint; also says which API this backend speaks."""
+    return {"status": "ok", "api": API_VERSION}
 
 
 @app.get("/api/tips")
@@ -1550,7 +1571,8 @@ async def run_du_hast_much(request: DuHastMuchRequest):
     ]
 
     total_size = sum(r.size for r in results)
-    total_files = progress_state["files_scanned"]
+    # The progress counter restarts for each folder; the results have the real count.
+    total_files = sum(r.files for r in results)
 
     return DuHastMuchResponse(
         results=results,
@@ -1636,7 +1658,8 @@ async def stream_du_hast_much(
             elapsed = time.time() - start
             all_results = scan_task.result()
             total_size = sum(r["size"] for r in all_results)
-            total_files = files_scanned[0]
+            # files_scanned restarts for each folder; the results have the real count.
+            total_files = sum(r["files"] for r in all_results)
 
             logger.info(f"[du-hast-much/stream] Scan completed: {root_path} ({total_files} files, {elapsed:.1f}s)")
             yield f"data: {json.dumps({'event_type': 'done', 'total_size': total_size, 'total_files': total_files, 'elapsed_seconds': elapsed})}\n\n"
@@ -1644,6 +1667,72 @@ async def stream_du_hast_much(
             cancelled[0] = True
             scan_task.cancel()
             logger.info(f"[du-hast-much/stream] Scan cancelled: {root_path}")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ============================================================================
+# DI (the command line, run from the app's di window)
+# ============================================================================
+
+
+class DiRunRequest(BaseModel):
+    args: list[str]
+    columns: int = 100
+    confirm: bool = False
+
+
+@app.get("/api/di/commands")
+async def di_commands():
+    """di's commands and their one-line help, for the di window."""
+    return {"commands": di_runner.command_list()}
+
+
+@app.post("/api/di/runs")
+async def di_register_run(body: DiRunRequest, request: Request):
+    """
+    Register a di command; stream it from /api/di/runs/{id}/stream. A
+    destructive command (clean --yes, guard --install, ...) needs confirm=true.
+    """
+    # Only real JSON: a cross-site page can send a body with no Content-Type
+    # without a CORS preflight, and FastAPI would read that as JSON too.
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type != "application/json":
+        raise HTTPException(status_code=415, detail="Content-Type must be application/json")
+    try:
+        run = di_runner.register(body.args, body.columns, body.confirm)
+    except di_runner.DiRequestError as e:
+        if e.needs_confirm:
+            raise HTTPException(status_code=409, detail={"message": str(e), "needsConfirm": True})
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(f"[di] registered {run.id}: di {' '.join(run.argv)}")
+    return {"runId": run.id}
+
+
+@app.get("/api/di/runs/{run_id}/stream")
+async def di_stream_run(run_id: str, request: Request):
+    """Run a registered di command, streaming its output as SSE."""
+    run = di_runner.claim(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="No such di run (or it already started)")
+
+    async def event_generator():
+        start = time.time()
+        async for kind, payload in di_runner.stream(run, request.is_disconnected):
+            if kind == "exit":
+                elapsed = time.time() - start
+                logger.info(f"[di] {run.id} exited {payload} after {elapsed:.1f}s")
+                yield f"data: {json.dumps({'type': 'exit', 'code': payload, 'elapsed': elapsed})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': kind, 'data': payload})}\n\n"
 
     return StreamingResponse(
         event_generator(),

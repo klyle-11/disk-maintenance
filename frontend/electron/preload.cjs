@@ -51,6 +51,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return await ipcRenderer.invoke('backend:openLog');
   },
 
+  /**
+   * The app floats on the desktop. True lets clicks through to whatever is
+   * underneath (macOS and Windows; mouse moves still arrive).
+   */
+  setIgnoreMouse: (ignore) => ipcRenderer.send('window:ignoreMouse', ignore === true),
+
+  /** Linux: only these rects take clicks; an empty list means the whole window. */
+  setShape: (rects) => ipcRenderer.send('window:shape', rects),
+
+  minimize: () => ipcRenderer.send('window:minimize'),
+
+  quit: () => ipcRenderer.send('app:quit'),
+
   /** Reveal a scanned path in Finder/Explorer. Never opens or runs it. */
   revealPath: async (targetPath) => {
     return await ipcRenderer.invoke('shell:showItem', targetPath);

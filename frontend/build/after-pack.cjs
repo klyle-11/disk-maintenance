@@ -1,7 +1,12 @@
 /**
  * electron-builder afterPack hook.
  *
- * The bundled Python backend is a nested executable inside the .app. macOS
+ * First, on every platform: refuse to ship a backend binary built from older
+ * code than the backend source. electron-builder copies whatever is in
+ * backend/dist, and `npm run dist` doesn't rebuild it, so a stale build used to
+ * ship silently and the app then 404'd on every newer endpoint.
+ *
+ * Then, on macOS: the bundled Python backend is a nested executable inside the .app. macOS
  * treats those far more harshly than the app's own binary:
  *
  *   - Anything downloaded gets com.apple.quarantine on every file. Launch
@@ -22,7 +27,46 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+const BACKEND_DIR = path.join(__dirname, '..', '..', 'backend');
+const NOT_SOURCE = new Set(['venv', 'dist', 'build', 'tests', '__pycache__', '.pytest_cache']);
+
+/** The most recently changed file the backend binary is built from. */
+function newestSource(dir, newest = { file: null, mtime: 0 }) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!NOT_SOURCE.has(entry.name)) newestSource(full, newest);
+    } else if (/\.(py|spec)$/.test(entry.name)) {
+      const { mtimeMs } = fs.statSync(full);
+      if (mtimeMs > newest.mtime) Object.assign(newest, { file: full, mtime: mtimeMs });
+    }
+  }
+  return newest;
+}
+
+function checkBackendIsCurrent(platform) {
+  const name = platform === 'win32' ? 'disk-intelligence-backend.exe' : 'disk-intelligence-backend';
+  const binary = path.join(BACKEND_DIR, 'dist', name);
+  if (!fs.existsSync(binary)) {
+    console.warn(`[after-pack] backend/dist/${name} is missing — the app will say so at launch`);
+    return;
+  }
+  const source = newestSource(BACKEND_DIR);
+  if (source.mtime <= fs.statSync(binary).mtimeMs) return;
+  const changed = path.relative(BACKEND_DIR, source.file);
+  if (process.env.DI_ALLOW_STALE_BACKEND === '1') {
+    console.warn(`[after-pack] backend/dist/${name} is older than backend/${changed} — packaging it anyway`);
+    return;
+  }
+  throw new Error(
+    `[after-pack] backend/dist/${name} is older than backend/${changed}: it was built from older ` +
+      'code and the app would 404 on newer endpoints. Run scripts/build-backend.sh, then package again ' +
+      '(or set DI_ALLOW_STALE_BACKEND=1 to ship it anyway).'
+  );
+}
+
 exports.default = async function afterPack(context) {
+  checkBackendIsCurrent(context.electronPlatformName);
   if (context.electronPlatformName !== 'darwin') return;
 
   const appName = context.packager.appInfo.productFilename;
