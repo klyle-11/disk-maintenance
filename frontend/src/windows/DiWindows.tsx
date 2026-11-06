@@ -1,15 +1,16 @@
 /**
- * di as two windows: the terminal, and its command suggestions. Commands run
- * as real di processes in the backend and stream their coloured output.
+ * di in one window: the terminal, quick commands, the prompt, and every
+ * command with its help folded away until asked for. Commands run as real di
+ * processes and stream their coloured output.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ansiCss, parseAnsi, type AnsiSegment } from "../ansi";
 import { useApp } from "../state/app";
 import { diHistory, runDi, setDiColumns, setDiInput, stopDi, clearDi, useDi, visible } from "../state/di";
-import { openWindow } from "../wm/state";
 import { Window } from "../wm/Window";
 import type { WindowArgs } from "./HubWindows";
 import { pickDirectory } from "./pickDirectory";
+import { Section } from "./Section";
 
 const QUICK = ["summary", "scan ~ -d 1", "recent ~", "reclaim ~", "caches", "tips", "snapshots"];
 
@@ -39,6 +40,9 @@ export function DiWindow({ view, controls }: WindowArgs) {
   const live = useDi((s) => s.live);
   const input = useDi((s) => s.input);
   const running = useDi((s) => s.running);
+  const commands = useDi((s) => s.commands);
+  const [listOpen, setListOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState<string | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
   const stickRef = useRef(true);
@@ -101,7 +105,7 @@ export function DiWindow({ view, controls }: WindowArgs) {
           </span>
           {lines.length === 0 && !running ? (
             <div className="lcd-dim">
-              {ready ? "di — type a command, or pick one in DI · COMMANDS" : "waiting for the backend…"}
+              {ready ? "di — type a command, or pick one below" : "waiting for the backend…"}
             </div>
           ) : null}
           {lines.map((line) => (
@@ -114,6 +118,20 @@ export function DiWindow({ view, controls }: WindowArgs) {
               <Segments segments={parseAnsi(liveLine).segments} />
             </div>
           ) : null}
+        </div>
+        <div className="di-quick">
+          {QUICK.map((cmd) => (
+            <button
+              key={cmd}
+              type="button"
+              className="chip is-cmd"
+              disabled={running || !ready}
+              onClick={() => submit(cmd)}
+              title={`Run “di ${cmd}”`}
+            >
+              {cmd}
+            </button>
+          ))}
         </div>
         <div className="di-prompt">
           <span className="di-ps1">di›</span>
@@ -152,57 +170,35 @@ export function DiWindow({ view, controls }: WindowArgs) {
             </button>
           )}
         </div>
-      </div>
-    </Window>
-  );
-}
-
-export function DiCmdsWindow({ view, controls }: WindowArgs) {
-  const ready = useApp((s) => s.connected === true);
-  const commands = useDi((s) => s.commands);
-  const running = useDi((s) => s.running);
-
-  // The terminal is where commands run; bring it back if it was closed.
-  const toTerminal = () => openWindow("di");
-
-  return (
-    <Window title="DI · COMMANDS" shadeInfo={`${commands.length} commands`} view={view} controls={controls} className="kind-di-cmds">
-      <div className="lcd suggestions">
-        <div className="suggest-head">RUN NOW</div>
-        <div className="suggest-quick">
-          {QUICK.map((cmd) => (
-            <button
-              key={cmd}
-              type="button"
-              className="chip is-cmd"
-              disabled={running || !ready}
-              onClick={() => {
-                toTerminal();
-                void runDi(cmd);
-              }}
-            >
-              {cmd}
-            </button>
-          ))}
-        </div>
-        <div className="suggest-head">COMMANDS</div>
-        {commands.length === 0 ? <div className="lcd-dim">{ready ? "loading…" : "waiting for the backend…"}</div> : null}
-        {commands.map((c) => (
-          <button
-            key={c.name}
-            type="button"
-            className="suggest-cmd"
-            title={`Type “${c.name}” into the terminal`}
-            onClick={() => {
-              toTerminal();
-              setDiInput(`${c.name} `);
-              setTimeout(focusPrompt, 50);
-            }}
-          >
-            <span className="suggest-name">{c.name}</span>
-            <span className="suggest-help">{c.help}</span>
-          </button>
-        ))}
+        <Section title="COMMANDS" info={commands.length || (ready ? "…" : "")} open={listOpen} onToggle={() => setListOpen((v) => !v)}>
+          <div className="lcd di-commands">
+            {commands.map((c) => (
+              <div key={c.name} className={`di-command ${helpOpen === c.name ? "is-open" : ""}`}>
+                <button
+                  type="button"
+                  className="di-command-name"
+                  title={`Type “${c.name}” at the prompt`}
+                  onClick={() => {
+                    setDiInput(`${c.name} `);
+                    setTimeout(focusPrompt, 0);
+                  }}
+                >
+                  {c.name}
+                </button>
+                <button
+                  type="button"
+                  className="di-command-more"
+                  aria-expanded={helpOpen === c.name}
+                  aria-label={`What ${c.name} does`}
+                  onClick={() => setHelpOpen((h) => (h === c.name ? null : c.name))}
+                >
+                  {helpOpen === c.name ? "▾" : "▸"}
+                </button>
+                {helpOpen === c.name ? <div className="di-command-help">{c.help}</div> : null}
+              </div>
+            ))}
+          </div>
+        </Section>
       </div>
     </Window>
   );

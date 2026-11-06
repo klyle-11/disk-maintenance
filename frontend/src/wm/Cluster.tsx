@@ -4,7 +4,8 @@
  * Draws each unit at its packed position, centred in the viewport, and turns
  * pointer gestures into reducer actions: dragging a title bar onto another
  * window swaps the two (windows never come loose: a drop anywhere else snaps
- * back), and dragging an edge resizes, with the opposite edge held still.
+ * back), dragging an edge resizes, with the opposite edge held still, and
+ * dragging the main window moves the whole cluster.
  */
 import { Fragment, useEffect, useRef, useState, type Dispatch, type ReactNode } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
@@ -37,11 +38,16 @@ export interface UnitControls {
   shade: () => void;
   close: () => void;
   move: (delta: -1 | 1) => void;
+  /** Drag every window at once (the main window's title bar). */
+  beginPan: (e: ReactPointerEvent) => void;
+  /** Put the cluster back in the middle of the screen. */
+  resetPan: () => void;
 }
 
 type Interaction =
   | { kind: "drag"; id: string; dx: number; dy: number; target: string | null }
   | { kind: "resize"; id: string; handle: Handle }
+  | { kind: "pan" }
   | null;
 
 interface ClusterProps {
@@ -120,7 +126,16 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
     x: Math.round(canvas.w / 2 - (box.x + box.w / 2)),
     y: Math.round(canvas.h / 2 - (box.y + box.h / 2)),
   };
-  const offset = frozen ?? centred;
+  // Dragging the main window moves the cluster off centre, but never off screen.
+  const clampPan = (p: Point): Point => {
+    const axis = (v: number, lo: number, hi: number) => (lo > hi ? 0 : Math.min(hi, Math.max(lo, Math.round(v))));
+    return {
+      x: axis(p.x, PAD - box.x - centred.x, canvas.w - PAD - (box.x + box.w) - centred.x),
+      y: axis(p.y, PAD - box.y - centred.y, canvas.h - PAD - (box.y + box.h) - centred.y),
+    };
+  };
+  const pan = clampPan(state.pan);
+  const offset = frozen ?? { x: centred.x + pan.x, y: centred.y + pan.y };
 
   useHoverClickThrough();
 
@@ -230,6 +245,20 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
     );
   };
 
+  const beginPan = (e: ReactPointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const start = pan;
+    setInteraction({ kind: "pan" });
+    track(
+      (ev) => dispatch({ type: "pan", pan: clampPan({ x: start.x + ev.clientX - startX, y: start.y + ev.clientY - startY }) }),
+      () => setInteraction(null),
+    );
+  };
+
   const drag = interaction?.kind === "drag" ? interaction : null;
   const resize = interaction?.kind === "resize" ? interaction : null;
   // A stable DOM order keeps scroll positions when units are reordered.
@@ -245,6 +274,7 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
         interaction ? "is-interacting" : "",
         resize ? `is-resizing-${resize.handle}` : "",
         drag ? "is-dragging" : "",
+        interaction?.kind === "pan" ? "is-panning" : "",
       ].join(" ")}
     >
       <div className="wm-canvas" style={{ width: canvas.w, height: canvas.h }}>
@@ -268,6 +298,8 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
             shade: () => dispatch({ type: "shade", id: unit.id }),
             close: () => dispatch({ type: "close", id: unit.id }),
             move: (delta) => dispatch({ type: "move", id: unit.id, delta }),
+            beginPan,
+            resetPan: () => dispatch({ type: "pan", pan: { x: 0, y: 0 } }),
           };
           return <Fragment key={unit.id}>{renderUnit(view, controls)}</Fragment>;
         })}

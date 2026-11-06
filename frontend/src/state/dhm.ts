@@ -182,7 +182,8 @@ export function dhmLines(state: Pick<DhmState, "results" | "meta" | "running" | 
   if (!shown || (results.length === 0 && !running)) return [];
   const latest = shown.latest;
   const lines = [
-    `${ESC}1;36mdu-hast-much${RESET} — ${running ? "scanning" : "scanned"} ${ESC}36m${shown.path}${RESET}`,
+    // The path is cut from the left to keep the line inside the table's width.
+    `${ESC}1;36mdu-hast-much${RESET} — ${running ? "scanning" : "scanned"} ${ESC}36m${fit(shown.path, 54)}${RESET}`,
     "",
   ];
   if (results.length === 0) return lines;

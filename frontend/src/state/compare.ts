@@ -1,7 +1,6 @@
 /**
- * Comparison sessions: a small control window (paths, filters, save) and the
- * source/target pair of tree windows, which share one filter, one set of open
- * folders and one scroll position through the session here.
+ * The compare window's session: the two folders, the result, and how it is
+ * shown (filter, open folders, the one scroll position both trees share).
  */
 import {
   compareDirectories,
@@ -12,7 +11,7 @@ import {
   type ComparisonSummary,
 } from "../api";
 import { createStore, useStore } from "../store";
-import { closeWindow, openWindow, wmDispatch, wmStore } from "../wm/state";
+import { closeWindow, openWindow } from "../wm/state";
 import { errorMessage, snapshotProblem } from "../windows/common";
 import { folderKeys, topLevelFolders, visibleItems, type Side, type StatusFilter } from "../windows/compareTree";
 import { isReady, setProblem, upsertSnapshot } from "./app";
@@ -42,7 +41,12 @@ export interface CompareSession {
   expanded: Set<string>;
   scrollTop: number;
   hover: string | null;
+  /** The folder fields; folded away once there are results. */
+  foldersOpen: boolean;
 }
+
+/** The compare window and its session share this id. */
+export const COMPARE = "compare";
 
 export const EMPTY_SUMMARY: ComparisonSummary = {
   identical: 0,
@@ -53,18 +57,11 @@ export const EMPTY_SUMMARY: ComparisonSummary = {
   totalTargetSize: 0,
 };
 
-const store = createStore<Record<string, CompareSession>>({});
-let counter = 0;
+const store = createStore<Record<string, CompareSession>>({ [COMPARE]: blank(COMPARE) });
 
-/** Ids of the snapshots that have windows open, space-separated (a stable value to select). */
-export function useOpenCompareSnapshots(): string {
-  return useStore(store, (s) =>
-    Object.values(s)
-      .map((x) => x.snapshotId)
-      .filter(Boolean)
-      .sort()
-      .join(" "),
-  );
+/** The snapshot the compare window is showing, if any. */
+export function useOpenCompareSnapshot(): string | null {
+  return useStore(store, (s) => s[COMPARE]?.snapshotId ?? null);
 }
 
 export function useCompare(id: string | undefined): CompareSession | undefined {
@@ -110,39 +107,41 @@ function blank(id: string): CompareSession {
     expanded: new Set(),
     scrollTop: 0,
     hover: null,
+    foldersOpen: true,
   };
 }
 
-export const pairId = (id: string) => `${id}:pair`;
-
-export function newCompare(): void {
-  const id = `cmp-${++counter}`;
-  store.set((all) => ({ ...all, [id]: blank(id) }));
-  openWindow("compare", id, { ref: id });
+/** Results nobody saved would be lost by showing something else. */
+function unsaved(session: CompareSession | undefined): boolean {
+  return !!session && session.phase === "results" && !session.snapshotId;
 }
 
-export function openCompareSnapshot(snapshot: ComparisonSnapshot): void {
-  const existing = Object.values(store.get()).find((s) => s.snapshotId === snapshot.id);
-  if (existing && wmStore.get().units.some((u) => u.id === existing.id)) {
-    wmDispatch({ type: "focus", id: existing.id });
-    return;
+/** Open (or flash) the compare window. */
+export function newCompare(): void {
+  openWindow("compare", COMPARE, { ref: COMPARE });
+}
+
+/** Show a saved comparison in the compare window, then bring it up to date. */
+export async function openCompareSnapshot(snapshot: ComparisonSnapshot): Promise<void> {
+  const current = store.get()[COMPARE];
+  if (current?.snapshotId !== snapshot.id) {
+    if (unsaved(current) && !(await ask("This comparison isn't saved. Open the other one anyway?"))) return;
+    const result = fromSnapshot(snapshot);
+    store.set((all) => ({
+      ...all,
+      [COMPARE]: {
+        ...blank(COMPARE),
+        phase: result ? "results" : "setup",
+        paths: { source: snapshot.rootPath, target: snapshot.targetPath || "" },
+        result,
+        snapshotId: snapshot.id,
+        expanded: topLevelFolders(result?.tree ?? []),
+        foldersOpen: !result,
+      },
+    }));
   }
-  const result = fromSnapshot(snapshot);
-  const id = `cmp-${++counter}`;
-  store.set((all) => ({
-    ...all,
-    [id]: {
-      ...blank(id),
-      phase: result ? "results" : "setup",
-      paths: { source: snapshot.rootPath, target: snapshot.targetPath || "" },
-      result,
-      snapshotId: snapshot.id,
-      expanded: topLevelFolders(result?.tree ?? []),
-    },
-  }));
-  openWindow("compare", id, { ref: id });
-  if (result) openWindow("cmp-pair", pairId(id), { ref: id, parent: id });
-  if (isReady()) void refreshCompare(id);
+  newCompare();
+  if (isReady()) void refreshCompare(COMPARE);
 }
 
 export async function runCompare(id: string): Promise<void> {
@@ -160,8 +159,9 @@ export async function runCompare(id: string): Promise<void> {
       filter: "all",
       scrollTop: 0,
       expanded: topLevelFolders(result.tree),
+      snapshotId: null,
+      foldersOpen: false,
     });
-    openWindow("cmp-pair", pairId(id), { ref: id, parent: id });
   } catch (err) {
     patchCompare(id, { phase: "error", error: errorMessage(err) });
   }
@@ -221,28 +221,14 @@ export function toggleFolder(id: string, key: string): void {
   });
 }
 
-export async function closeCompare(id: string): Promise<void> {
-  const session = store.get()[id];
-  if (session?.phase === "results" && !session.snapshotId) {
-    if (!(await ask("This comparison isn't saved. Close it anyway?"))) return;
-  }
-  closeWindow(id);
-  store.set((all) => {
-    const next = { ...all };
-    delete next[id];
-    return next;
-  });
+export async function closeCompare(): Promise<void> {
+  const session = store.get()[COMPARE];
+  if (unsaved(session) && !(await ask("This comparison isn't saved. Close it anyway?"))) return;
+  closeWindow(COMPARE);
+  store.set((all) => ({ ...all, [COMPARE]: { ...blank(COMPARE), paths: session?.paths ?? blank(COMPARE).paths } }));
 }
 
+/** A saved comparison was deleted: stop showing it as saved. */
 export function forgetCompareSnapshot(snapshotId: string): void {
-  for (const s of Object.values(store.get())) {
-    if (s.snapshotId === snapshotId) {
-      closeWindow(s.id);
-      store.set((all) => {
-        const next = { ...all };
-        delete next[s.id];
-        return next;
-      });
-    }
-  }
+  if (store.get()[COMPARE]?.snapshotId === snapshotId) patchCompare(COMPARE, { snapshotId: null });
 }

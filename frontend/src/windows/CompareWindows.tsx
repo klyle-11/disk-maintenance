@@ -1,7 +1,7 @@
 /**
- * A comparison as a control window (folders, filters, save) and a pair of
- * tree windows docked side by side: the source on the left, the target on the
- * right, row for row like a diff, sharing one scroll position.
+ * Comparing in one window: the two folders (folded away once there are
+ * results), the summary and filters, and the source and target trees side by
+ * side, row for row like a diff, sharing one scroll position.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes, type ComparisonItem } from "../api";
@@ -9,17 +9,16 @@ import { useApp } from "../state/app";
 import {
   chooseFilter,
   closeCompare,
+  COMPARE,
   EMPTY_SUMMARY,
-  pairId,
   patchCompare,
   refreshCompare,
   runCompare,
   saveCompare,
   toggleFolder,
   useCompare,
+  type CompareSession,
 } from "../state/compare";
-import { useStore } from "../store";
-import { closeWindow, openWindow, wmStore } from "../wm/state";
 import { Window } from "../wm/Window";
 import { baseName, formatDate } from "./common";
 import {
@@ -37,6 +36,7 @@ import {
 } from "./compareTree";
 import type { WindowArgs } from "./HubWindows";
 import { pickDirectory } from "./pickDirectory";
+import { Section } from "./Section";
 
 const ROW_H = 20;
 const OVERSCAN = 10;
@@ -49,10 +49,9 @@ const FILTERS: { id: StatusFilter; glyph: string; label: string; count: (s: type
 ];
 
 export function CompareWindow({ view, controls }: WindowArgs) {
-  const id = view.unit.id;
-  const s = useCompare(view.unit.ref);
+  const id = COMPARE;
+  const s = useCompare(COMPARE);
   const ready = useApp((a) => a.connected === true);
-  const pairOpen = useStore(wmStore, (w) => w.units.some((u) => u.id === pairId(id)));
   if (!s) return null;
 
   const busy = s.phase === "comparing";
@@ -63,6 +62,8 @@ export function CompareWindow({ view, controls }: WindowArgs) {
     const picked = await pickDirectory();
     if (picked) patchCompare(id, (c) => ({ paths: { ...c.paths, [side]: picked } }));
   };
+  const foldersInfo =
+    s.paths.source || s.paths.target ? `${baseName(s.paths.source) || "?"} ⇄ ${baseName(s.paths.target) || "?"}` : undefined;
 
   return (
     <Window
@@ -71,20 +72,16 @@ export function CompareWindow({ view, controls }: WindowArgs) {
       view={view}
       controls={controls}
       className="kind-compare"
-      onClose={() => closeCompare(id)}
+      onClose={() => void closeCompare()}
     >
       <div className="tool">
-        {s.phase !== "results" ? (
-          <>
-            <div className="lcd lcd-banner">
-              <span className={`led ${busy ? "is-busy" : s.phase === "error" ? "is-bad" : ""}`} data-on={ready} />
-              {s.phase === "error" ? (
-                <span className="lcd-bad">FAILED · {s.error}</span>
-              ) : (
-                <span>{busy ? "COMPARING…" : "SOURCE ⇄ TARGET"}</span>
-              )}
-            </div>
-            {busy ? <div className="seekbar is-indeterminate"><span /></div> : null}
+        <Section
+          title="FOLDERS"
+          info={foldersInfo}
+          open={s.foldersOpen || !s.result}
+          onToggle={() => patchCompare(id, { foldersOpen: !s.foldersOpen })}
+        >
+          <div className="cmp-folders">
             {(["source", "target"] as Side[]).map((side) => (
               <div className="field-row" key={side}>
                 <span className="field-tag">{side === "source" ? "SRC" : "TGT"}</span>
@@ -93,7 +90,7 @@ export function CompareWindow({ view, controls }: WindowArgs) {
                   value={s.paths[side]}
                   placeholder={side === "source" ? "/path/to/original" : "/path/to/copy"}
                   onChange={(e) => patchCompare(id, (c) => ({ paths: { ...c.paths, [side]: e.target.value } }))}
-                  onKeyDown={(e) => e.key === "Enter" && ready && void runCompare(id)}
+                  onKeyDown={(e) => e.key === "Enter" && ready && !busy && void runCompare(id)}
                   spellCheck={false}
                   disabled={busy}
                   aria-label={`${side} folder`}
@@ -115,42 +112,40 @@ export function CompareWindow({ view, controls }: WindowArgs) {
                 onClick={() => void runCompare(id)}
                 disabled={!ready || busy || !s.paths.source.trim() || !s.paths.target.trim()}
               >
-                COMPARE
+                {busy ? "COMPARING…" : "COMPARE"}
               </button>
             </div>
-          </>
-        ) : (
+          </div>
+        </Section>
+
+        {busy ? (
+          <div className="seekbar is-indeterminate">
+            <span />
+          </div>
+        ) : null}
+        {s.phase === "error" ? <div className="lcd lcd-bad lcd-ellipsis">FAILED · {s.error}</div> : null}
+        {!s.result && s.phase === "setup" ? (
+          <div className="lcd lcd-banner">
+            <span className="lcd-dim">{ready ? "Pick a source and a target folder, then COMPARE." : "Waiting for the backend…"}</span>
+          </div>
+        ) : null}
+
+        {s.result ? (
           <>
-            <div className="lcd readout">
-              <div className="stats">
-                <span className="lcd-strong">{formatBytes(summary.totalSourceSize)}</span>
-                <span className="lcd-dim">⇄</span>
-                <span className="lcd-strong">{formatBytes(summary.totalTargetSize)}</span>
-                <span className="spacer" />
-                <span>{differences} diff</span>
+            <div className="field-row">
+              <div className="seg is-wide">
+                {FILTERS.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={`seg-btn is-${f.id} ${s.filter === f.id ? "is-on" : ""}`}
+                    onClick={() => chooseFilter(id, f.id)}
+                    title={`Show only ${f.label} (again to clear)`}
+                  >
+                    {f.glyph} {f.count(summary)}
+                  </button>
+                ))}
               </div>
-              {s.busy === "refreshing" ? (
-                <div className="lcd-accent blink">REFRESHING</div>
-              ) : s.problem ? (
-                <div className="lcd-bad lcd-ellipsis" title={s.problem}>
-                  ⚠ {s.problem}
-                </div>
-              ) : (
-                <div className="lcd-dim">{s.snapshotId ? "saved" : "not saved"}</div>
-              )}
-            </div>
-            <div className="seg is-wide">
-              {FILTERS.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  className={`seg-btn is-${f.id} ${s.filter === f.id ? "is-on" : ""}`}
-                  onClick={() => chooseFilter(id, f.id)}
-                  title={`Show only ${f.label} (again to clear)`}
-                >
-                  {f.glyph} {f.count(summary)}
-                </button>
-              ))}
             </div>
             <div className="field-row">
               <div className="seg">
@@ -181,18 +176,14 @@ export function CompareWindow({ view, controls }: WindowArgs) {
               <button type="button" className="chip" title="Collapse all" onClick={() => patchCompare(id, { expanded: new Set() })}>
                 −
               </button>
-            </div>
-            <div className="field-row">
-              <button
-                type="button"
-                className={`steel-btn is-toggle ${pairOpen ? "is-on" : ""}`}
-                onClick={() => (pairOpen ? closeWindow(pairId(id)) : openWindow("cmp-pair", pairId(id), { ref: id, parent: id }))}
-                title="Show the source and target windows"
-              >
-                <span className="btn-led" />
-                TREES
-              </button>
               <span className="spacer" />
+              {s.busy === "refreshing" ? (
+                <span className="lcd-accent blink">REFRESHING</span>
+              ) : s.problem ? (
+                <span className="lcd-bad lcd-ellipsis" title={s.problem}>
+                  ⚠ {s.problem}
+                </span>
+              ) : null}
               {s.snapshotId ? (
                 <button type="button" className="steel-btn" onClick={() => void refreshCompare(id)} disabled={!!s.busy || !ready}>
                   UPDATE
@@ -203,8 +194,9 @@ export function CompareWindow({ view, controls }: WindowArgs) {
                 </button>
               )}
             </div>
+            <CompareTrees session={s} />
           </>
-        )}
+        ) : null}
       </div>
     </Window>
   );
@@ -340,69 +332,66 @@ function PathList({ base, tree, side, filter }: { base: string; tree: Comparison
   );
 }
 
-export function ComparePairWindows({ view, controls }: WindowArgs) {
-  const s = useCompare(view.unit.ref);
-  const tree = useMemo(() => s?.result?.tree ?? [], [s?.result]);
-  const filter = s?.filter ?? "all";
-  const diffOnly = s?.diffOnly ?? false;
-  const expanded = s?.expanded;
-  const shown = useMemo(() => visibleItems(tree, filter, diffOnly), [tree, filter, diffOnly]);
-  const rows = useMemo(() => flattenRows(tree, expanded ?? new Set(), shown), [tree, expanded, shown]);
-  if (!s?.result) return null;
-  const result = s.result;
+/** Follow an element's height (the trees only draw the rows in view). */
+function useHeight() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setHeight(el.clientHeight));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, height };
+}
 
-  const sizes = view.unit.sizes;
-  const left = { ...view.rect, w: sizes[0].w };
-  const right = { ...view.rect, x: view.rect.x + sizes[0].w, w: sizes[1].w };
+/** The source and target side by side. */
+function CompareTrees({ session: s }: { session: CompareSession }) {
+  const tree = useMemo(() => s.result?.tree ?? [], [s.result]);
+  const shown = useMemo(() => visibleItems(tree, s.filter, s.diffOnly), [tree, s.filter, s.diffOnly]);
+  const rows = useMemo(() => flattenRows(tree, s.expanded, shown), [tree, s.expanded, shown]);
+  const { ref, height } = useHeight();
+  if (!s.result) return null;
+  const result = s.result;
   const differences = result.summary.modified + result.summary.missingFromTarget + result.summary.extraInTarget;
 
   return (
-    <>
-      {(["source", "target"] as Side[]).map((side, member) => {
+    <div className="cmp-split" ref={ref}>
+      {(["source", "target"] as Side[]).map((side) => {
         const base = side === "source" ? result.sourcePath : result.targetPath;
         const total = side === "source" ? result.summary.totalSourceSize : result.summary.totalTargetSize;
         return (
-          <Window
-            key={side}
-            title={`${side === "source" ? "SOURCE ◂" : "▸ TARGET"} · ${baseName(base)}`}
-            shadeInfo={side === "source" ? `${differences} differences` : undefined}
-            view={view}
-            controls={controls}
-            rect={member === 0 ? left : right}
-            member={member}
-            className={`kind-cmp-pair ${member === 0 ? "is-pair-left" : "is-pair-right"}`}
-          >
-            <div className="cmp-side">
-              <div className="lcd cmp-head">
-                <span className="cmp-side-tag">{side === "source" ? "SRC" : "TGT"}</span>
-                <span className="lcd-ellipsis lcd-strong" title={base}>
-                  {base}
-                </span>
-                <span>{formatBytes(total)}</span>
-              </div>
-              {s.mode === "paths" ? (
-                <PathList base={base} tree={tree} side={side} filter={s.filter} />
-              ) : rows.length === 0 ? (
-                <div className="lcd cmp-tree">
-                  <div className="lcd-dim pad">
-                    {differences === 0 && s.filter === "all" ? "The folders match: every file is identical." : "Nothing matches this filter."}
-                  </div>
-                </div>
-              ) : (
-                <TreeBody
-                  session={s.id}
-                  side={side}
-                  rows={rows}
-                  height={view.rect.h}
-                  scrollTop={s.scrollTop}
-                  hover={s.hover}
-                  expanded={s.expanded}
-                />
-              )}
+          <div key={side} className="cmp-side">
+            <div className="lcd cmp-head">
+              <span className="cmp-side-tag">{side === "source" ? "SRC" : "TGT"}</span>
+              <span className="lcd-ellipsis lcd-strong" title={base}>
+                {base}
+              </span>
+              <span>{formatBytes(total)}</span>
             </div>
-          </Window>
+            {s.mode === "paths" ? (
+              <PathList base={base} tree={tree} side={side} filter={s.filter} />
+            ) : rows.length === 0 ? (
+              <div className="lcd cmp-tree">
+                <div className="lcd-dim pad">
+                  {differences === 0 && s.filter === "all" ? "The folders match: every file is identical." : "Nothing matches this filter."}
+                </div>
+              </div>
+            ) : (
+              <TreeBody
+                session={s.id}
+                side={side}
+                rows={rows}
+                height={height}
+                scrollTop={s.scrollTop}
+                hover={s.hover}
+                expanded={s.expanded}
+              />
+            )}
+          </div>
         );
       })}
-    </>
+    </div>
   );
 }

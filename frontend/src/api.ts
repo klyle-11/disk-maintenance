@@ -520,6 +520,33 @@ export interface SpaceTips {
   tips: SpaceTip[];
 }
 
+export interface DiskSpace {
+  /** Short label: "C:", "Macintosh HD", "/", "USB". */
+  name: string;
+  mount: string;
+  totalBytes: number;
+  freeBytes: number;
+  removable: boolean;
+  /** Holds the home folder. */
+  home: boolean;
+}
+
+/**
+ * Free space on every disk, the home disk first. The legacy Python backend
+ * doesn't list disks; there the home disk's free space comes with the tips.
+ */
+export async function getDisks(): Promise<DiskSpace[]> {
+  const data = await call<any[]>("disks", {}, async () => []);
+  return data.map((d) => ({
+    name: d.name,
+    mount: d.mount,
+    totalBytes: d.total_bytes,
+    freeBytes: d.free_bytes,
+    removable: d.removable,
+    home: d.home,
+  }));
+}
+
 /**
  * Tips for keeping freed space from filling back up (shared with `di tips`).
  */

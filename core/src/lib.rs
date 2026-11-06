@@ -7,6 +7,7 @@
 pub mod analyzer;
 pub mod compare;
 pub mod di;
+pub mod disks;
 pub mod duhast;
 pub mod model;
 pub mod paths;
