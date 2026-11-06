@@ -3,7 +3,15 @@
  * the command-suggestions window can fill in or run commands for the
  * terminal window.
  */
-import { DiConfirmError, getDiCommands, splitCommandLine, startDiRun, streamDiRun, type DiCommand } from "../api";
+import {
+  DiConfirmError,
+  getDiCommands,
+  sendDiInput,
+  splitCommandLine,
+  startDiRun,
+  streamDiRun,
+  type DiCommand,
+} from "../api";
 import { parseAnsi, type AnsiSegment, type AnsiStyle } from "../ansi";
 import { createStore, useStore } from "../store";
 import { ask } from "../desktop";
@@ -59,6 +67,8 @@ let nextId = 0;
 let partial = "";
 let style: AnsiStyle = {};
 let abort: AbortController | null = null;
+/** The run in progress, which typed lines answer. */
+let currentRun: string | null = null;
 
 /** Resolve a terminal line's \r redraws to what ends up on screen. */
 export function visible(text: string): string {
@@ -152,6 +162,7 @@ export async function runDi(text: string): Promise<void> {
       runId = await startDiRun(args, columns, true);
     }
     if (controller.signal.aborted) return;
+    currentRun = runId;
     await streamDiRun(
       runId,
       {
@@ -170,7 +181,32 @@ export async function runDi(text: string): Promise<void> {
     else note(err instanceof Error ? err.message : String(err), { fg: "var(--ansi-red)" });
   } finally {
     abort = null;
+    currentRun = null;
     patch({ running: false });
+  }
+}
+
+/** Is the running command waiting at its pick-to-delete prompt (or its y/n)? */
+export function promptKind(live: string): "pick" | "confirm" | null {
+  const text = parseAnsi(visible(live)).segments.map((s) => s.text).join("").trimEnd();
+  if (/delete #$/.test(text)) return "pick";
+  if (/\[y\/n\]$/.test(text)) return "confirm";
+  return null;
+}
+
+/**
+ * Answer the running command's prompt with a typed line (a row number, y/n,
+ * an empty line to list what's left, q to finish). Echoed like a terminal.
+ */
+export async function answerDi(text: string): Promise<void> {
+  const run = currentRun;
+  if (!run) return;
+  patch({ input: "" });
+  feed(`${text}\n`);
+  try {
+    await sendDiInput(run, text);
+  } catch (err) {
+    note(err instanceof Error ? err.message : String(err), { fg: "var(--ansi-red)" });
   }
 }
 

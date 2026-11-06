@@ -1,6 +1,8 @@
 /**
- * du-hast-much: per-folder sizes with live progress. The settings window and
- * the output window both read this state.
+ * du-hast-much: per-folder sizes with live progress, and browsing: click a
+ * folder in the table to open it, BACK to return. Every folder's results are
+ * kept (across restarts too) and shown at once when revisited, while a fresh
+ * run brings them up to date.
  */
 import {
   formatBytes,
@@ -12,7 +14,7 @@ import {
 } from "../api";
 import { createStore, useStore } from "../store";
 
-/** One scan as kept in history. */
+/** One scan as kept in history and in the folder cache. */
 export interface DhmRecord extends DuHastMuchResponse {
   path: string;
   depth: number;
@@ -23,33 +25,70 @@ export interface DhmRecord extends DuHastMuchResponse {
 
 export interface DhmState {
   path: string;
-  depth: number;
   top: number | null;
   latest: boolean;
   running: boolean;
+  /** Showing remembered results while a fresh run updates them. */
+  refreshing: boolean;
   error: string | null;
   results: DuHastMuchResult[];
   meta: { totalSize: number; totalFiles: number; elapsedSeconds: number } | null;
-  /** The path and mode the shown results are for. */
+  /** The folder the shown results are for, and how they are shown. */
   shown: { path: string; latest: boolean; top: number | null } | null;
+  /** When the shown results were measured (ms), for "as of". */
+  shownAt: number | null;
+  /** Folders opened before this one, for BACK. */
+  trail: string[];
   history: DhmRecord[];
+}
+
+// ---------------------------------------------------------------------------
+// Every folder's last results, so revisiting one shows it at once.
+// ---------------------------------------------------------------------------
+
+const CACHE_KEY = "dhm-folders-v1";
+const CACHE_MAX = 80;
+
+function readCache(): Record<string, DhmRecord> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+const cache: Record<string, DhmRecord> = readCache();
+
+function remember(record: DhmRecord): void {
+  cache[record.path] = record;
+  const keys = Object.keys(cache).sort((a, b) => cache[b].timestamp - cache[a].timestamp);
+  for (const key of keys.slice(CACHE_MAX)) delete cache[key];
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Storage full or unavailable: folders are just measured again.
+  }
 }
 
 function initial(): DhmState {
   const history = getDuHastMuchHistory() as DhmRecord[];
   const last = history[0];
+  for (const record of history) if (!cache[record.path] || cache[record.path].timestamp < record.timestamp) cache[record.path] = record;
   return {
     path: last?.path ?? "",
-    depth: last?.depth ?? 1,
     top: last ? last.top ?? null : 10,
     latest: last?.latest ?? false,
     running: false,
+    refreshing: false,
     error: null,
     results: last?.results ?? [],
     meta: last
       ? { totalSize: last.total_size, totalFiles: last.total_files, elapsedSeconds: last.elapsed_seconds }
       : null,
     shown: last ? { path: last.path, latest: last.latest, top: last.top ?? null } : null,
+    shownAt: last?.timestamp ?? null,
+    trail: [],
     history,
   };
 }
@@ -65,61 +104,122 @@ export function patchDhm(patch: Partial<DhmState>): void {
 }
 
 let abort: AbortController | null = null;
+/** Bumped by every run, so a superseded run's late results are ignored. */
+let runToken = 0;
 
-export async function runDhm(): Promise<void> {
-  const { path, depth, top, latest, running } = dhmStore.get();
-  const root = path.trim();
-  if (!root || running) return;
+/**
+ * Measure `root`'s folders. With remembered results on screen the table
+ * stays put and is replaced when the run finishes; otherwise rows appear as
+ * each folder is measured. `record` adds the run to the recent-scans list.
+ */
+async function measure(root: string, record: boolean): Promise<void> {
+  abort?.abort();
+  const token = ++runToken;
   const controller = new AbortController();
   abort = controller;
+  const { top, latest } = dhmStore.get();
+  const cached = cache[root];
+  patchDhm({
+    path: root,
+    running: true,
+    refreshing: !!cached,
+    error: null,
+    shown: { path: root, latest, top },
+    ...(cached
+      ? {
+          results: cached.results,
+          meta: { totalSize: cached.total_size, totalFiles: cached.total_files, elapsedSeconds: cached.elapsed_seconds },
+          shownAt: cached.timestamp,
+        }
+      : { results: [], meta: null, shownAt: null }),
+  });
   const results: DuHastMuchResult[] = [];
-  patchDhm({ running: true, error: null, results: [], meta: null, shown: { path: root, latest, top } });
   try {
     const summary = await streamDuHastMuch(
-      { path: root, depth, top: top || undefined, latest },
+      { path: root, top: top || undefined, latest },
       (result) => {
         results.push(result);
-        patchDhm({ results: [...results] });
+        if (token === runToken && !cached) patchDhm({ results: [...results] });
       },
       controller.signal,
     );
-    const record: DhmRecord = {
+    if (token !== runToken) return;
+    const fresh: DhmRecord = {
       results,
       total_size: summary.totalSize,
       total_files: summary.totalFiles,
       elapsed_seconds: summary.elapsedSeconds,
       path: root,
-      depth,
+      depth: 1,
       top: top || undefined,
       latest,
       timestamp: Date.now(),
     };
-    saveDuHastMuchToHistory(record);
-    patchDhm({ meta: summary, running: false, history: getDuHastMuchHistory() as DhmRecord[] });
+    remember(fresh);
+    if (record) saveDuHastMuchToHistory(fresh);
+    patchDhm({
+      results,
+      meta: summary,
+      shownAt: fresh.timestamp,
+      running: false,
+      refreshing: false,
+      history: record ? (getDuHastMuchHistory() as DhmRecord[]) : dhmStore.get().history,
+    });
   } catch (err) {
+    if (token !== runToken) return;
     const stopped = controller.signal.aborted;
-    patchDhm({ running: false, error: stopped ? null : err instanceof Error ? err.message : "Scan failed" });
+    patchDhm({ running: false, refreshing: false, error: stopped ? null : err instanceof Error ? err.message : "Scan failed" });
   } finally {
-    abort = null;
+    if (abort === controller) abort = null;
   }
+}
+
+/** Scan the typed folder (SCAN / Enter). A new folder is a step BACK can undo. */
+export async function runDhm(): Promise<void> {
+  const { path, shown } = dhmStore.get();
+  const root = path.trim();
+  if (!root) return;
+  if (shown && shown.path !== root) patchDhm({ trail: [...dhmStore.get().trail, shown.path].slice(-50) });
+  await measure(root, true);
+}
+
+/** Open a folder from the table (or the recent list), remembering where we were. */
+export function openDhmFolder(path: string): void {
+  const { shown, trail } = dhmStore.get();
+  if (shown?.path === path) {
+    void measure(path, false);
+    return;
+  }
+  patchDhm({ trail: shown ? [...trail, shown.path].slice(-50) : trail });
+  void measure(path, false);
+}
+
+/** The folder above `path` ("C:\\Users" for "C:\\Users\\me"), or null at a root. */
+export function parentOf(path: string): string | null {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (cut < 0) return null;
+  const parent = trimmed.slice(0, cut);
+  if (!parent) return "/";
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
+}
+
+/** Where BACK goes: the folder opened before this one, or else the parent. */
+export function backTarget(state: Pick<DhmState, "trail" | "shown">): string | null {
+  if (state.trail.length) return state.trail[state.trail.length - 1];
+  return state.shown ? parentOf(state.shown.path) : null;
+}
+
+export function dhmBack(): void {
+  const state = dhmStore.get();
+  const target = backTarget(state);
+  if (!target) return;
+  patchDhm({ trail: state.trail.length ? state.trail.slice(0, -1) : [] });
+  void measure(target, false);
 }
 
 export function stopDhm(): void {
   abort?.abort();
-}
-
-/** Show a scan from history again. */
-export function showDhmRecord(record: DhmRecord): void {
-  patchDhm({
-    path: record.path,
-    depth: record.depth,
-    top: record.top ?? null,
-    latest: record.latest,
-    results: record.results,
-    meta: { totalSize: record.total_size, totalFiles: record.total_files, elapsedSeconds: record.elapsed_seconds },
-    shown: { path: record.path, latest: record.latest, top: record.top ?? null },
-    error: null,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -176,17 +276,27 @@ function bar(fraction: number, width: number): string {
   return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
+/** A line of the table; result rows carry the folder they open. */
+export interface DhmLine {
+  text: string;
+  path?: string;
+}
+
 /** The du-hast-much table for the current results. Empty before any scan. */
-export function dhmLines(state: Pick<DhmState, "results" | "meta" | "running" | "shown">): string[] {
-  const { results, meta, running, shown } = state;
+export function dhmLines(
+  state: Pick<DhmState, "results" | "meta" | "running" | "shown" | "refreshing" | "shownAt">,
+): DhmLine[] {
+  const { results, meta, running, shown, refreshing, shownAt } = state;
   if (!shown || (results.length === 0 && !running)) return [];
   const latest = shown.latest;
-  const lines = [
+  const lines: (string | DhmLine)[] = [
     // The path is cut from the left to keep the line inside the table's width.
-    `${ESC}1;36mdu-hast-much${RESET} — ${running ? "scanning" : "scanned"} ${ESC}36m${fit(shown.path, 54)}${RESET}`,
+    refreshing
+      ? `${ESC}1;36mdu-hast-much${RESET} — ${ESC}36m${fit(shown.path, 40)}${RESET} ${ESC}2mas of ${shownAt ? timeAgo(shownAt / 1000) : "earlier"} · updating…${RESET}`
+      : `${ESC}1;36mdu-hast-much${RESET} — ${running ? "scanning" : "scanned"} ${ESC}36m${fit(shown.path, 54)}${RESET}`,
     "",
   ];
-  if (results.length === 0) return lines;
+  if (results.length === 0) return lines.map((l) => (typeof l === "string" ? { text: l } : l));
 
   // Results stream in as each folder finishes; the order is ours to impose.
   const sorted = [...results].sort(latest ? (a, b) => b.latest_mtime - a.latest_mtime : (a, b) => b.size - a.size);
@@ -211,7 +321,9 @@ export function dhmLines(state: Pick<DhmState, "results" | "meta" | "running" | 
         { title: "Usage", width: 12 },
       ];
 
-  lines.push(`${ESC}1m${latest ? "Recently modified directories" : "Disk usage by directory"}${RESET}`);
+  lines.push(
+    `${ESC}1m${latest ? "Recently modified directories" : "Disk usage by directory"}${RESET}${ESC}2m  · click a row to open it${RESET}`,
+  );
   lines.push(rule(columns, "┌", "┬", "┐"));
   lines.push(row(columns, columns.map((c) => ({ text: c.title, color: `${ESC}2m` }))));
   lines.push(rule(columns, "├", "┼", "┤"));
@@ -220,8 +332,9 @@ export function dhmLines(state: Pick<DhmState, "results" | "meta" | "running" | 
     if (latest) {
       // Lots of small new files is the pattern worth noticing.
       const swarm = r.avg_file_size < 100 * 1024 && r.files > 50 ? `${ESC}1;31m` : undefined;
-      lines.push(
-        row(columns, [
+      lines.push({
+        path: r.path,
+        text: row(columns, [
           { text: String(i + 1) },
           { text: r.name, color: swarm },
           { text: formatBytes(r.size), color: big },
@@ -229,18 +342,19 @@ export function dhmLines(state: Pick<DhmState, "results" | "meta" | "running" | 
           { text: formatBytes(r.avg_file_size) },
           { text: timeAgo(r.latest_mtime) },
         ]),
-      );
+      });
     } else {
       const share = total > 0 ? (r.size / total) * 100 : 0;
-      lines.push(
-        row(columns, [
+      lines.push({
+        path: r.path,
+        text: row(columns, [
           { text: String(i + 1) },
           { text: r.name },
           { text: formatBytes(r.size), color: big },
           { text: `${share.toFixed(1)}%`, color: share > 20 ? `${ESC}1;33m` : undefined },
           { text: bar(r.size / largest, 12), color: `${ESC}36m` },
         ]),
-      );
+      });
     }
   });
   lines.push(rule(columns, "├", "┼", "┤"));
@@ -259,5 +373,5 @@ export function dhmLines(state: Pick<DhmState, "results" | "meta" | "running" | 
     const files = results.reduce((sum, r) => sum + r.files, 0);
     lines.push(`${ESC}2mScanning… ${results.length} directories · ${formatBytes(total)} · ${files.toLocaleString()} files${RESET}`);
   }
-  return lines;
+  return lines.map((l) => (typeof l === "string" ? { text: l } : l));
 }

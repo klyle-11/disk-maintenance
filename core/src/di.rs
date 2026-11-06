@@ -6,6 +6,11 @@
 //! and which ones change the disk is decided by di's own parser, through
 //! `python -m diskcli.app_bridge`, the same code the Electron backend uses.
 //!
+//! Commands that list rows (reclaim, caches, clean, scan, …) stay open with
+//! di's own pick-to-delete prompt, as in a terminal: the window sends each
+//! line typed there to the run with [`DiRunner::send_input`], and di asks
+//! y/n before deleting anything.
+//!
 //! The app bundles diskcli's sources; it needs a Python 3.10+ on the machine
 //! (found like the `di` launchers do, or set with `DI_PYTHON`).
 
@@ -13,9 +18,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -51,6 +56,8 @@ pub struct DiRunner {
     root: PathBuf,
     python: OnceLock<Result<Vec<OsString>, String>>,
     live: Mutex<Live>,
+    /// Each running command's stdin, for answering its prompts.
+    inputs: Mutex<HashMap<String, ChildStdin>>,
 }
 
 fn no_window(cmd: &mut Command) -> &mut Command {
@@ -143,6 +150,7 @@ impl DiRunner {
             root: root.into(),
             python: OnceLock::new(),
             live: Mutex::new(Live::default()),
+            inputs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -218,14 +226,14 @@ impl DiRunner {
         cmd.args(["-m", "diskcli"])
             .args(&checked.argv)
             .env_remove("NO_COLOR")
-            // Not a person at a keyboard: keeps di's pick-to-delete prompt off.
-            .env_remove("DI_TTY")
+            // A person is at the window: di keeps its pick-to-delete prompt.
+            .env("DI_TTY", "1")
             .env("DI_FORCE_COLOR", "1")
             .env("COLUMNS", columns.clamp(40, 400).to_string())
             .env("LINES", "50")
             .env("PYTHONUNBUFFERED", "1")
             .env("TERM", "xterm-256color")
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         #[cfg(unix)]
@@ -252,6 +260,12 @@ impl DiRunner {
             live.runs.insert(request_id.to_string(), Some(child.id()));
             child
         };
+        if let Some(stdin) = child.stdin.take() {
+            self.inputs
+                .lock()
+                .unwrap()
+                .insert(request_id.to_string(), stdin);
+        }
 
         // One stream, as in a terminal: stderr is copied into the same
         // channel from a second thread, chunk by chunk.
@@ -301,6 +315,7 @@ impl DiRunner {
         }
 
         let status = child.wait();
+        self.inputs.lock().unwrap().remove(request_id);
         self.live.lock().unwrap().runs.remove(request_id);
         let code = match status {
             Ok(s) => s.code().unwrap_or(-1),
@@ -313,8 +328,26 @@ impl DiRunner {
         Ok(())
     }
 
+    /// Send a line typed in the window to a running command (an answer to
+    /// its `delete #` or `[y/n]` prompt).
+    pub fn send_input(&self, request_id: &str, text: &str) -> Result<(), String> {
+        if text.contains('\n') || text.contains('\r') {
+            return Err("one line at a time".into());
+        }
+        let mut inputs = self.inputs.lock().unwrap();
+        let stdin = inputs
+            .get_mut(request_id)
+            .ok_or_else(|| "that command has finished".to_string())?;
+        stdin
+            .write_all(format!("{text}\n").as_bytes())
+            .and_then(|_| stdin.flush())
+            .map_err(|_| "that command is no longer reading input".to_string())
+    }
+
     /// Stop a run (or, if it has not started yet, keep it from starting).
     pub fn stop(&self, request_id: &str) {
+        // Closing its input ends a prompt at once, even before the kill lands.
+        self.inputs.lock().unwrap().remove(request_id);
         let mut live = self.live.lock().unwrap();
         match live.runs.get(request_id) {
             Some(Some(pid)) => stop_process(*pid),
@@ -417,6 +450,47 @@ mod tests {
         assert!(refused
             .unwrap_err()
             .contains("not run without confirmation"));
+    }
+
+    /// reclaim lists rows and stays open; answering "1", "y" deletes row 1.
+    #[test]
+    fn answers_the_pick_to_delete_prompt() {
+        let Some(di) = runner() else { return };
+        // Not tempfile's default ".tmp…" name: reclaim passes over hidden folders.
+        let dir = tempfile::Builder::new()
+            .prefix("di-pick")
+            .tempdir()
+            .unwrap();
+        let junk = dir.path().join("proj/node_modules/pkg");
+        std::fs::create_dir_all(&junk).unwrap();
+        std::fs::write(dir.path().join("proj/package.json"), "{}").unwrap();
+        std::fs::write(junk.join("big.js"), vec![0u8; 3_000_000]).unwrap();
+
+        let args = vec![
+            "reclaim".to_string(),
+            dir.path().to_string_lossy().into_owned(),
+            "-m".into(),
+            "1M".into(),
+        ];
+        let mut out = String::new();
+        let mut answered = 0;
+        di.run(&args, 100, false, "pick", |event| {
+            if let DiEvent::Out { data } = event {
+                out.push_str(&data);
+                let prompts = out.matches("delete #").count() + out.matches("[y/n]").count();
+                // delete # → 1, [y/n] → y, then the next delete # → q.
+                while answered < prompts {
+                    let answer = ["1", "y", "q"].get(answered).copied().unwrap_or("q");
+                    di.send_input("pick", answer).unwrap();
+                    answered += 1;
+                }
+            }
+        })
+        .unwrap();
+        assert!(out.contains("deleted") && out.contains("freed"), "{out}");
+        assert!(!dir.path().join("proj/node_modules").exists());
+        assert!(dir.path().join("proj/package.json").exists());
+        assert!(di.send_input("pick", "q").is_err());
     }
 
     #[test]

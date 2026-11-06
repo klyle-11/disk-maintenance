@@ -1164,6 +1164,17 @@ export function streamDiRun(runId: string, handlers: DiStreamHandlers, signal?: 
   });
 }
 
+/**
+ * Answer a running di command's prompt: after a listing, di asks for a row
+ * number to delete (`delete #`) and then y/n. Only the desktop app keeps
+ * that prompt; the legacy Electron backend runs di without one.
+ */
+export async function sendDiInput(runId: string, text: string): Promise<void> {
+  await call("di_input", { requestId: runId, text }, () => {
+    throw new Error("Answering di's prompts needs the desktop app");
+  });
+}
+
 type DiEvent = { type: "out"; data: string } | { type: "exit"; code: number; elapsed: number };
 
 /**

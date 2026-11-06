@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ansiCss, parseAnsi, type AnsiSegment } from "../ansi";
 import { useApp } from "../state/app";
-import { diHistory, runDi, setDiColumns, setDiInput, stopDi, clearDi, useDi, visible } from "../state/di";
+import { answerDi, diHistory, promptKind, runDi, setDiColumns, setDiInput, stopDi, clearDi, useDi, visible } from "../state/di";
 import { Window } from "../wm/Window";
 import type { WindowArgs } from "./HubWindows";
 import { pickDirectory } from "./pickDirectory";
@@ -70,8 +70,23 @@ export function DiWindow({ view, controls }: WindowArgs) {
     void runDi(text).then(focusPrompt);
   };
 
+  // After a listing di stays open at "delete #": typed lines answer it.
+  const prompt = running ? promptKind(live) : null;
+  // When di starts asking, put the cursor where the answer goes.
+  useEffect(() => {
+    if (prompt) focusPrompt();
+  }, [prompt]);
+
+  const answer = () => {
+    stickRef.current = true;
+    void answerDi(input.trim());
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") submit(input);
+    if (e.key === "Enter") {
+      if (running) answer();
+      else submit(input);
+    }
     else if (e.key === "ArrowUp") {
       e.preventDefault();
       diHistory(1);
@@ -134,13 +149,23 @@ export function DiWindow({ view, controls }: WindowArgs) {
           ))}
         </div>
         <div className="di-prompt">
-          <span className="di-ps1">di›</span>
+          <span className={`di-ps1 ${prompt ? "is-prompt" : ""}`} title={prompt ? "di is asking" : undefined}>
+            {prompt === "pick" ? "#›" : prompt === "confirm" ? "y/n›" : "di›"}
+          </span>
           <input
             className="lcd-input"
             value={input}
             onChange={(e) => setDiInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={running ? "running… (ctrl+c stops)" : "scan ~/dev -d 1"}
+            placeholder={
+              prompt === "pick"
+                ? "row number to delete · Enter lists what's left · q finishes"
+                : prompt === "confirm"
+                  ? "y to delete, n to keep"
+                  : running
+                    ? "running… (ctrl+c stops)"
+                    : "scan ~/dev -d 1"
+            }
             spellCheck={false}
             autoCapitalize="off"
             autoComplete="off"
@@ -161,9 +186,16 @@ export function DiWindow({ view, controls }: WindowArgs) {
             PATH
           </button>
           {running ? (
-            <button type="button" className="steel-btn is-warn" onClick={stopDi}>
-              STOP
-            </button>
+            <>
+              {prompt ? (
+                <button type="button" className="steel-btn is-primary" onClick={answer} title="Send the answer to di">
+                  SEND
+                </button>
+              ) : null}
+              <button type="button" className="steel-btn is-warn" onClick={stopDi}>
+                STOP
+              </button>
+            </>
           ) : (
             <button type="button" className="steel-btn is-primary" onClick={() => submit(input)} disabled={!ready || !input.trim()}>
               RUN
