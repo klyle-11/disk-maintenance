@@ -52,21 +52,42 @@ fn fold(path: &str) -> String {
     }
 }
 
-/// True if `path` is an ignored system location or an ignored folder name.
-pub fn should_ignore(path: &Path) -> bool {
-    let folded = fold(&path.to_string_lossy());
-    let name = folded.rsplit('/').next().unwrap_or("").to_lowercase();
-    if IGNORE_NAMES
-        .iter()
-        .chain(IGNORE_NAMES_OS)
-        .any(|n| n.to_lowercase() == name)
-    {
-        return true;
+fn within(folded: &str, prefix: &str) -> bool {
+    folded == prefix || folded.starts_with(&format!("{prefix}/"))
+}
+
+/// What one scan skips. The system locations are skipped on the way to
+/// somewhere else (a scan of `/` or `C:\` passes them by), but not when the
+/// scan root is itself inside one: scanning `/private/tmp/x` on macOS or
+/// `/var/log` on Linux walks it.
+pub struct IgnoreRules {
+    prefixes: Vec<String>,
+}
+
+impl IgnoreRules {
+    pub fn for_root(root: &Path) -> Self {
+        let root = fold(&root.to_string_lossy());
+        let prefixes = IGNORE_PREFIXES
+            .iter()
+            .map(|p| fold(p))
+            .filter(|p| !within(&root, p))
+            .collect();
+        IgnoreRules { prefixes }
     }
-    IGNORE_PREFIXES.iter().any(|prefix| {
-        let prefix = fold(prefix);
-        folded == prefix || folded.starts_with(&(prefix + "/"))
-    })
+
+    /// True if `path` is an ignored system location or an ignored folder name.
+    pub fn should_ignore(&self, path: &Path) -> bool {
+        let folded = fold(&path.to_string_lossy());
+        let name = folded.rsplit('/').next().unwrap_or("").to_lowercase();
+        if IGNORE_NAMES
+            .iter()
+            .chain(IGNORE_NAMES_OS)
+            .any(|n| n.to_lowercase() == name)
+        {
+            return true;
+        }
+        self.prefixes.iter().any(|prefix| within(&folded, prefix))
+    }
 }
 
 const MAX_PATH_LENGTH: usize = 1000;
@@ -126,18 +147,36 @@ mod tests {
 
     #[test]
     fn ignores_names_anywhere() {
-        assert!(should_ignore(Path::new("/x/System Volume Information")));
-        assert!(should_ignore(Path::new("/x/$RECYCLE.BIN")));
-        assert!(!should_ignore(Path::new("/x/recycler-notes")));
+        let rules = IgnoreRules::for_root(Path::new("/x"));
+        assert!(rules.should_ignore(Path::new("/x/System Volume Information")));
+        assert!(rules.should_ignore(Path::new("/x/$RECYCLE.BIN")));
+        assert!(!rules.should_ignore(Path::new("/x/recycler-notes")));
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn ignores_prefixes_not_substrings() {
-        assert!(should_ignore(Path::new("/usr")));
-        assert!(should_ignore(Path::new("/usr/lib")));
-        assert!(!should_ignore(Path::new("/home/me/usr")));
-        assert!(!should_ignore(Path::new("/usrlocal")));
+        let rules = IgnoreRules::for_root(Path::new("/"));
+        assert!(rules.should_ignore(Path::new("/usr")));
+        assert!(rules.should_ignore(Path::new("/usr/lib")));
+        assert!(!rules.should_ignore(Path::new("/home/me/usr")));
+        assert!(!rules.should_ignore(Path::new("/usrlocal")));
+    }
+
+    #[test]
+    fn a_root_inside_a_system_location_is_walked() {
+        for prefix in IGNORE_PREFIXES {
+            let root = Path::new(prefix).join("chosen");
+            let rules = IgnoreRules::for_root(&root);
+            assert!(!rules.should_ignore(&root.join("sub")), "{prefix}");
+            // Other system locations are still skipped.
+            for other in IGNORE_PREFIXES
+                .iter()
+                .filter(|o| !within(&fold(prefix), &fold(o)))
+            {
+                assert!(rules.should_ignore(Path::new(other)), "{prefix} vs {other}");
+            }
+        }
     }
 
     #[test]

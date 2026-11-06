@@ -1,7 +1,7 @@
 //! Compare two directory trees.
 
 use crate::model::{ComparisonItem, ComparisonStatus, ComparisonSummary};
-use crate::paths::should_ignore;
+use crate::paths::IgnoreRules;
 use crate::util::{epoch_to_local_iso, mtime};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -18,6 +18,7 @@ struct Entry {
 
 /// Every file and folder under `root`, keyed by relative path.
 fn build_index(root: &Path) -> BTreeMap<String, Entry> {
+    let rules = IgnoreRules::for_root(root);
     let mut index = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -35,7 +36,7 @@ fn build_index(root: &Path) -> BTreeMap<String, Entry> {
                 continue;
             };
             let is_dir = md.is_dir();
-            if is_dir && should_ignore(&path) {
+            if is_dir && rules.should_ignore(&path) {
                 continue;
             }
             let Ok(rel) = path.strip_prefix(root) else {

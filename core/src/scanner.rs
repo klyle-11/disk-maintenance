@@ -6,7 +6,7 @@
 //! number of folders rather than files. Sizes are on-disk bytes from lstat
 //! (symlinks are not followed) and a hard-linked file is counted once.
 
-use crate::paths::should_ignore;
+use crate::paths::IgnoreRules;
 use crate::util::{atime, disk_usage_bytes, extension_of, hardlink_key, mtime};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -65,6 +65,7 @@ struct DirRecord {
 }
 
 struct Ctx<'a> {
+    rules: IgnoreRules,
     cancel: &'a AtomicBool,
     seen_inodes: Mutex<HashSet<(u64, u64)>>,
     files: AtomicU64,
@@ -84,6 +85,7 @@ pub fn scan(
     let root_key = root.to_string_lossy().into_owned();
     let (tx, rx) = mpsc::channel::<DirRecord>();
     let ctx = Ctx {
+        rules: IgnoreRules::for_root(root),
         cancel,
         seen_inodes: Mutex::new(HashSet::new()),
         files: AtomicU64::new(0),
@@ -176,7 +178,7 @@ fn walk_dir<'s>(
             };
             let path = entry.path();
             if file_type.is_dir() {
-                if !should_ignore(&path) {
+                if !ctx.rules.should_ignore(&path) {
                     subdirs.push(path);
                 }
                 continue;
@@ -313,6 +315,25 @@ mod tests {
         assert!(!data
             .folders
             .contains_key(&root.join("loop").to_string_lossy().into_owned()));
+    }
+
+    /// A root the user picked inside a system location (`/var/...` on Linux,
+    /// `/private/var/...` on macOS, where temp folders live) is still walked.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn walks_a_root_inside_a_system_location() {
+        let base = if cfg!(target_os = "macos") {
+            "/private/tmp"
+        } else {
+            "/var/tmp"
+        };
+        let dir = tempfile::tempdir_in(base).unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        write(&dir.path().join("sub/f"), 10);
+
+        let cancel = AtomicBool::new(false);
+        let data = scan(dir.path(), &cancel, |_| {}).unwrap();
+        assert_eq!(data.total_files, 1);
     }
 
     #[test]
