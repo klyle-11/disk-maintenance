@@ -9,6 +9,9 @@ frontend/dist/
 backend/dist/
 backend/build/
 release/
+core/target/
+frontend/src-tauri/target/
+frontend/src-tauri/gen/schemas/
 
 # Python
 backend/__pycache__/

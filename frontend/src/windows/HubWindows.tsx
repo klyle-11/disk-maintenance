@@ -12,6 +12,7 @@ import { useStore } from "../store";
 import type { UnitControls, UnitView } from "../wm/Cluster";
 import { closeWindow, KINDS, openWindow, wmDispatch, wmStore } from "../wm/state";
 import { Window } from "../wm/Window";
+import { desktop } from "../desktop";
 
 export interface WindowArgs {
   view: UnitView;
@@ -26,7 +27,7 @@ export function StatusWindow({ view, controls }: WindowArgs) {
   const low = useApp((s) => s.tips?.lowSpace ?? false);
   const snapshots = useApp((s) => s.snapshots.length);
   const windows = useStore(wmStore, (s) => s.units.reduce((n, u) => n + KINDS[u.kind].members, 0));
-  const electron = window.electronAPI;
+  const shell = desktop;
 
   const state = connected === true ? "READY" : failed ? "OFFLINE" : "STARTING";
   const marquee = [
@@ -47,10 +48,10 @@ export function StatusWindow({ view, controls }: WindowArgs) {
       view={view}
       controls={controls}
       className="kind-status"
-      closable={!!electron}
+      closable={!!shell}
       closeLabel="Quit"
-      onClose={() => electron?.quit()}
-      onMinimize={electron ? () => electron.minimize() : undefined}
+      onClose={() => shell?.quit()}
+      onMinimize={shell ? () => shell.minimize() : undefined}
     >
       <div className="lcd status">
         <div className="status-top">
@@ -216,7 +217,7 @@ export function BackendWindow({ view, controls }: WindowArgs) {
               <code>scripts/build-backend.sh</code> and package again.
             </p>
             {backend?.state === "error" && backend.detail ? <p className="lcd-dim">{backend.detail}</p> : null}
-            {window.electronAPI ? (
+            {desktop?.retryBackend ? (
               <button type="button" className="chip" onClick={() => void retryBackend()}>
                 RETRY
               </button>

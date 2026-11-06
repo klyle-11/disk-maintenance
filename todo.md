@@ -21,22 +21,48 @@ app scanner 20.9s / ~450 MB. Disk metadata I/O is the speed floor, not Python.
       files, GBs for a home-folder scan on an 8 GB Mac, which pushes it into swap (itself
       "System Data"). Keep per-folder totals + top-N largest files instead, like
       `diskcli/walker.py` (25 MB). That covers every current finding.
-- [ ] **4. The backend freezes during a scan.** `scan_async` walks on the event-loop thread, so
+- [x] **4. The backend freezes during a scan.** `scan_async` walks on the event-loop thread, so
       health checks and every other request stall until it finishes. Run the walk in a
-      thread (`asyncio.to_thread`) and feed progress through a queue.
-- [ ] **5. Old scans are never freed.** The in-memory `scans` dict keeps every scan until the
+      thread (`asyncio.to_thread`) and feed progress through a queue. *(Fixed in the Tauri
+      app: every command runs off the async runtime; scans stream over a `Channel`.)*
+- [x] **5. Old scans are never freed.** The in-memory `scans` dict keeps every scan until the
       backend restarts. Keep the last 2–3 (LRU), or drop a scan once it's saved as a snapshot.
+      *(Tauri app keeps the last 4, `core/src/service.rs`.)*
 - [ ] **6. One scanner, not four.** `DiskScanner`, `du_hast_much._walk_size`,
       `FolderComparator` and `diskcli.walker` each walk the disk their own way. Consolidate
       on the walker. While there: `_analyze_cache_candidates` counts nested matches twice
       (every folder under a match, and everything under a `/tmp`-looking path). Keep only the
       outermost match, as `di reclaim` does. `_walk_size` also calls `on_progress` for every
-      single entry; throttle it.
+      single entry; throttle it. *(The app now has one: `core/src/scanner.rs`, parallel, with
+      outermost-only cache findings. `di` still has `walker.py`.)*
 
 If the Tauri port goes ahead (below), 2–6 are the spec for the Rust scanner rather than
 Python work: build it this way from the start instead of fixing Python and then porting.
 
-## Decision: finish the Tauri migration?
+## Tauri migration (done 2026-11-06)
+
+The app is now Tauri + a Rust core (`core/`, `frontend/src-tauri/`); no Python sidecar, no port.
+The floating window cluster, skins and the di window carried over: the overlay window and its
+click-through live in `src-tauri/src/overlay.rs`, and the di window runs `python -m diskcli`
+(bundled sources, system Python 3.10+). Verified end to end on Linux (WebDriver under Xvfb).
+CI (`.github/workflows/build.yml`) builds and tests it on Windows, macOS and Linux and keeps
+the installers as artifacts, so they need not be built on a machine short of space.
+
+- [ ] Run the Tauri app on macOS and Windows: folder picker, Full Disk Access prompt,
+      click-through between the floating windows, transparency, WebView2 bootstrapper on
+      Windows 10, the di window finding Python.
+- [ ] Once it has been used for a while, remove the legacy app: `frontend/electron/`,
+      `backend/main.py`, `backend/di_runner.py`, `backend/database.py`, `backend/security/`,
+      `backend/disk-intelligence.spec`,
+      `scripts/build-backend.*`, `scripts/verify-package.sh`, the Electron npm scripts and
+      dependencies, and the HTTP fallback in `frontend/src/api.ts`.
+- [ ] `di` could become a thin Rust binary over `disk-core` later (it is fast enough in Python).
+- [ ] Tips exist twice (`core/src/tips.rs`, `backend/diskcli/tips.py`); a test checks the ids
+      match. Consider one shared data file.
+- [ ] Rust scanner on Windows: hard-link dedupe is skipped (no cheap inode), cloud-only
+      placeholders count as 0. NTFS-compressed files still show apparent size.
+
+### Background (the original decision)
 
 History: Tauri + Rust was merged into `main` on 2026-03-10 (`c801810`) and removed on
 2026-03-15 (`529f939`, along with `TAURI_MIGRATION_PLAN.md`). It lives on in
@@ -56,18 +82,16 @@ Where the pain actually comes from:
 Recommendation: yes, but only as **Tauri + Rust backend**. Switching the shell alone keeps
 the worst packaging pain. Suggested order:
 
-- [ ] Fix item 1 in Python now (tiny, user-visible).
-- [ ] Write the Rust core as a library crate (`core/`): walker (per-folder aggregation,
+- [x] Fix item 1 in Python now (tiny, user-visible).
+- [x] Write the Rust core as a library crate (`core/`): walker (per-folder aggregation,
       lstat, inode dedupe, blocks, parallel walk), findings, compare, SQLite snapshots.
-- [ ] Tauri commands call the crate directly; the React UI switches from `api.ts` HTTP to
+- [x] Tauri commands call the crate directly; the React UI switches from `api.ts` HTTP to
       `invoke()` behind the same function signatures, so components don't change.
-- [ ] `di` stays Python for now (it's fast enough and has no packaging problem). Later it
-      could become a thin Rust binary over the same crate.
-- [ ] Port features in order of use: scan + findings → du-hast-much → snapshots → compare
-      → tips. Keep Electron building until the Tauri build reaches parity, then remove
-      `frontend/electron/`, `backend/main.py` and the PyInstaller spec.
-- [ ] Reuse from the branch where it fits (commands, models, Diesel schema), but fix its scanner
-      (`WalkDir` + per-file `Vec`s has the same memory shape as item 3).
+- [x] `di` stays Python for now (it's fast enough and has no packaging problem).
+- [x] Port features: scan + findings, du-hast-much, snapshots, compare, tips. Electron still
+      builds (`npm run dev:electron`, `dist:electron`) until it is removed (above).
+- [x] Written fresh rather than from the old branch; snapshots use the same SQLite file and
+      schema as the Python backend (rusqlite, not Diesel), so existing snapshots carry over.
 
 2026-10-26 re-check, on a Windows machine with ~10 GB free: still the right direction, but not
 now, and not built locally there. The app only analyses (cleanup and moving live in `di`), its
@@ -77,6 +101,7 @@ it Electron, plus 362 MB npm cache); packaging adds roughly another 0.5–0.7 GB
 for electron-builder, its tools, PyInstaller `build/`, `release/` with `win-unpacked`). A Tauri
 build needs rustup (~1 GB), the MSVC Build Tools C++ workload (several GB, if not already
 installed) and a `target/` of a few GB. Build Windows installers in CI instead (see Build & packaging).
+*(Done: the CI workflow builds them; download the `windows` artifact from the Actions run.)*
 
 ## Windows parity
 
@@ -113,14 +138,14 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
 - [ ] Check `di move`'s Windows-only parts on a real machine: Steam `SteamPath` + `libraryfolders.vdf`,
       the WSL `Lxss` registry keys, `User Shell Folders`, `GetCompressedFileSizeW`, drive letters in
       the printed commands, and that `wsl --manage <distro> --move` is in the installed WSL.
-- [ ] App: `npm run dev` uses `python3`; on Windows it's `npm run dev:win`. Consider a small
-      Node launcher that picks the right Python so one command works everywhere.
-- [ ] Tauri port: Windows needs WebView2 (bundled with Windows 11; use the bootstrapper for 10)
-      and would drop the PyInstaller + Defender false-positive pain the sidecar has on Windows.
+- [x] App: `npm run dev` uses `python3`; on Windows it's `npm run dev:win`. Consider a small
+      Node launcher that picks the right Python so one command works everywhere. *(`npm run dev` starts Tauri now; no Python needed.)*
+- [x] Tauri port: Windows needs WebView2 (bundled with Windows 11; the installer uses the
+      bootstrapper for 10). No PyInstaller sidecar any more.
 
 ## Bugs
 
-- [ ] **Backend tests don't run.** `test_path_validator.py` (unclosed paren, line 123) and
+- [ ] **Backend tests don't run.** `test_path_validator.py` (unclosed paren, line 123: fixed) and
       `test_performance.py` (`//` comment, line 271) have syntax errors; 4 tests fail and
       1 errors in `test_integration_security.py`. PHASE5_COMPLETE.md reports these as done.
 - [ ] **Frontend security tests can't run.** `frontend/src/tests/security/frontend-security.test.ts`
@@ -129,8 +154,7 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
       window rewrite); `vite.config.ts` (`telemetry` isn't a Vite option) and the security test
       file remain. ESLint still flags `any`s in `api.ts` and components created during render
       in `FindingsTable.tsx`.
-- [ ] Stray file `frontend/src-tauri/sqlite:disk_intelligence.db`, created by a SQLite URL
-      used as a literal path. Delete it along with the leftover `frontend/src-tauri/gen/`.
+- [x] Stray `frontend/src-tauri/gen/` removed (now generated and git-ignored).
 
 ## Performance (after Priority 1)
 
@@ -163,9 +187,10 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
 - [ ] **CRITICAL-002: database encryption** was planned (Phase 2.3) and `security/encryption.py`
       exists, but `database.py` never uses it; snapshots are stored in plaintext SQLite.
       Either wire it in or record the decision to accept the risk in THREAT_MODEL.md.
-- [ ] HIGH-001 rate limiting and HIGH-004 authentication: still none. Any local process can
+- [ ] HIGH-001 rate limiting and HIGH-004 authentication (legacy Electron app only; the Tauri
+      app has no network listener): still none. Any local process can
       call the API on 127.0.0.1. Consider a per-launch token passed from Electron to the backend.
-- [ ] Electron hardening (PHASE4 "pending"): `contextIsolation` and navigation guards are in
+- [ ] Electron hardening (PHASE4 "pending"; moot once Electron is removed): `contextIsolation` and navigation guards are in
       place now, but `webPreferences` doesn't set `sandbox: true`. Add it (check that the
       preload still works), then update PHASE4_COMPLETE.md.
 - [ ] Phases 6–7 of SECURITY_AUDIT_PLAN.md (CI security gates, dependency scanning, secret
@@ -177,8 +202,10 @@ platform table). Everything Windows-specific was checked on macOS with a simulat
 - [x] Rebuild the backend so the PyInstaller bundle includes `diskcli/` (added to the spec
       for `/api/tips`), then run `npm run verify`. Packaging now refuses a stale
       `backend/dist`, and the app refuses a backend with an older API version.
-- [ ] BUILD.md mentions `npm run dist:linux`, which doesn't exist in `frontend/package.json`.
-- [ ] `run-dev.sh` says the backend is on port 8000; it's 8001.
+- [x] BUILD.md mentions `npm run dist:linux`, which doesn't exist in `frontend/package.json`.
+- [x] CI: `.github/workflows/build.yml` runs the core, di and frontend checks and builds the
+      Tauri installers on Windows, macOS and Linux (artifacts on each run).
+- [x] `run-dev.sh` says the backend is on port 8000; it's 8001. *(run-dev.sh starts Tauri now.)*
 
 ## Docs cleanup
 

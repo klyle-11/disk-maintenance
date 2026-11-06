@@ -13,6 +13,7 @@ import { BackendWindow, ControlsWindow, SkinsWindow, StatusWindow } from "./wind
 import { LibraryWindow } from "./windows/LibraryWindow";
 import { FindingsWindow, ScanWindow, TypesWindow } from "./windows/ScanWindows";
 import { TipWindow } from "./windows/TipWindow";
+import { desktop } from "./desktop";
 import "./wm/wm.css";
 
 function renderUnit(view: UnitView, controls: UnitControls) {
@@ -64,9 +65,9 @@ function App() {
     document.documentElement.setAttribute("data-panel", panel);
   }, [skin, panel]);
 
-  // Follow the backend supervisor in the main process. It knows the port the
-  // backend actually landed on, which is not always 8001, and why it failed
-  // when it did.
+  // Electron: follow the backend supervisor in the main process. It knows the
+  // port the backend actually landed on, which is not always 8001, and why it
+  // failed when it did. (In Tauri the backend is part of the app.)
   useEffect(() => {
     let cancelled = false;
 
@@ -84,8 +85,8 @@ function App() {
       patchApp(status.state === "ready" ? { backend: status } : { backend: status, connected: false });
     };
 
-    window.electronAPI?.getBackendStatus().then(apply).catch(() => {});
-    const unsubscribe = window.electronAPI?.onBackendStatus(apply);
+    desktop?.getBackendStatus?.().then(apply).catch(() => {});
+    const unsubscribe = desktop?.onBackendStatus?.(apply);
 
     return () => {
       cancelled = true;

@@ -120,7 +120,7 @@ class TestPathTraversalProtection:
 
     def test_double_dot_backslash_traversal(self, validator, temp_allowed_root):
         """Test that ..\\ path traversal is blocked."""
-        malicious_path = str(Path(temp_allowed_root) / ".." / ".." / "windows" / "system32"
+        malicious_path = str(Path(temp_allowed_root) / ".." / ".." / "windows" / "system32")
 
         with pytest.raises(InvalidPathError, match="dangerous"):
             validator.validate(malicious_path)
@@ -531,3 +531,37 @@ class TestErrorMessages:
         error_msg = str(exc_info.value)
         # Should mention the issue
         assert "dangerous" in error_msg.lower() or "not within" in error_msg.lower()
+
+
+# ============================================================================
+# Test Drives Mounted After Startup
+# ============================================================================
+
+class TestMountedDrives:
+    """Test that drives attached after startup (e.g. external D:/E:) are accepted."""
+
+    def test_drive_mounted_after_startup_is_allowed(self, temp_allowed_root, monkeypatch):
+        """A drive that appears after the validator was created should validate."""
+        from backend.security import path_validator as pv
+
+        with tempfile.TemporaryDirectory() as external_drive:
+            validator = PathValidator(
+                allowed_roots=[temp_allowed_root], allow_mounted_drives=True
+            )
+
+            # Drive is plugged in after the validator was built
+            monkeypatch.setattr(pv, "list_mounted_drives", lambda: [external_drive])
+
+            result = validator.validate(external_drive)
+            assert result == Path(external_drive).resolve()
+
+    def test_mounted_drives_ignored_when_disabled(self, temp_allowed_root, monkeypatch):
+        """Without allow_mounted_drives, new drives are still rejected."""
+        from backend.security import path_validator as pv
+
+        with tempfile.TemporaryDirectory() as external_drive:
+            validator = PathValidator(allowed_roots=[temp_allowed_root])
+            monkeypatch.setattr(pv, "list_mounted_drives", lambda: [external_drive])
+
+            with pytest.raises(InvalidPathError, match="not within allowed roots"):
+                validator.validate(external_drive)

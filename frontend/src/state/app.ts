@@ -12,6 +12,7 @@ import {
 import type { BackendStatus } from "../electron.d";
 import { readPanels, readSkin, savePanels, saveSkin, type Panel, type Skin } from "../skins";
 import { createStore, useStore } from "../store";
+import { desktop } from "../desktop";
 
 export interface AppState {
   /** True once /api/health answers; null while we don't know yet. */
@@ -129,6 +130,6 @@ export async function loadTips(): Promise<SpaceTips | null> {
 /** Restart the backend after a failure (Electron only). */
 export async function retryBackend(): Promise<void> {
   patchApp({ connected: null });
-  const status = await window.electronAPI?.retryBackend();
+  const status = await desktop?.retryBackend?.();
   if (status) patchApp({ backend: status });
 }

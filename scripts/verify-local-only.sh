@@ -251,7 +251,7 @@ test_frontend() {
     cd frontend
 
     # Start dev server in background
-    npm run dev > /dev/null 2>&1 &
+    npm run dev:vite > /dev/null 2>&1 &
     FRONTEND_PID=$!
 
     # Wait for frontend to start
