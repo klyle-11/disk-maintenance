@@ -1541,6 +1541,14 @@
   margin: 0;
 }
 
+.dhm-out .term-line.is-link {
+  cursor: pointer;
+}
+
+.dhm-out .term-line.is-link:hover {
+  background: var(--lcd-hover);
+}
+
 .dhm-recent {
   flex: 0 1 190px;
   min-width: 0;
@@ -1561,6 +1569,10 @@
 }
 
 /* ── di ────────────────────────────────────────────────────────────────── */
+
+.di-ps1.is-prompt {
+  color: var(--lcd-warn);
+}
 
 .di-quick {
   flex-shrink: 0;

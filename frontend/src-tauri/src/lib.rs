@@ -265,6 +265,12 @@ async fn di_run(
     .await
 }
 
+/// A line typed at a running command's prompt (its `delete #` or `[y/n]`).
+#[tauri::command]
+fn di_input(di: Di<'_>, request_id: String, text: String) -> CmdResult<()> {
+    di.send_input(&request_id, &text)
+}
+
 #[tauri::command]
 fn di_stop(di: Di<'_>, request_id: String) {
     di.stop(&request_id);
@@ -382,6 +388,7 @@ pub fn run() {
             di_commands,
             di_check,
             di_run,
+            di_input,
             di_stop,
             minimize_window,
             quit_app,
