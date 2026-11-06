@@ -19,6 +19,9 @@ dirs = "5"
 which = "6"
 fs4 = { version = "0.13", features = ["sync"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
 

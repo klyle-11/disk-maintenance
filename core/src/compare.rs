@@ -21,18 +21,26 @@ fn build_index(root: &Path) -> BTreeMap<String, Entry> {
     let mut index = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(file_type) = entry.file_type() else { continue };
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             // Like os.walk + os.stat: links are followed for their metadata,
             // but linked directories are never descended into.
-            let Ok(md) = fs::metadata(&path) else { continue };
+            let Ok(md) = fs::metadata(&path) else {
+                continue;
+            };
             let is_dir = md.is_dir();
             if is_dir && should_ignore(&path) {
                 continue;
             }
-            let Ok(rel) = path.strip_prefix(root) else { continue };
+            let Ok(rel) = path.strip_prefix(root) else {
+                continue;
+            };
             index.insert(
                 rel.to_string_lossy().into_owned(),
                 Entry {
@@ -72,7 +80,8 @@ fn compare_files(source: &Entry, target: &Entry, deep: bool) -> ComparisonStatus
     if source.modified != target.modified {
         // Same size, different date: with a deep scan the content decides.
         if deep {
-            if let (Some(a), Some(b)) = (hash_file(&source.full_path), hash_file(&target.full_path)) {
+            if let (Some(a), Some(b)) = (hash_file(&source.full_path), hash_file(&target.full_path))
+            {
                 if a == b {
                     return Identical;
                 }
@@ -91,9 +100,12 @@ fn compare_files(source: &Entry, target: &Entry, deep: bool) -> ComparisonStatus
 }
 
 /// Compare `source` with `target` and return the tree and summary.
-pub fn compare(source: &Path, target: &Path, deep: bool) -> (Vec<ComparisonItem>, ComparisonSummary) {
-    let (source_index, target_index) =
-        rayon::join(|| build_index(source), || build_index(target));
+pub fn compare(
+    source: &Path,
+    target: &Path,
+    deep: bool,
+) -> (Vec<ComparisonItem>, ComparisonSummary) {
+    let (source_index, target_index) = rayon::join(|| build_index(source), || build_index(target));
     let mut summary = ComparisonSummary::default();
 
     let all: BTreeSet<&String> = source_index.keys().chain(target_index.keys()).collect();
@@ -185,7 +197,10 @@ pub fn compare(source: &Path, target: &Path, deep: bool) -> (Vec<ComparisonItem>
         item
     }
 
-    let tree = roots.iter().map(|r| assemble(r, &mut items, &children_of)).collect();
+    let tree = roots
+        .iter()
+        .map(|r| assemble(r, &mut items, &children_of))
+        .collect();
     (tree, summary)
 }
 
@@ -209,9 +224,15 @@ mod tests {
         write(&src.path().join("gone.txt"), "x");
         write(&dst.path().join("new.txt"), "y");
         // Same content and the same mtime: identical.
-        let when = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let when =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         for root in [src.path(), dst.path()] {
-            fs::File::options().write(true).open(root.join("same.txt")).unwrap().set_modified(when).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(root.join("same.txt"))
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
         }
 
         let (tree, summary) = compare(src.path(), dst.path(), false);

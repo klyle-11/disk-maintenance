@@ -24,6 +24,14 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
   libssl-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
+## CI builds (no local toolchain needed)
+
+`.github/workflows/build.yml` runs on every push to `main` and every pull
+request. It tests the Rust core and the di bridge, and builds the installers on
+Windows, macOS and Linux. Download them from the run's **Artifacts**
+(`disk-intelligence-windows`, `-macos`, `-linux`). Run it by hand from the
+Actions tab ("Run workflow") when you just need fresh installers.
+
 ## Quick start
 
 ```bash
@@ -73,6 +81,14 @@ Install the Linux packages above plus Node.js and Rust, then run
 `./scripts/package-linux.sh`. Install the result with
 `sudo apt install ./frontend/src-tauri/target/release/bundle/deb/*.deb`.
 The AppImage needs `libfuse2` (`libfuse2t64` on Pi OS "trixie") to run.
+
+## The di window and Python
+
+`di` stays Python. The app bundles diskcli's sources (`bundle.resources` in
+`tauri.conf.json` puts `backend/diskcli/*.py` under `py/diskcli/`) and runs
+them with the machine's Python 3.10+, found like the `di` launchers do
+(`DI_PYTHON`, then `py -3` / `python` / `python3`). Without Python, only the di
+window is affected; it says what is missing.
 
 ## App icon
 

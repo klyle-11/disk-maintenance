@@ -24,9 +24,13 @@ fn walk(dir: &Path, exclude: &HashSet<String>, cancel: &AtomicBool, tally: &mut 
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
-            let Ok(file_type) = entry.file_type() else { continue };
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             if file_type.is_dir() {
                 if !exclude.contains(&*entry.file_name().to_string_lossy()) {
                     stack.push(entry.path());
@@ -53,7 +57,9 @@ pub fn scan_directory(
     on_result: &(dyn Fn(&DuHastMuchResult) + Sync),
 ) -> Option<Vec<DuHastMuchResult>> {
     let exclude: HashSet<String> = exclude.iter().cloned().collect();
-    let Ok(entries) = fs::read_dir(root) else { return Some(Vec::new()) };
+    let Ok(entries) = fs::read_dir(root) else {
+        return Some(Vec::new());
+    };
     let dirs: Vec<_> = entries
         .flatten()
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
@@ -76,7 +82,11 @@ pub fn scan_directory(
             size: tally.size,
             files: tally.files,
             latest_mtime: tally.latest_mtime,
-            avg_file_size: if tally.files > 0 { tally.size as f64 / tally.files as f64 } else { 0.0 },
+            avg_file_size: if tally.files > 0 {
+                tally.size as f64 / tally.files as f64
+            } else {
+                0.0
+            },
         };
         on_result(&result);
         results.lock().unwrap().push(result);

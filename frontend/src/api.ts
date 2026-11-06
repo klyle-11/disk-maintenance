@@ -400,15 +400,23 @@ export async function scanWithProgress(
   signal?: AbortSignal
 ): Promise<ScanResponse> {
   if (isTauri) {
+    // Channel messages can trail the command's result; drop late progress.
+    let finished = false;
     const channel = new Channel<ProgressEventData>();
-    channel.onmessage = onProgress;
-    const data = await callCancellable<any>(
-      "scan",
-      { rootPath, onProgress: channel },
-      signal,
-      "Scan cancelled"
-    );
-    return transformScanResponse(data);
+    channel.onmessage = (event) => {
+      if (!finished) onProgress(event);
+    };
+    try {
+      const data = await callCancellable<any>(
+        "scan",
+        { rootPath, onProgress: channel },
+        signal,
+        "Scan cancelled"
+      );
+      return transformScanResponse(data);
+    } finally {
+      finished = true;
+    }
   }
 
   return new Promise((resolve, reject) => {
@@ -485,11 +493,17 @@ export async function getExtensionSummary(
  * Check if the backend is running and healthy.
  * @returns A health status object.
  */
-export async function healthCheck(): Promise<{ status: string }> {
+export async function healthCheck(): Promise<{ status: string; api?: number }> {
   return call("health", {}, () =>
-    apiFetch<{ status: string }>("/health", { timeoutMs: HEALTH_TIMEOUT_MS })
+    apiFetch<{ status: string; api?: number }>("/health", { timeoutMs: HEALTH_TIMEOUT_MS })
   );
 }
+
+/**
+ * The backend API this app needs, as reported by /api/health. Must match
+ * API_VERSION in backend/main.py and frontend/electron/backend.cjs.
+ */
+export const API_VERSION = 2;
 
 export interface SpaceTip {
   id: string;
@@ -898,8 +912,17 @@ export async function streamDuHastMuch(
   signal?: AbortSignal
 ): Promise<{ totalSize: number; totalFiles: number; elapsedSeconds: number }> {
   if (isTauri) {
+    // Channel messages can trail the command's result, so wait until every
+    // folder the backend counted has arrived before reporting the totals.
+    let received = 0;
+    let allArrived: (() => void) | null = null;
+    let expected = Infinity;
     const channel = new Channel<DuHastMuchResult>();
-    channel.onmessage = onResult;
+    channel.onmessage = (result) => {
+      onResult(result);
+      received += 1;
+      if (received >= expected) allArrived?.();
+    };
     const done = await callCancellable<any>(
       "du_hast_much_stream",
       {
@@ -914,6 +937,14 @@ export async function streamDuHastMuch(
       signal,
       "Scan cancelled"
     );
+    expected = done.folders ?? 0;
+    if (received < expected) {
+      await new Promise<void>((resolve) => {
+        allArrived = resolve;
+        // Never hang the UI on a lost message.
+        setTimeout(resolve, 2000);
+      });
+    }
     return {
       totalSize: done.total_size || 0,
       totalFiles: done.total_files || 0,
@@ -1008,4 +1039,172 @@ export function clearDuHastMuchHistory(): void {
   } catch (err) {
     console.error("Failed to clear du-hast-much history:", err);
   }
+}
+
+// ============================================================================
+// di (the command line, run from the di window)
+// ============================================================================
+
+export interface DiCommand {
+  name: string;
+  help: string;
+}
+
+/** di's commands with their one-line help. */
+export async function getDiCommands(): Promise<DiCommand[]> {
+  const data = await call<{ commands: DiCommand[] }>("di_commands", {}, () =>
+    apiFetch<{ commands: DiCommand[] }>("/di/commands")
+  );
+  return data.commands;
+}
+
+/** Tauri: runs checked by startDiRun, waiting for streamDiRun to start them. */
+const pendingDiRuns = new Map<string, { args: string[]; columns: number; confirm: boolean }>();
+
+/** Thrown when a di command changes the disk and needs the user's OK first. */
+export class DiConfirmError extends Error {}
+
+/**
+ * Register a di command with the backend. Resolves to the run id to stream.
+ * Rejects with a DiConfirmError for destructive commands unless `confirm`.
+ */
+export async function startDiRun(args: string[], columns: number, confirm = false): Promise<string> {
+  if (isTauri) {
+    const check = await call<{ needs_confirm: string | null }>("di_check", { args }, () => {
+      throw new Error("unreachable");
+    });
+    if (check.needs_confirm && !confirm) throw new DiConfirmError(check.needs_confirm);
+    const runId = newRequestId();
+    pendingDiRuns.set(runId, { args, columns, confirm });
+    return runId;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(apiUrl("/di/runs"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ args, columns, confirm }),
+    });
+  } catch {
+    throw new Error(`Cannot connect to backend at ${activeApiBaseUrl} — is the server running?`);
+  }
+  const body = await response.json().catch(() => null);
+  if (response.ok) return body.runId;
+  const detail = body?.detail;
+  if (response.status === 409 && detail?.needsConfirm) throw new DiConfirmError(detail.message);
+  throw new Error(typeof detail === "string" ? detail : `di failed to start (${response.status})`);
+}
+
+export interface DiStreamHandlers {
+  /** di's output (stdout and stderr together, as a terminal shows them). */
+  onOutput: (text: string) => void;
+  onExit: (code: number, elapsedSeconds: number) => void;
+}
+
+/**
+ * Stream a registered run's output. Aborting the signal closes the stream,
+ * and the backend stops di when its client goes away.
+ */
+export function streamDiRun(runId: string, handlers: DiStreamHandlers, signal?: AbortSignal): Promise<void> {
+  if (isTauri) return streamDiRunTauri(runId, handlers, signal);
+  return new Promise((resolve, reject) => {
+    const eventSource = new EventSource(apiUrl(`/di/runs/${encodeURIComponent(runId)}/stream`));
+    let finished = false;
+    const finish = (err?: Error) => {
+      if (finished) return;
+      finished = true;
+      eventSource.close();
+      if (err) reject(err);
+      else resolve();
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "out") {
+          handlers.onOutput(data.data);
+        } else if (data.type === "exit") {
+          handlers.onExit(data.code, data.elapsed);
+          finish();
+        }
+      } catch {
+        finish(new Error("Failed to parse di output"));
+      }
+    };
+    eventSource.onerror = () => finish(new Error("di stream connection failed"));
+    signal?.addEventListener("abort", () => finish(new Error("Stopped")));
+  });
+}
+
+type DiEvent = { type: "out"; data: string } | { type: "exit"; code: number; elapsed: number };
+
+/**
+ * Tauri: run a checked di command, streaming its output over a Channel. The
+ * exit event is the last message, so finishing on it keeps every line.
+ */
+function streamDiRunTauri(runId: string, handlers: DiStreamHandlers, signal?: AbortSignal): Promise<void> {
+  const run = pendingDiRuns.get(runId);
+  pendingDiRuns.delete(runId);
+  if (!run) return Promise.reject(new Error("No such di run (or it already started)"));
+
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const finish = (err?: Error) => {
+      if (finished) return;
+      finished = true;
+      signal?.removeEventListener("abort", onAbort);
+      if (err) reject(err);
+      else resolve();
+    };
+    const onAbort = () => {
+      invoke("di_stop", { requestId: runId }).catch(() => {});
+      finish(new Error("Stopped"));
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener("abort", onAbort);
+
+    const channel = new Channel<DiEvent>();
+    channel.onmessage = (event) => {
+      if (finished) return;
+      if (event.type === "out") {
+        handlers.onOutput(event.data);
+      } else if (event.type === "exit") {
+        handlers.onExit(event.code, event.elapsed);
+        finish();
+      }
+    };
+    invoke("di_run", { ...run, requestId: runId, onEvent: channel }).catch((err) =>
+      finish(new Error(err instanceof Error ? err.message : String(err)))
+    );
+  });
+}
+
+/**
+ * Split a typed command line into arguments. Quotes group words; there are
+ * no backslash escapes, so Windows paths go through as typed.
+ */
+export function splitCommandLine(line: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  let inArg = false;
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      inArg = true;
+    } else if (/\s/.test(ch)) {
+      if (inArg) args.push(current);
+      current = "";
+      inArg = false;
+    } else {
+      current += ch;
+      inArg = true;
+    }
+  }
+  if (inArg) args.push(current);
+  return args;
 }

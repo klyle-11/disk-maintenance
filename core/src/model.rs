@@ -124,6 +124,8 @@ pub struct DuHastMuchDone {
     pub total_size: u64,
     pub total_files: u64,
     pub elapsed_seconds: f64,
+    /// How many results were streamed, so the UI can wait for all of them.
+    pub folders: u64,
 }
 
 /// A saved snapshot, as the API returns it.

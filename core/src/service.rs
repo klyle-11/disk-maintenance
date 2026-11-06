@@ -54,7 +54,12 @@ impl Service {
     /// The flag for a long-running request, created on first use, so a
     /// cancel that arrives before the work starts still counts.
     fn cancel_flag(&self, request_id: &str) -> Arc<AtomicBool> {
-        self.cancels.lock().unwrap().entry(request_id.to_string()).or_default().clone()
+        self.cancels
+            .lock()
+            .unwrap()
+            .entry(request_id.to_string())
+            .or_default()
+            .clone()
     }
 
     fn finish_request(&self, request_id: &str) {
@@ -213,7 +218,14 @@ impl Service {
         self.store
             .lock()
             .unwrap()
-            .update_scan(id, &scan_id, &to_value(&findings), &to_value(&extensions), &to_value(&info), totals)
+            .update_scan(
+                id,
+                &scan_id,
+                &to_value(&findings),
+                &to_value(&extensions),
+                &to_value(&info),
+                totals,
+            )
             .map_err(db_err)?
             .ok_or_else(|| format!("Snapshot not found: {id}"))
     }
@@ -230,13 +242,21 @@ impl Service {
     // Comparison
     // ------------------------------------------------------------------
 
-    fn validate_pair(source: &str, target: &str) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    fn validate_pair(
+        source: &str,
+        target: &str,
+    ) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
         let s = validate_dir(source).map_err(|e| format!("Source: {e}"))?;
         let t = validate_dir(target).map_err(|e| format!("Target: {e}"))?;
         Ok((s, t))
     }
 
-    pub fn compare(&self, source: &str, target: &str, deep_scan: bool) -> Result<ComparisonResponse> {
+    pub fn compare(
+        &self,
+        source: &str,
+        target: &str,
+        deep_scan: bool,
+    ) -> Result<ComparisonResponse> {
         let (s, t) = Self::validate_pair(source, target)?;
         let (tree, summary) = compare::compare(&s, &t, deep_scan);
         Ok(ComparisonResponse {
@@ -338,6 +358,7 @@ impl Service {
             total_size: results.iter().map(|r| r.size).sum(),
             total_files: results.iter().map(|r| r.files).sum(),
             elapsed_seconds: started.elapsed().as_secs_f64(),
+            folders: results.len() as u64,
         };
         Ok((results, done))
     }
@@ -371,7 +392,11 @@ mod tests {
     fn tree() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("proj/node_modules/pkg")).unwrap();
-        fs::write(dir.path().join("proj/node_modules/pkg/index.js"), vec![b'x'; 8192]).unwrap();
+        fs::write(
+            dir.path().join("proj/node_modules/pkg/index.js"),
+            vec![b'x'; 8192],
+        )
+        .unwrap();
         fs::write(dir.path().join("proj/readme.md"), "hi").unwrap();
         dir
     }
@@ -387,9 +412,7 @@ mod tests {
         assert!(info.total_folders >= 4);
 
         let findings = svc.findings(&info.scan_id).unwrap();
-        assert!(findings
-            .iter()
-            .any(|f| f.category == "cache_candidate"));
+        assert!(findings.iter().any(|f| f.category == "cache_candidate"));
         let exts = svc.extensions_summary(&info.scan_id).unwrap();
         assert_eq!(exts[0].extension, ".js");
 
@@ -399,14 +422,20 @@ mod tests {
         assert_ne!(updated.scan_id, snap.scan_id);
         assert_eq!(updated.total_files, Some(2));
         svc.delete_snapshot(&snap.id).unwrap();
-        assert!(svc.get_snapshot(&snap.id).unwrap_err().contains("not found"));
+        assert!(svc
+            .get_snapshot(&snap.id)
+            .unwrap_err()
+            .contains("not found"));
     }
 
     #[test]
     fn unknown_scans_and_bad_paths_are_errors() {
         let svc = service();
         assert_eq!(svc.findings("nope").unwrap_err(), "Scan not found: nope");
-        assert!(svc.scan("/definitely/not/here", "r", |_| {}).unwrap_err().contains("does not exist"));
+        assert!(svc
+            .scan("/definitely/not/here", "r", |_| {})
+            .unwrap_err()
+            .contains("does not exist"));
     }
 
     #[test]
@@ -414,7 +443,9 @@ mod tests {
         let svc = service();
         let dir = tree();
         svc.cancel("req-early");
-        let err = svc.scan(dir.path().to_str().unwrap(), "req-early", |_| {}).unwrap_err();
+        let err = svc
+            .scan(dir.path().to_str().unwrap(), "req-early", |_| {})
+            .unwrap_err();
         assert_eq!(err, "Scan cancelled");
         assert!(svc.cancels.lock().unwrap().is_empty());
     }
@@ -441,9 +472,14 @@ mod tests {
         let cmp = svc.compare(sa, sb, false).unwrap();
         assert_eq!(cmp.summary.missing_from_target, 2);
 
-        let snap = svc.save_comparison_snapshot(sa, sb, &cmp.comparison_id).unwrap();
+        let snap = svc
+            .save_comparison_snapshot(sa, sb, &cmp.comparison_id)
+            .unwrap();
         assert_eq!(snap.snapshot_type, "comparison");
-        assert_eq!(snap.comparison_summary.as_ref().unwrap()["missing_from_target"], 2);
+        assert_eq!(
+            snap.comparison_summary.as_ref().unwrap()["missing_from_target"],
+            2
+        );
 
         fs::write(b.path().join("extra.txt"), "new").unwrap();
         let updated = svc.update_comparison_snapshot(&snap.id).unwrap();

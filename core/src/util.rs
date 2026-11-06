@@ -21,7 +21,10 @@ pub fn now_local_iso() -> String {
 
 /// `datetime.utcnow()`, as SQLAlchemy stores it ("YYYY-MM-DD HH:MM:SS.ffffff").
 pub fn now_utc_db() -> String {
-    Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S%.6f").to_string()
+    Utc::now()
+        .naive_utc()
+        .format("%Y-%m-%d %H:%M:%S%.6f")
+        .to_string()
 }
 
 /// A stored `saved_at` value turned into the ISO form the API returns.
@@ -38,7 +41,11 @@ pub fn db_time_to_iso(stored: &str) -> String {
 pub fn epoch_to_local_iso(ts: f64) -> String {
     let secs = ts.floor() as i64;
     let micros = ((ts - ts.floor()) * 1_000_000.0).round() as u32;
-    let (secs, micros) = if micros >= 1_000_000 { (secs + 1, 0) } else { (secs, micros) };
+    let (secs, micros) = if micros >= 1_000_000 {
+        (secs + 1, 0)
+    } else {
+        (secs, micros)
+    };
     match Local.timestamp_opt(secs, micros * 1000).single() {
         Some(dt) => python_iso(dt.naive_local()),
         None => python_iso(DateTime::<Utc>::UNIX_EPOCH.naive_utc()),

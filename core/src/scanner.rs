@@ -90,7 +90,10 @@ pub fn scan(
         bytes: AtomicU64::new(0),
     };
 
-    let mut data = ScanData { root: root_key.clone(), ..Default::default() };
+    let mut data = ScanData {
+        root: root_key.clone(),
+        ..Default::default()
+    };
 
     std::thread::scope(|scope| {
         let ctx = &ctx;
@@ -168,7 +171,9 @@ fn walk_dir<'s>(
 
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.flatten() {
-            let Ok(file_type) = entry.file_type() else { continue };
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             let path = entry.path();
             if file_type.is_dir() {
                 if !should_ignore(&path) {
@@ -183,7 +188,13 @@ fn walk_dir<'s>(
             }
             // DirEntry::metadata does not follow symlinks.
             let Ok(md) = entry.metadata() else { continue };
-            add_file(&mut record, &path, &entry.file_name().to_string_lossy(), &md, ctx);
+            add_file(
+                &mut record,
+                &path,
+                &entry.file_name().to_string_lossy(),
+                &md,
+                ctx,
+            );
         }
     }
 
@@ -214,7 +225,9 @@ fn add_file(record: &mut DirRecord, path: &Path, name: &str, md: &fs::Metadata, 
     ext.1 += size;
 
     if md.len() >= LARGE_FILE_THRESHOLD {
-        record.large_files.push((path.to_string_lossy().into_owned(), md.len()));
+        record
+            .large_files
+            .push((path.to_string_lossy().into_owned(), md.len()));
     }
 }
 
@@ -227,7 +240,10 @@ fn propagate(folders: &mut HashMap<String, FolderStats>) {
     paths.sort_unstable_by_key(|p| std::cmp::Reverse(p.0));
 
     for (_, path) in paths {
-        let Some(parent) = Path::new(&path).parent().map(|p| p.to_string_lossy().into_owned()) else {
+        let Some(parent) = Path::new(&path)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+        else {
             continue;
         };
         if parent == path {
@@ -294,7 +310,9 @@ mod tests {
         assert_eq!(d.file_count, 2);
         let single = disk_usage_bytes(&fs::metadata(root.join("d/f")).unwrap());
         assert_eq!(data.total_size, single);
-        assert!(!data.folders.contains_key(&root.join("loop").to_string_lossy().into_owned()));
+        assert!(!data
+            .folders
+            .contains_key(&root.join("loop").to_string_lossy().into_owned()));
     }
 
     #[test]

@@ -17,12 +17,42 @@ const DUPLICATE_FILE_MIN: u64 = 1024 * 1024;
 
 /// Folder names that hold caches or regenerable build output.
 const CACHE_FOLDER_PATTERNS: &[&str] = &[
-    "node_modules", ".cache", "__pycache__", "dist", "build", "out", "tmp", "temp", ".tmp",
-    ".temp", "cache", ".git", ".venv", "venv", "env", ".env", ".next", ".nuxt", "target", "bin",
-    "obj", ".DS_Store", ".AppleDouble", ".LSOverride", ".DocumentRevisions-V100", ".fseventsd",
-    ".Spotlight-V100", ".TemporaryItems", ".Trashes", ".VolumeIcon.icns",
-    ".com.apple.timemachine.donotpresent", ".AppleDB", ".AppleDesktop", "Network Trash Folder",
-    "Temporary Items", ".apdisk",
+    "node_modules",
+    ".cache",
+    "__pycache__",
+    "dist",
+    "build",
+    "out",
+    "tmp",
+    "temp",
+    ".tmp",
+    ".temp",
+    "cache",
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    ".env",
+    ".next",
+    ".nuxt",
+    "target",
+    "bin",
+    "obj",
+    ".DS_Store",
+    ".AppleDouble",
+    ".LSOverride",
+    ".DocumentRevisions-V100",
+    ".fseventsd",
+    ".Spotlight-V100",
+    ".TemporaryItems",
+    ".Trashes",
+    ".VolumeIcon.icns",
+    ".com.apple.timemachine.donotpresent",
+    ".AppleDB",
+    ".AppleDesktop",
+    "Network Trash Folder",
+    "Temporary Items",
+    ".apdisk",
 ];
 
 fn name_of(path: &str) -> String {
@@ -48,7 +78,12 @@ impl<'a> Analyzer<'a> {
     pub fn new(data: &'a ScanData) -> Self {
         let mut folders: Vec<_> = data.folders.iter().map(|(p, s)| (p.as_str(), s)).collect();
         folders.sort_unstable_by(|a, b| a.0.cmp(b.0));
-        Analyzer { data, folders, findings: Vec::new(), now: now_secs() }
+        Analyzer {
+            data,
+            folders,
+            findings: Vec::new(),
+            now: now_secs(),
+        }
     }
 
     pub fn analyze(mut self) -> Vec<Finding> {
@@ -63,7 +98,13 @@ impl<'a> Analyzer<'a> {
 
     fn push(&mut self, category: &str, reason: String, paths: Vec<String>, total_bytes: u64) {
         let id = format!("finding-{}", self.findings.len() + 1);
-        self.findings.push(Finding { id, category: category.into(), reason, paths, total_bytes });
+        self.findings.push(Finding {
+            id,
+            category: category.into(),
+            reason,
+            paths,
+            total_bytes,
+        });
     }
 
     fn large_folders(&mut self) {
@@ -96,10 +137,14 @@ impl<'a> Analyzer<'a> {
                 let reason = format!("Folder is {gb:.1} GB and last modified {days} days ago");
                 self.push("old_large_folder", reason, vec![path.into()], s.total_size);
             } else if days <= RECENT_DAYS_THRESHOLD && s.total_size >= LARGE_FOLDER_THRESHOLD * 2 {
-                let reason = format!(
-                    "Folder is {gb:.1} GB and was modified within the last {days} days"
+                let reason =
+                    format!("Folder is {gb:.1} GB and was modified within the last {days} days");
+                self.push(
+                    "active_large_folder",
+                    reason,
+                    vec![path.into()],
+                    s.total_size,
                 );
-                self.push("active_large_folder", reason, vec![path.into()], s.total_size);
             }
         }
     }
@@ -108,7 +153,10 @@ impl<'a> Analyzer<'a> {
     /// the outermost match is reported, so nested matches (node_modules inside
     /// node_modules, everything under /tmp) are not counted twice.
     fn cache_candidates(&mut self) {
-        let patterns: HashSet<String> = CACHE_FOLDER_PATTERNS.iter().map(|p| p.to_lowercase()).collect();
+        let patterns: HashSet<String> = CACHE_FOLDER_PATTERNS
+            .iter()
+            .map(|p| p.to_lowercase())
+            .collect();
         let is_temp_component = |c: &str| {
             let c = c.to_lowercase();
             c == "tmp" || c == "temp"
@@ -121,7 +169,8 @@ impl<'a> Analyzer<'a> {
             }
             let p = Path::new(path);
             let is_cache = patterns.contains(&name_of(path).to_lowercase())
-                || p.components().any(|c| is_temp_component(&c.as_os_str().to_string_lossy()));
+                || p.components()
+                    .any(|c| is_temp_component(&c.as_os_str().to_string_lossy()));
             if !is_cache {
                 continue;
             }
@@ -159,7 +208,8 @@ impl<'a> Analyzer<'a> {
             for (path, size) in candidates {
                 let slot = groups.iter_mut().find(|g| {
                     let reference = g[0].1;
-                    reference > 0 && (size as f64 - reference as f64).abs() / reference as f64 <= 0.10
+                    reference > 0
+                        && (size as f64 - reference as f64).abs() / reference as f64 <= 0.10
                 });
                 match slot {
                     Some(g) => g.push((path, size)),
@@ -170,7 +220,11 @@ impl<'a> Analyzer<'a> {
                 let total: u64 = group.iter().map(|(_, s)| s).sum();
                 // Reclaimable: everything but the largest copy.
                 let reclaimable = total - group[0].1;
-                let reason = format!("{} folders named '{}' with similar sizes", group.len(), name);
+                let reason = format!(
+                    "{} folders named '{}' with similar sizes",
+                    group.len(),
+                    name
+                );
                 let paths = group.iter().map(|(p, _)| p.to_string()).collect();
                 found.push((reason, paths, reclaimable));
             }
@@ -185,7 +239,10 @@ impl<'a> Analyzer<'a> {
         let mut by_key: BTreeMap<(String, u64), Vec<String>> = BTreeMap::new();
         for (path, size) in &self.data.large_files {
             if *size > DUPLICATE_FILE_MIN {
-                by_key.entry((name_of(path), *size)).or_default().push(path.clone());
+                by_key
+                    .entry((name_of(path), *size))
+                    .or_default()
+                    .push(path.clone());
             }
         }
         for ((name, size), mut paths) in by_key {
@@ -216,7 +273,12 @@ impl<'a> Analyzer<'a> {
                     "{:.1} GB, not accessed in {days} days",
                     s.total_size as f64 / GB
                 );
-                self.push("cold_archive_candidate", reason, vec![path.into()], s.total_size);
+                self.push(
+                    "cold_archive_candidate",
+                    reason,
+                    vec![path.into()],
+                    s.total_size,
+                );
             }
         }
     }
@@ -228,12 +290,20 @@ pub fn extension_summary(data: &ScanData) -> Vec<ExtensionSummary> {
         .extensions
         .iter()
         .map(|(ext, (count, bytes))| ExtensionSummary {
-            extension: if ext.is_empty() { "(no extension)".into() } else { ext.clone() },
+            extension: if ext.is_empty() {
+                "(no extension)".into()
+            } else {
+                ext.clone()
+            },
             file_count: *count,
             total_bytes: *bytes,
         })
         .collect();
-    rows.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes).then(a.extension.cmp(&b.extension)));
+    rows.sort_by(|a, b| {
+        b.total_bytes
+            .cmp(&a.total_bytes)
+            .then(a.extension.cmp(&b.extension))
+    });
     rows
 }
 
@@ -251,7 +321,12 @@ mod tests {
     use super::*;
 
     fn folder(size: u64, mtime: f64) -> FolderStats {
-        FolderStats { total_size: size, file_count: 1, last_modified: mtime, last_accessed: mtime }
+        FolderStats {
+            total_size: size,
+            file_count: 1,
+            last_modified: mtime,
+            last_accessed: mtime,
+        }
     }
 
     fn data(folders: &[(&str, FolderStats)], large: &[(&str, u64)]) -> ScanData {
@@ -288,7 +363,10 @@ mod tests {
     #[test]
     fn large_old_and_cold_folders() {
         let old = now_secs() - 400.0 * 86400.0;
-        let d = data(&[("/r/archive", folder(3 * LARGE_FOLDER_THRESHOLD, old))], &[]);
+        let d = data(
+            &[("/r/archive", folder(3 * LARGE_FOLDER_THRESHOLD, old))],
+            &[],
+        );
         let cats = categories(&Analyzer::new(&d).analyze());
         assert_eq!(cats["large_folder"], 1);
         assert_eq!(cats["old_large_folder"], 1);
@@ -300,18 +378,37 @@ mod tests {
         let now = now_secs();
         let mb = 1024 * 1024;
         let d = data(
-            &[("/r/a/photos", folder(100 * mb, now)), ("/r/b/Photos", folder(95 * mb, now))],
-            &[("/r/a/movie.mp4", 5 * mb), ("/r/b/movie.mp4", 5 * mb), ("/r/c/movie.mp4", 6 * mb)],
+            &[
+                ("/r/a/photos", folder(100 * mb, now)),
+                ("/r/b/Photos", folder(95 * mb, now)),
+            ],
+            &[
+                ("/r/a/movie.mp4", 5 * mb),
+                ("/r/b/movie.mp4", 5 * mb),
+                ("/r/c/movie.mp4", 6 * mb),
+            ],
         );
         let findings = Analyzer::new(&d).analyze();
-        let folders = findings.iter().find(|f| f.category == "duplicate_folder_candidate").unwrap();
+        let folders = findings
+            .iter()
+            .find(|f| f.category == "duplicate_folder_candidate")
+            .unwrap();
         assert_eq!(folders.total_bytes, 95 * mb);
-        assert_eq!(folders.reason, "2 folders named 'photos' with similar sizes");
-        let files = findings.iter().find(|f| f.category == "duplicate_file_candidate").unwrap();
+        assert_eq!(
+            folders.reason,
+            "2 folders named 'photos' with similar sizes"
+        );
+        let files = findings
+            .iter()
+            .find(|f| f.category == "duplicate_file_candidate")
+            .unwrap();
         assert_eq!(files.total_bytes, 5 * mb);
         assert_eq!(files.reason, "2 files named 'movie.mp4' (5.0 MB each)");
         // ids are sequential
-        assert!(findings.iter().enumerate().all(|(i, f)| f.id == format!("finding-{}", i + 1)));
+        assert!(findings
+            .iter()
+            .enumerate()
+            .all(|(i, f)| f.id == format!("finding-{}", i + 1)));
     }
 
     #[test]

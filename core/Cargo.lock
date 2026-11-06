@@ -168,6 +168,7 @@ dependencies = [
  "dirs",
  "dunce",
  "fs4",
+ "libc",
  "rayon",
  "rusqlite",
  "serde",

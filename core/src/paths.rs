@@ -13,16 +13,29 @@ const IGNORE_PREFIXES: &[&str] = &[
     "C:\\ProgramData",
 ];
 #[cfg(target_os = "macos")]
-const IGNORE_PREFIXES: &[&str] = &["/System", "/Applications", "/Library", "/Users/Shared", "/private"];
+const IGNORE_PREFIXES: &[&str] = &[
+    "/System",
+    "/Applications",
+    "/Library",
+    "/Users/Shared",
+    "/private",
+];
 #[cfg(target_os = "linux")]
-const IGNORE_PREFIXES: &[&str] = &["/usr", "/bin", "/sbin", "/lib", "/lib64", "/var", "/etc", "/proc", "/sys", "/dev"];
+const IGNORE_PREFIXES: &[&str] = &[
+    "/usr", "/bin", "/sbin", "/lib", "/lib64", "/var", "/etc", "/proc", "/sys", "/dev",
+];
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 const IGNORE_PREFIXES: &[&str] = &[];
 
 /// Folder names skipped wherever they appear (compared case-insensitively).
 const IGNORE_NAMES: &[&str] = &["$Recycle.Bin", "System Volume Information", "RECYCLER"];
 #[cfg(target_os = "macos")]
-const IGNORE_NAMES_OS: &[&str] = &[".Trashes", ".fseventsd", ".Spotlight-V100", ".DocumentRevisions-V100"];
+const IGNORE_NAMES_OS: &[&str] = &[
+    ".Trashes",
+    ".fseventsd",
+    ".Spotlight-V100",
+    ".DocumentRevisions-V100",
+];
 #[cfg(not(target_os = "macos"))]
 const IGNORE_NAMES_OS: &[&str] = &[];
 
@@ -43,7 +56,11 @@ fn fold(path: &str) -> String {
 pub fn should_ignore(path: &Path) -> bool {
     let folded = fold(&path.to_string_lossy());
     let name = folded.rsplit('/').next().unwrap_or("").to_lowercase();
-    if IGNORE_NAMES.iter().chain(IGNORE_NAMES_OS).any(|n| n.to_lowercase() == name) {
+    if IGNORE_NAMES
+        .iter()
+        .chain(IGNORE_NAMES_OS)
+        .any(|n| n.to_lowercase() == name)
+    {
         return true;
     }
     IGNORE_PREFIXES.iter().any(|prefix| {
@@ -64,7 +81,9 @@ pub fn validate_dir(input: &str) -> Result<PathBuf, String> {
         return Err("Invalid path: Path is empty".into());
     }
     if trimmed.len() > MAX_PATH_LENGTH {
-        return Err(format!("Invalid path: Path too long (max {MAX_PATH_LENGTH} characters)"));
+        return Err(format!(
+            "Invalid path: Path too long (max {MAX_PATH_LENGTH} characters)"
+        ));
     }
     if trimmed.contains('\0') {
         return Err("Invalid path: Null bytes not allowed in paths".into());
@@ -87,7 +106,10 @@ fn expand_home(input: &str) -> PathBuf {
     if input == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from(input));
     }
-    if let Some(rest) = input.strip_prefix("~/").or_else(|| input.strip_prefix("~\\")) {
+    if let Some(rest) = input
+        .strip_prefix("~/")
+        .or_else(|| input.strip_prefix("~\\"))
+    {
         if let Some(home) = dirs::home_dir() {
             return home.join(rest);
         }
@@ -126,7 +148,9 @@ mod tests {
 
         let file = dir.path().join("f.txt");
         std::fs::write(&file, "x").unwrap();
-        assert!(validate_dir(file.to_str().unwrap()).unwrap_err().contains("not a directory"));
+        assert!(validate_dir(file.to_str().unwrap())
+            .unwrap_err()
+            .contains("not a directory"));
         assert!(validate_dir(dir.path().join("nope").to_str().unwrap())
             .unwrap_err()
             .contains("does not exist"));

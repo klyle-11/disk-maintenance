@@ -55,11 +55,16 @@ fn from_row(row: &Row) -> rusqlite::Result<Snapshot> {
         findings: parse(row.get(3)?).unwrap_or(Value::Array(vec![])),
         extensions: parse(row.get(4)?).unwrap_or(Value::Array(vec![])),
         scan_info: parse(row.get(5)?).unwrap_or(Value::Null),
-        saved_at: row.get::<_, Option<String>>(6)?.map(|s| db_time_to_iso(&s)).unwrap_or_default(),
+        saved_at: row
+            .get::<_, Option<String>>(6)?
+            .map(|s| db_time_to_iso(&s))
+            .unwrap_or_default(),
         total_files: row.get(7)?,
         total_folders: row.get(8)?,
         total_size_bytes: row.get(9)?,
-        snapshot_type: row.get::<_, Option<String>>(10)?.unwrap_or_else(|| "scan".into()),
+        snapshot_type: row
+            .get::<_, Option<String>>(10)?
+            .unwrap_or_else(|| "scan".into()),
         target_path: row.get(11)?,
         comparison: parse(row.get(12)?),
         comparison_summary: parse(row.get(13)?),
@@ -145,16 +150,20 @@ impl SnapshotStore {
     }
 
     pub fn list(&self) -> rusqlite::Result<Vec<Snapshot>> {
-        let mut stmt = self
-            .conn
-            .prepare(&format!("SELECT {COLUMNS} FROM snapshots ORDER BY saved_at DESC"))?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM snapshots ORDER BY saved_at DESC"
+        ))?;
         let rows = stmt.query_map([], from_row)?;
         rows.collect()
     }
 
     pub fn get(&self, id: &str) -> rusqlite::Result<Option<Snapshot>> {
         self.conn
-            .query_row(&format!("SELECT {COLUMNS} FROM snapshots WHERE id = ?1"), [id], from_row)
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM snapshots WHERE id = ?1"),
+                [id],
+                from_row,
+            )
             .optional()
     }
 
@@ -199,14 +208,24 @@ impl SnapshotStore {
         self.conn.execute(
             "UPDATE snapshots SET comparison_json = ?2, comparison_summary_json = ?3,
                 total_files = ?4, total_size_bytes = ?5, saved_at = ?6 WHERE id = ?1",
-            params![id, to_text(tree), to_text(summary), total_files, total_size_bytes, now_utc_db()],
+            params![
+                id,
+                to_text(tree),
+                to_text(summary),
+                total_files,
+                total_size_bytes,
+                now_utc_db()
+            ],
         )?;
         self.get(id)
     }
 
     /// Returns false when there was no such snapshot.
     pub fn delete(&self, id: &str) -> rusqlite::Result<bool> {
-        Ok(self.conn.execute("DELETE FROM snapshots WHERE id = ?1", [id])? > 0)
+        Ok(self
+            .conn
+            .execute("DELETE FROM snapshots WHERE id = ?1", [id])?
+            > 0)
     }
 }
 

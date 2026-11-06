@@ -38,7 +38,14 @@ const fn tip(
     when: &'static [&'static str],
     only: &'static [&'static str],
 ) -> Tip {
-    Tip { id, title, body, command, when, only }
+    Tip {
+        id,
+        title,
+        body,
+        command,
+        when,
+        only,
+    }
 }
 
 const NVM_COMMAND: &str = if cfg!(windows) { "nvm list" } else { "nvm ls" };
@@ -47,8 +54,13 @@ const IOS_BACKUP_COMMAND: &str = if cfg!(windows) {
 } else {
     "du -sh ~/Library/Application\\ Support/MobileSync/Backup"
 };
-const TRASH_COMMAND: &str = if cfg!(target_os = "macos") { "du -sh ~/.Trash" } else { "du -sh ~/.local/share/Trash" };
+const TRASH_COMMAND: &str = if cfg!(target_os = "macos") {
+    "du -sh ~/.Trash"
+} else {
+    "du -sh ~/.local/share/Trash"
+};
 
+#[rustfmt::skip]
 const TIPS: &[Tip] = &[
     tip("docker-disk",
         "Docker's disk image keeps what it grabs",
@@ -67,15 +79,35 @@ const TIPS: &[Tip] = &[
     tip("hiberfil",
         "hiberfil.sys can be many GB",
         "Hibernation reserves a file sized to a large share of your RAM on C:. If you never hibernate, \
-         turn it off (admin terminal). Fast Startup also uses it.",
+         turn it off (admin terminal) and Windows deletes the file. Fast Startup also uses it.",
         "powercfg /hibernate off",
         &["win32"], &["win32"]),
     tip("pagefile",
-        "The page file lives on C:",
-        "Windows grows pagefile.sys when memory runs short. Closing idle Electron apps and dev servers \
-         keeps it small; check its current size in Settings → System → About → Advanced system settings.",
-        "Get-CimInstance Win32_PageFileUsage",
+        "The page file can live on another drive",
+        "Windows grows pagefile.sys when memory runs short; closing idle Electron apps and dev servers \
+         keeps it small. With a second internal drive, move it: Advanced → Virtual memory → Change, \
+         set D: to System managed and C: to a small custom size (or none), then restart.",
+        "SystemPropertiesPerformance",
         &["win32"], &["win32"]),
+    tip("windows-old",
+        "Windows.old is your previous Windows",
+        "An upgrade keeps the old install for 10 days so you can roll back. If you're happy with this one, \
+         remove it: Disk Cleanup → Clean up system files → Previous Windows installation(s).",
+        "cleanmgr /d {SystemDrive}",
+        &["path:%SystemDrive%/Windows.old"], &["win32"]),
+    tip("windows-update-cache",
+        "Windows Update keeps what it downloaded",
+        "Installed updates stay in SoftwareDistribution, and Delivery Optimization keeps a copy to share. \
+         Disk Cleanup → Clean up system files → tick Windows Update Cleanup and Delivery Optimization Files.",
+        "cleanmgr /d {SystemDrive}",
+        &["win32"], &["win32"]),
+    tip("crash-dumps",
+        "Crash dumps can be as big as your RAM",
+        "After a blue screen Windows writes MEMORY.DMP (and LiveKernelReports after driver hangs). \
+         Once you don't need them: Disk Cleanup → Clean up system files → System error memory dump files.",
+        "cleanmgr /d {SystemDrive}",
+        &["path:%SystemRoot%/MEMORY.DMP", "path:%SystemRoot%/LiveKernelReports", "path:%SystemRoot%/Minidump"],
+        &["win32"]),
     tip("restore-points",
         "System Restore can hold a lot of space",
         "Restore points and shadow copies are capped as a percentage of the drive. Check the cap and lower \
@@ -204,7 +236,7 @@ pub struct TipRow {
     pub id: &'static str,
     pub title: &'static str,
     pub body: &'static str,
-    pub command: &'static str,
+    pub command: String,
     pub relevant: bool,
 }
 
@@ -250,6 +282,10 @@ fn condition(cond: &str, free: u64) -> bool {
     }
 }
 
+fn system_drive() -> String {
+    std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into())
+}
+
 fn applies_here(t: &Tip) -> bool {
     t.only.is_empty() || t.only.contains(&PLATFORM)
 }
@@ -264,13 +300,18 @@ pub fn tips_payload() -> TipsPayload {
             id: t.id,
             title: t.title,
             body: t.body,
-            command: t.command,
+            // "{SystemDrive}" is the system drive, as in the CLI ("C:" by default).
+            command: t.command.replace("{SystemDrive}", &system_drive()),
             relevant: t.when.iter().any(|c| condition(c, free)),
         })
         .collect();
     // Stable sort keeps the list order within each group.
     tips.sort_by_key(|t| !t.relevant);
-    TipsPayload { free_bytes: free, low_space: free < LOW_SPACE, tips }
+    TipsPayload {
+        free_bytes: free,
+        low_space: free < LOW_SPACE,
+        tips,
+    }
 }
 
 #[cfg(test)]
@@ -281,11 +322,19 @@ mod tests {
     fn relevant_tips_come_first_and_other_platforms_are_left_out() {
         let payload = tips_payload();
         assert!(!payload.tips.is_empty());
-        let first_irrelevant = payload.tips.iter().position(|t| !t.relevant).unwrap_or(payload.tips.len());
+        let first_irrelevant = payload
+            .tips
+            .iter()
+            .position(|t| !t.relevant)
+            .unwrap_or(payload.tips.len());
         assert!(payload.tips[first_irrelevant..].iter().all(|t| !t.relevant));
         // "guard" is always relevant on every platform.
         assert!(payload.tips.iter().any(|t| t.id == "guard" && t.relevant));
-        let foreign = if PLATFORM == "win32" { "apfs-snapshots" } else { "hiberfil" };
+        let foreign = if PLATFORM == "win32" {
+            "apfs-snapshots"
+        } else {
+            "hiberfil"
+        };
         assert!(payload.tips.iter().all(|t| t.id != foreign));
     }
 
@@ -293,9 +342,17 @@ mod tests {
     fn same_tip_ids_as_the_cli() {
         let py = include_str!("../../backend/diskcli/tips.py");
         for t in TIPS {
-            assert!(py.contains(&format!("Tip(\"{}\"", t.id)), "{} missing from tips.py", t.id);
+            assert!(
+                py.contains(&format!("Tip(\"{}\"", t.id)),
+                "{} missing from tips.py",
+                t.id
+            );
         }
         let py_count = py.matches("    Tip(\"").count();
-        assert_eq!(py_count, TIPS.len(), "tips.py and tips.rs have different tips");
+        assert_eq!(
+            py_count,
+            TIPS.len(),
+            "tips.py and tips.rs have different tips"
+        );
     }
 }

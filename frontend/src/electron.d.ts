@@ -36,6 +36,16 @@ export interface ElectronAPI {
   /** Reveal the backend log in the file manager. */
   openBackendLog: () => Promise<boolean>;
 
+  /** Let clicks through to the desktop (macOS, Windows). Mouse moves still arrive. */
+  setIgnoreMouse: (ignore: boolean) => void;
+
+  /** Linux: only these window-relative rects take clicks; [] means the whole window. */
+  setShape: (rects: { x: number; y: number; width: number; height: number }[]) => void;
+
+  minimize: () => void;
+
+  quit: () => void;
+
   /** Reveal a scanned path in Finder/Explorer. */
   revealPath: (targetPath: string) => Promise<boolean>;
 }

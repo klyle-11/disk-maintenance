@@ -14,6 +14,7 @@ only touches entries marked auto-safe).
 from __future__ import annotations
 
 import ast
+import glob
 import json
 import os
 import plistlib
@@ -222,8 +223,35 @@ def _top_project(path: str, root: str) -> str:
     return os.path.join(root, first) if first not in (".", "") else root
 
 
+# Where people keep projects; `di clean` without a path uses the first that exists.
+# source/repos is Visual Studio's default on Windows.
+DEV_ROOTS = ("dev", "source/repos", "projects", "code", "src", "repos", "git", "Developer", "Documents/GitHub")
+
+
+def dev_roots() -> list[str]:
+    found, seen = [], set()
+    for rel in DEV_ROOTS:
+        path = os.path.join(HOME, *rel.split("/"))
+        key = os.path.normcase(os.path.realpath(path))
+        if os.path.isdir(path) and key not in seen:
+            seen.add(key)
+            found.append(path)
+    return found
+
+
 def cmd_clean(args) -> int:
+    others: list[str] = []
+    if args.path is None:
+        roots = dev_roots()
+        if not roots:
+            r.error("no project folder found (looked for ~/" + ", ~/".join(DEV_ROOTS) + ")")
+            print(f"\n  Point it at yours:  {r.BOLD}di clean <folder>{r.RESET}", file=sys.stderr)
+            return 2
+        args.path, others = roots[0], roots[1:]
     root = os.path.abspath(os.path.expanduser(args.path))
+    if not os.path.isdir(root):
+        r.error(f"no such folder: {root}")
+        return 2
     groups = ALL_GROUPS if args.all else set(args.kinds.split(",")) if args.kinds else DEFAULT_GROUPS
     unknown = groups - ALL_GROUPS
     if unknown:
@@ -288,6 +316,8 @@ def cmd_clean(args) -> int:
             print(f"  {r.BOLD}{r.human_size(total)}{r.RESET} in {len(targets)} folder(s)")
         if skipped_active:
             r.note(f"skipped {len(skipped_active)} folder(s) in projects touched within {args.older_than:g} days")
+        for other in others:
+            r.note(f"also found {r.full_path(other)} — di clean {other}")
 
     if not targets:
         return 0
@@ -340,14 +370,24 @@ class Cache:
     # auto: safe to purge unattended (pure download/build caches).
     auto: bool = True
     note: str = ""
+    # Why it isn't auto, shown at the delete prompt.
+    why: str = "slow to rebuild"
 
     def existing(self) -> list[str]:
         out = []
         for p in self.paths:
             full = _expand(p)
-            if full and os.path.isdir(full) and not os.path.islink(full):
-                out.append(full)
+            if not full:
+                continue
+            for match in _glob(full) if "*" in full else [full]:
+                if os.path.isdir(match) and not os.path.islink(match):
+                    out.append(match)
         return out
+
+
+def _glob(path: str) -> list[str]:
+    """Expand `*` (browser profiles: "Default", "Profile 1" ...); other glob characters stay literal."""
+    return sorted(glob.glob(glob.escape(path).replace("[*]", "*")))
 
 
 def _expand(p: str) -> str | None:
@@ -371,6 +411,25 @@ _RAD = "%APPDATA%"                      # Windows (roaming)
 _EDITOR_CACHE_DIRS = ("Cache", "CachedData", "CachedExtensionVSIXs", "Code Cache", "GPUCache",
                       "DawnGraphiteCache", "DawnWebGPUCache", "logs", "Service Worker/CacheStorage")
 _EDITORS = ("Code", "Cursor", "VSCodium", "Windsurf")
+# Per-profile cache folders of Chromium browsers. Cookies, history and logins live elsewhere.
+_CHROMIUM_CACHE_DIRS = ("Cache", "Code Cache", "GPUCache")
+# (name, Windows User Data, macOS cache root, Linux cache root). On macOS and Linux
+# the HTTP cache sits outside the profile, under ~/Library/Caches and ~/.cache.
+_CHROMIUM_BROWSERS = (
+    ("Chrome", "Google/Chrome", "Google/Chrome", "google-chrome"),
+    ("Edge", "Microsoft/Edge", "Microsoft Edge", "microsoft-edge"),
+    ("Brave", "BraveSoftware/Brave-Browser", "BraveSoftware/Brave-Browser", "BraveSoftware/Brave-Browser"),
+    ("Vivaldi", "Vivaldi", "Vivaldi", "vivaldi"),
+)
+# Electron chat apps keep a Chromium cache in their roaming / Application Support folder.
+_CHAT_APPS = ("discord", "Slack")
+
+
+def _browser_cache(name: str, win: str, mac: str, linux: str) -> Cache:
+    paths = tuple(f"{_LAD}/{win}/User Data/*/{d}" for d in _CHROMIUM_CACHE_DIRS)
+    paths += (f"{_LIB}/{mac}/*/Cache", f".cache/{linux}/*/Cache")
+    return Cache(f"{name} cache", paths, auto=False, why="close the browser first",
+                 note="cached pages and images only; logins and history are kept. Quit the browser first")
 
 CACHES: list[Cache] = [
     Cache("npm", (".npm/_cacache", f"{_LAD}/npm-cache/_cacache"), ("npm", "cache", "clean", "--force")),
@@ -407,6 +466,20 @@ CACHES: list[Cache] = [
     Cache("user logs", ("Library/Logs", f"{_LAD}/CrashDumps")),
     Cache("Windows temp files", (f"{_LAD}/Temp",),
           note="files in use are skipped; that's expected"),
+    # Not auto: the app has to be closed for these to clear cleanly.
+    *(_browser_cache(*b) for b in _CHROMIUM_BROWSERS),
+    Cache("Firefox cache", (f"{_LAD}/Mozilla/Firefox/Profiles/*/cache2", f"{_LIB}/Firefox/Profiles/*/cache2",
+                            ".cache/mozilla/firefox/*/cache2"),
+          auto=False, why="close the browser first",
+          note="cached pages and images only; logins and history are kept. Quit Firefox first"),
+    Cache("chat app caches (Discord / Slack / Teams)", tuple(
+        f"{base}/{app}/{d}" for base in (_RAD, _AS, ".config") for app in _CHAT_APPS for d in _CHROMIUM_CACHE_DIRS
+    ) + (f"{_LAD}/Packages/MSTeams_*/LocalCache/Microsoft/MSTeams/EBWebView/*/Cache",),
+          auto=False, why="quit the apps first", note="quit the apps first; messages stay on their servers"),
+    Cache("Spotify cache", (f"{_LAD}/Spotify/Storage", f"{_LAD}/Packages/SpotifyAB.SpotifyMusic_*/LocalCache/Spotify/Data",
+                            f"{_LIB}/com.spotify.client/Data", ".cache/spotify/Data"),
+          auto=False, why="removes offline songs too",
+          note="streamed songs, and downloaded ones too; or Spotify → Settings → Storage → Clear cache"),
     # Not auto: re-downloading these is slow or they hold real state.
     Cache("maven repository", (".m2/repository",), auto=False),
     Cache("NuGet packages", (".nuget/packages",), auto=False,
@@ -510,7 +583,7 @@ def cmd_caches(args) -> int:
             return 0
         r.note("or re-run with --yes to clean the selected caches")
         picker.delete_loop([
-            picker.Choice(row["name"] + ("" if row["auto"] else " (slow to rebuild)"), row["size"],
+            picker.Choice(row["name"] + ("" if row["auto"] else f" ({row['cache'].why})"), row["size"],
                           lambda row=row: clean_cache(row["cache"], row["paths"]))
             for row in rows
         ], HOME)
