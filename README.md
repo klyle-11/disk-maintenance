@@ -157,29 +157,33 @@ style, floating straight on your desktop with nothing behind them. They dock
 edge to edge around a centre point and never come apart. Clicks on the
 desktop between them go through to whatever is underneath.
 
-- **Moving**: drag a title bar onto another window to swap the two (a drop
-  anywhere else snaps back). ARRANGE re-packs everything.
+Each tool is one window; its parts are sections inside it that open and close.
+A first launch opens just the hub, scan and du-hast-much.
+
+- **Moving everything**: drag the main window (DISK INTELLIGENCE) by its title
+  bar and every window moves with it; CENTRE puts them back in the middle. The
+  position is remembered.
+- **Moving one window**: drag its title bar onto another window to swap the two
+  (a drop anywhere else snaps back). ARRANGE re-packs everything.
 - **Resizing**: drag any edge or the corner grip; neighbours act as walls and
   the rest re-dock around it. Double-click a title bar to shade a window down to
-  one line. New windows open at whatever size fits the free space.
-- **Closing**: a tool's windows belong together and close together (closing a
-  scan's control window closes its findings and types too). The arrangement is
-  remembered between launches.
+  one line. The arrangement is remembered between launches.
 
 The windows:
 
 | Window | What it does |
 |---|---|
-| Disk Intelligence | Status, free space, a scrolling marquee. Minimise and quit live here (there is no OS frame). |
-| Controls | Opens everything else: SCAN, COMPARE, DHM, DI, LIB, TIPS, SKINS, ARRANGE. |
-| Scan (one per scan) | Folder, progress, totals, SAVE. Opens **Findings** (large and old folders, caches, duplicates, cold archives) and **Types** (sizes by extension) beside it. |
-| Compare (one per comparison) | Source and target folders, optional hash check, status filters, TREE/PATHS, SAVE. Opens a hinged **Source / Target** pair that reads like a diff: same rows, one scroll position. PATHS lists each side's differing files as copyable paths. Design: `docs/plans/2026-01-15-folder-comparison-design.md`. |
-| Library | Saved scans and comparisons; opening one gives it windows of its own and quietly refreshes it. |
-| du-hast-much + DHM output | Settings and recent scans; the CLI-style table with live progress. |
-| di + di commands | The real `di` command line, and its suggestions: quick commands and every command with its help. Anything that deletes or schedules something (`clean --yes`, `caches --yes`, `guard --install/--auto`, `ballast set/release`, `forget`) asks first; the pick-to-delete prompt stays terminal-only. `di` is Python, so this window needs Python 3.10+ on the machine (or `DI_PYTHON`). |
-| Tips (one per tip) | Each way to keep freed space free, with its command to copy (the list `di tips` prints). TIPS opens the ones that apply to this machine. |
-| Skins | Cold Steel, Silver, Butter, Sun Metal (hot orange metal fading to yellow), Frost, Gunmetal, Obsidian. Any of them can have a DARK display or WHITE paper inside; each skin remembers which. |
+| Disk Intelligence (hub) | Free space on every disk (the home disk first, removable drives marked ⏏, red when under 10% free), and the controls: SCAN, COMPARE, DHM, DI, TIPS, SKINS, ARRANGE, CENTRE. SKINS opens the skin picker inside the hub, which grows to fit. Minimise and quit live here (there is no OS frame). |
+| Scan | Folder bar, progress, then the result's sections: **Findings** (large and old folders, caches, duplicates, cold archives), **File types**, and the **Library** of saved scans and comparisons. One section is open at a time. SAVE keeps a scan; opening a saved one shows it here and quietly refreshes it. |
+| Compare | **Folders** (source, target, optional hash check; folded away once there are results), status filters, TREE/PATHS, SAVE, and the source and target trees side by side like a diff: same rows, one scroll position. PATHS lists each side's differing files as copyable paths. Design: `docs/plans/2026-01-15-folder-comparison-design.md`. |
+| du-hast-much | Folder, depth, top N, latest-first, recent scans (a dropdown), and the CLI-style table with live progress. Sized to show the controls and a top-10 table without scrolling. |
+| di | The real `di` command line: quick commands, the prompt, and a **Commands** section listing every command, each with its help folded away until you open it. Anything that deletes or schedules something (`clean --yes`, `caches --yes`, `guard --install/--auto`, `ballast set/release`, `forget`) asks first; the pick-to-delete prompt stays terminal-only. `di` is Python, so this window needs Python 3.10+ on the machine (or `DI_PYTHON`). |
+| Tips | Every way to keep freed space free (the list `di tips` prints), the ones for this machine first; each opens to its text and a command to copy. |
 | Backend | Legacy Electron app only: appears by itself if the Python backend can't start (why, retry, the log). |
+
+Skins: Cold Steel, Silver, Butter, Sun Metal (hot orange metal fading to yellow),
+Frost, Gunmetal, Obsidian. Any of them can have a DARK display or WHITE paper
+inside; each skin remembers which.
 
 Apart from the di window, the app only analyses; cleanup lives in `di`.
 

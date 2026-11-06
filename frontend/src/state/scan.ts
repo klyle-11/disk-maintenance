@@ -1,6 +1,6 @@
 /**
- * Scan sessions. Each scan (or saved snapshot) is a small control window plus
- * a findings window and a file-types window; all three read the session here.
+ * The scan window's session: the folder being scanned (or the saved snapshot
+ * being shown), its findings and file types, and which section is open.
  */
 import {
   getExtensionSummary,
@@ -15,12 +15,18 @@ import {
   type ScanResponse,
 } from "../api";
 import { createStore, useStore } from "../store";
-import { closeWindow, openWindow, wmDispatch, wmStore } from "../wm/state";
+import { closeWindow, openWindow } from "../wm/state";
 import { errorMessage, snapshotProblem } from "../windows/common";
 import { isReady, setProblem, upsertSnapshot } from "./app";
 import { ask, notify } from "../desktop";
 
 export type ScanPhase = "setup" | "scanning" | "results" | "error";
+
+/** The scan window's sections; one is open at a time and fills the window. */
+export type ScanSection = "findings" | "types" | "library";
+
+/** The scan window and its session share this id. */
+export const SCAN = "scan";
 
 export interface ScanSession {
   id: string;
@@ -41,21 +47,15 @@ export interface ScanSession {
   problem: string | null;
   category: string;
   query: string;
+  section: ScanSection;
 }
 
-const store = createStore<Record<string, ScanSession>>({});
+const store = createStore<Record<string, ScanSession>>({ [SCAN]: blank(SCAN) });
 const aborts = new Map<string, AbortController>();
-let counter = 0;
 
-/** Ids of the snapshots that have windows open, space-separated (a stable value to select). */
-export function useOpenScanSnapshots(): string {
-  return useStore(store, (s) =>
-    Object.values(s)
-      .map((x) => x.snapshotId)
-      .filter(Boolean)
-      .sort()
-      .join(" "),
-  );
+/** The snapshot the scan window is showing, if any. */
+export function useOpenScanSnapshot(): string | null {
+  return useStore(store, (s) => s[SCAN]?.snapshotId ?? null);
 }
 
 export function useScan(id: string | undefined): ScanSession | undefined {
@@ -89,48 +89,51 @@ function blank(id: string): ScanSession {
     problem: null,
     category: "all",
     query: "",
+    section: "library",
   };
 }
 
-export const findingsId = (id: string) => `${id}:findings`;
-export const typesId = (id: string) => `${id}:types`;
-
-function openResults(id: string): void {
-  openWindow("findings", findingsId(id), { ref: id, parent: id });
-  openWindow("types", typesId(id), { ref: id, parent: id });
+/** Results nobody saved would be lost by showing something else. */
+function unsaved(session: ScanSession | undefined): boolean {
+  return !!session && session.phase === "results" && !!session.scanId && !session.snapshotId;
 }
 
-/** A new, empty scan: just its control window. */
+/** Open (or flash) the scan window. */
 export function newScan(): void {
-  const id = `scan-${++counter}`;
-  store.set((all) => ({ ...all, [id]: blank(id) }));
-  openWindow("scan", id, { ref: id });
+  openWindow("scan", SCAN, { ref: SCAN });
 }
 
-/** Show a saved snapshot in windows of its own, then bring it up to date. */
-export function openScanSnapshot(snapshot: ComparisonSnapshot): void {
-  const existing = Object.values(store.get()).find((s) => s.snapshotId === snapshot.id);
-  if (existing && wmStore.get().units.some((u) => u.id === existing.id)) {
-    wmDispatch({ type: "focus", id: existing.id });
-    return;
+/** Clear the results, ready for another folder (asks first if they aren't saved). */
+export async function resetScan(): Promise<void> {
+  const session = store.get()[SCAN];
+  if (unsaved(session) && !(await ask("This scan isn't saved as a snapshot. Start a new one anyway?"))) return;
+  cancelScan(SCAN);
+  store.set((all) => ({ ...all, [SCAN]: { ...blank(SCAN), path: session?.path ?? "" } }));
+}
+
+/** Show a saved snapshot in the scan window, then bring it up to date. */
+export async function openScanSnapshot(snapshot: ComparisonSnapshot): Promise<void> {
+  const current = store.get()[SCAN];
+  if (current?.snapshotId !== snapshot.id) {
+    if (unsaved(current) && !(await ask("This scan isn't saved as a snapshot. Open the other one anyway?"))) return;
+    cancelScan(SCAN);
+    store.set((all) => ({
+      ...all,
+      [SCAN]: {
+        ...blank(SCAN),
+        phase: "results",
+        path: snapshot.rootPath,
+        info: snapshot.scanInfo,
+        findings: snapshot.findings ?? [],
+        extensions: snapshot.extensions ?? [],
+        snapshotId: snapshot.id,
+        savedAt: snapshot.savedAt,
+        section: "findings",
+      },
+    }));
   }
-  const id = `scan-${++counter}`;
-  store.set((all) => ({
-    ...all,
-    [id]: {
-      ...blank(id),
-      phase: "results",
-      path: snapshot.rootPath,
-      info: snapshot.scanInfo,
-      findings: snapshot.findings ?? [],
-      extensions: snapshot.extensions ?? [],
-      snapshotId: snapshot.id,
-      savedAt: snapshot.savedAt,
-    },
-  }));
-  openWindow("scan", id, { ref: id });
-  openResults(id);
-  if (isReady()) void refreshScan(id);
+  newScan();
+  if (isReady()) void refreshScan(SCAN);
 }
 
 export async function startScan(id: string): Promise<void> {
@@ -151,8 +154,7 @@ export async function startScan(id: string): Promise<void> {
       controller.signal,
     );
     aborts.delete(id);
-    patchScan(id, { info: result, scanId: result.scanId, phase: "results", loadingResults: true });
-    openResults(id);
+    patchScan(id, { info: result, scanId: result.scanId, phase: "results", loadingResults: true, section: "findings" });
     const [findings, extensions] = await Promise.all([getFindings(result.scanId), getExtensionSummary(result.scanId)]);
     patchScan(id, { findings, extensions, loadingResults: false });
   } catch (err) {
@@ -208,31 +210,19 @@ export async function refreshScan(id: string): Promise<void> {
   }
 }
 
-/** Close a scan's windows, asking first if it has unsaved results. */
-export async function closeScan(id: string): Promise<void> {
-  const session = store.get()[id];
-  if (session?.phase === "results" && session.scanId && !session.snapshotId) {
-    if (!(await ask("This scan isn't saved as a snapshot. Close it anyway?"))) return;
-  }
-  cancelScan(id);
-  closeWindow(id);
-  store.set((all) => {
-    const next = { ...all };
-    delete next[id];
-    return next;
-  });
+/** Close the scan window, asking first if it has unsaved results. */
+export async function closeScan(): Promise<void> {
+  const session = store.get()[SCAN];
+  if (unsaved(session) && !(await ask("This scan isn't saved as a snapshot. Close it anyway?"))) return;
+  cancelScan(SCAN);
+  closeWindow(SCAN);
+  store.set((all) => ({ ...all, [SCAN]: { ...blank(SCAN), path: session?.path ?? "" } }));
 }
 
-/** Close any scan showing a snapshot that was deleted. */
+/** A snapshot was deleted: stop showing it, keeping its numbers as an unsaved view. */
 export function forgetScanSnapshot(snapshotId: string): void {
-  for (const s of Object.values(store.get())) {
-    if (s.snapshotId === snapshotId) {
-      closeWindow(s.id);
-      store.set((all) => {
-        const next = { ...all };
-        delete next[s.id];
-        return next;
-      });
-    }
+  const session = store.get()[SCAN];
+  if (session?.snapshotId === snapshotId) {
+    store.set((all) => ({ ...all, [SCAN]: { ...blank(SCAN), path: session.path } }));
   }
 }

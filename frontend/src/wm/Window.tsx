@@ -25,6 +25,8 @@ interface WindowProps {
   closeLabel?: string;
   /** Adds a minimise button (the app has no OS frame to minimise from). */
   onMinimize?: () => void;
+  /** The main window: dragging its title bar moves the whole cluster. */
+  anchor?: boolean;
   children: ReactNode;
 }
 
@@ -40,6 +42,7 @@ export function Window({
   onClose,
   closeLabel = "Close",
   onMinimize,
+  anchor = false,
   children,
 }: WindowProps) {
   const shaded = view.unit.shaded;
@@ -83,6 +86,7 @@ export function Window({
       className={[
         "wm-window",
         className,
+        anchor ? "is-anchor" : "",
         view.active ? "is-active" : "",
         shaded ? "is-shaded" : "",
         view.dragging ? "is-dragging" : "",
@@ -96,8 +100,12 @@ export function Window({
       <header
         className="wm-titlebar"
         tabIndex={0}
-        title="Drag onto another window to swap places · double-click to shade · arrow keys reorder"
-        onPointerDown={controls.beginDrag}
+        title={
+          anchor
+            ? "Drag to move all the windows · double-click to shade"
+            : "Drag onto another window to swap places · double-click to shade · arrow keys reorder"
+        }
+        onPointerDown={anchor ? controls.beginPan : controls.beginDrag}
         onDoubleClick={controls.shade}
         onKeyDown={onTitleKeyDown}
       >

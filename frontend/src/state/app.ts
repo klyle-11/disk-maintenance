@@ -4,9 +4,12 @@
  */
 import {
   deleteSnapshot as apiDeleteSnapshot,
+  formatBytes,
+  getDisks,
   getSnapshots,
   getSpaceTips,
   type ComparisonSnapshot,
+  type DiskSpace,
   type SpaceTips,
 } from "../api";
 import type { BackendStatus } from "../electron.d";
@@ -26,6 +29,8 @@ export interface AppState {
   /** Why a snapshot couldn't be refreshed (e.g. its drive is unplugged), by id. */
   problems: Record<string, string>;
   tips: SpaceTips | null;
+  /** Free space on each disk, the home disk first (empty until loaded). */
+  disks: DiskSpace[];
   skin: Skin;
   /** Each skin's inside: a dark display or white paper. */
   panels: Record<Skin, Panel>;
@@ -40,12 +45,22 @@ export const appStore = createStore<AppState>({
   snapshotsError: null,
   problems: {},
   tips: null,
+  disks: [],
   skin: readSkin(),
   panels: readPanels(),
 });
 
 export function useApp<S>(select: (state: AppState) => S): S {
   return useStore(appStore, select);
+}
+
+/** How many items the library holds, and the scans' total size. */
+export function useLibrarySummary(): string {
+  return useApp((s) => {
+    const list = s.snapshots.filter((x) => x && x.id);
+    const total = list.reduce((sum, x) => sum + (x.snapshotType === "comparison" ? 0 : x.totalSizeBytes || 0), 0);
+    return `${list.length} saved${total ? ` · ${formatBytes(total)}` : ""}`;
+  });
 }
 
 export function patchApp(patch: Partial<AppState>): void {
@@ -124,6 +139,14 @@ export async function loadTips(): Promise<SpaceTips | null> {
     return tips;
   } catch {
     return appStore.get().tips;
+  }
+}
+
+export async function loadDisks(): Promise<void> {
+  try {
+    patchApp({ disks: await getDisks() });
+  } catch {
+    // Keep the last list; the next refresh tries again.
   }
 }
 

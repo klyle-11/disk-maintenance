@@ -1,54 +1,37 @@
 import { useEffect } from "react";
 import { API_VERSION, healthCheck, setApiBaseUrl } from "./api";
 import type { BackendStatus } from "./electron.d";
-import { appStore, backendFailed, loadSnapshots, loadTips, patchApp, useApp } from "./state/app";
+import { appStore, backendFailed, loadDisks, loadSnapshots, loadTips, patchApp, useApp } from "./state/app";
 import { loadDiCommands } from "./state/di";
 import { useStore } from "./store";
 import { Cluster, type UnitControls, type UnitView } from "./wm/Cluster";
 import { closeWindow, openWindow, wmDispatch, wmStore } from "./wm/state";
-import { CompareWindow, ComparePairWindows } from "./windows/CompareWindows";
-import { DhmOutWindow, DhmWindow } from "./windows/DhmWindows";
-import { DiCmdsWindow, DiWindow } from "./windows/DiWindows";
-import { BackendWindow, ControlsWindow, SkinsWindow, StatusWindow } from "./windows/HubWindows";
-import { LibraryWindow } from "./windows/LibraryWindow";
-import { FindingsWindow, ScanWindow, TypesWindow } from "./windows/ScanWindows";
-import { TipWindow } from "./windows/TipWindow";
+import { CompareWindow } from "./windows/CompareWindows";
+import { DhmWindow } from "./windows/DhmWindows";
+import { DiWindow } from "./windows/DiWindows";
+import { BackendWindow, HubWindow } from "./windows/HubWindows";
+import { ScanWindow } from "./windows/ScanWindows";
+import { TipsWindow } from "./windows/TipsWindow";
 import { desktop } from "./desktop";
 import "./wm/wm.css";
 
 function renderUnit(view: UnitView, controls: UnitControls) {
   const args = { view, controls };
   switch (view.unit.kind) {
-    case "status":
-      return <StatusWindow {...args} />;
-    case "controls":
-      return <ControlsWindow {...args} />;
-    case "skins":
-      return <SkinsWindow {...args} />;
+    case "hub":
+      return <HubWindow {...args} />;
     case "backend":
       return <BackendWindow {...args} />;
-    case "library":
-      return <LibraryWindow {...args} />;
-    case "tip":
-      return <TipWindow {...args} />;
     case "dhm":
       return <DhmWindow {...args} />;
-    case "dhm-out":
-      return <DhmOutWindow {...args} />;
     case "di":
       return <DiWindow {...args} />;
-    case "di-cmds":
-      return <DiCmdsWindow {...args} />;
+    case "tips":
+      return <TipsWindow {...args} />;
     case "scan":
       return <ScanWindow {...args} />;
-    case "findings":
-      return <FindingsWindow {...args} />;
-    case "types":
-      return <TypesWindow {...args} />;
     case "compare":
       return <CompareWindow {...args} />;
-    case "cmp-pair":
-      return <ComparePairWindows {...args} />;
   }
 }
 
@@ -138,8 +121,12 @@ function App() {
     void loadSnapshots();
     void loadDiCommands();
     void loadTips();
-    // Free space (shown in the status window) comes with the tips.
-    const timer = setInterval(() => void loadTips(), 60_000);
+    void loadDisks();
+    // Free space (shown in the hub) comes with the tips and the disk list.
+    const timer = setInterval(() => {
+      void loadTips();
+      void loadDisks();
+    }, 60_000);
     return () => clearInterval(timer);
   }, [connected]);
 

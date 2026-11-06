@@ -9,28 +9,14 @@
 import { createStore } from "../store";
 import { bounds, fits, packCluster, type Point, type Rect, type Size } from "./layout";
 
-export type Kind =
-  | "status"
-  | "controls"
-  | "skins"
-  | "library"
-  | "backend"
-  | "dhm"
-  | "dhm-out"
-  | "di"
-  | "di-cmds"
-  | "tip"
-  | "scan"
-  | "findings"
-  | "types"
-  | "compare"
-  | "cmp-pair";
+/** One window per feature; each feature's parts are sections inside it. */
+export type Kind = "hub" | "backend" | "dhm" | "di" | "tips" | "scan" | "compare";
 
 interface KindSpec {
   /** Default size of each member window. */
   size: Size;
   min: Size;
-  /** 2 for a pair of windows that dock and move as one (comparison trees). */
+  /** 2 for a pair of windows that dock and move as one. */
   members: 1 | 2;
   /** Reopened, at the same size and place, on the next launch. */
   persist: boolean;
@@ -39,21 +25,15 @@ interface KindSpec {
 }
 
 export const KINDS: Record<Kind, KindSpec> = {
-  status: { size: { w: 330, h: 112 }, min: { w: 290, h: 104 }, members: 1, persist: true, closable: false },
-  controls: { size: { w: 330, h: 92 }, min: { w: 290, h: 84 }, members: 1, persist: true, closable: false },
-  skins: { size: { w: 330, h: 182 }, min: { w: 270, h: 176 }, members: 1, persist: true, closable: true },
-  library: { size: { w: 290, h: 300 }, min: { w: 220, h: 140 }, members: 1, persist: true, closable: true },
+  // The hub sizes its own height to what it shows (disks, skins).
+  hub: { size: { w: 320, h: 150 }, min: { w: 280, h: 110 }, members: 1, persist: true, closable: false },
   backend: { size: { w: 380, h: 200 }, min: { w: 300, h: 150 }, members: 1, persist: false, closable: true },
-  dhm: { size: { w: 300, h: 214 }, min: { w: 260, h: 180 }, members: 1, persist: true, closable: true },
-  "dhm-out": { size: { w: 640, h: 330 }, min: { w: 380, h: 160 }, members: 1, persist: true, closable: true },
-  di: { size: { w: 640, h: 330 }, min: { w: 360, h: 160 }, members: 1, persist: true, closable: true },
-  "di-cmds": { size: { w: 270, h: 330 }, min: { w: 210, h: 140 }, members: 1, persist: true, closable: true },
-  tip: { size: { w: 290, h: 176 }, min: { w: 220, h: 120 }, members: 1, persist: true, closable: true },
-  scan: { size: { w: 310, h: 178 }, min: { w: 270, h: 160 }, members: 1, persist: false, closable: true },
-  findings: { size: { w: 580, h: 330 }, min: { w: 360, h: 160 }, members: 1, persist: false, closable: true },
-  types: { size: { w: 320, h: 330 }, min: { w: 240, h: 150 }, members: 1, persist: false, closable: true },
-  compare: { size: { w: 330, h: 206 }, min: { w: 290, h: 190 }, members: 1, persist: false, closable: true },
-  "cmp-pair": { size: { w: 420, h: 380 }, min: { w: 260, h: 180 }, members: 2, persist: false, closable: true },
+  // Tall enough for the controls and a top-10 table without scrolling.
+  dhm: { size: { w: 580, h: 452 }, min: { w: 380, h: 260 }, members: 1, persist: true, closable: true },
+  di: { size: { w: 580, h: 340 }, min: { w: 380, h: 200 }, members: 1, persist: true, closable: true },
+  tips: { size: { w: 320, h: 300 }, min: { w: 240, h: 150 }, members: 1, persist: true, closable: true },
+  scan: { size: { w: 480, h: 330 }, min: { w: 380, h: 220 }, members: 1, persist: true, closable: true },
+  compare: { size: { w: 600, h: 400 }, min: { w: 420, h: 240 }, members: 1, persist: false, closable: true },
 };
 
 /** Height of a title bar, which is all a shaded window shows. */
@@ -83,6 +63,8 @@ export interface WmState {
   /** Where each unit is, in cluster coordinates. */
   rects: Record<string, Rect>;
   view: Size;
+  /** How far the whole cluster has been dragged from the centre (by the main window). */
+  pan: Point;
   activeId: string | null;
   /** Bumped to replay the "here I am" flash on a window. */
   flash: { id: string; n: number } | null;
@@ -98,7 +80,9 @@ export type WmAction =
   | { type: "swap"; a: string; b: string }
   | { type: "move"; id: string; delta: -1 | 1 }
   | { type: "arrange" }
-  | { type: "view"; size: Size };
+  | { type: "view"; size: Size }
+  | { type: "pan"; pan: Point }
+  | { type: "fit"; id: string; h: number };
 
 export function outerSize(unit: Unit): Size {
   const w = unit.sizes.reduce((sum, s) => sum + s.w, 0);
@@ -277,6 +261,24 @@ export function wmReducer(state: WmState, action: WmAction): WmState {
     }
     case "arrange":
       return { ...state, rects: relayout(state.units, {}, state.view) };
+    case "pan":
+      return action.pan.x === state.pan.x && action.pan.y === state.pan.y ? state : { ...state, pan: action.pan };
+    case "fit": {
+      // A window sizing itself to its content: keep its top edge (or its
+      // bottom) docked if it can; otherwise the packer moves things aside.
+      const unit = state.units.find((u) => u.id === action.id);
+      const rect = state.rects[action.id];
+      const h = Math.max(KINDS[unit?.kind ?? "hub"].min.h, Math.round(action.h));
+      if (!unit || !rect || unit.shaded || unit.sizes[0].h === h) return state;
+      const resized = { ...unit, sizes: unit.sizes.map((s) => ({ ...s, h })) };
+      const next = reshape(state, action.id, () => resized, [
+        { ...rect, h },
+        { ...rect, y: rect.y + rect.h - h, h },
+      ]);
+      if (next !== state) return next;
+      const units = state.units.map((u) => (u.id === action.id ? resized : u));
+      return { ...state, units, rects: relayout(units, { ...state.rects, [action.id]: { ...rect, h } }, state.view) };
+    }
     case "view":
       return action.size.w === state.view.w && action.size.h === state.view.h
         ? state
@@ -288,11 +290,13 @@ export function wmReducer(state: WmState, action: WmAction): WmState {
 // Persistence: the persistent windows' order, sizes and places.
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = "wm-layout-v2";
+// v3: one window per feature (v2 had a window per part).
+const STORAGE_KEY = "wm-layout-v3";
 
 interface Saved {
   units: Unit[];
   rects: Record<string, Rect>;
+  pan?: Point;
 }
 
 function clampSizes(unit: Unit): Unit {
@@ -308,6 +312,7 @@ function clampSizes(unit: Unit): Unit {
 function initialState(defaults: Unit[], view: Size): WmState {
   let units = defaults;
   let rects: Record<string, Rect> = {};
+  let pan: Point = { x: 0, y: 0 };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -320,11 +325,12 @@ function initialState(defaults: Unit[], view: Size): WmState {
       const ids = new Set(restored.map((u) => u.id));
       units = restored.map((u) => (u.parent && !ids.has(u.parent) ? { ...u, parent: undefined } : u));
       rects = saved.rects || {};
+      if (saved.pan && Number.isFinite(saved.pan.x) && Number.isFinite(saved.pan.y)) pan = saved.pan;
     }
   } catch {
     // Unreadable or no storage: start from the default arrangement.
   }
-  return { units, rects: relayout(units, rects, view), view, activeId: null, flash: null };
+  return { units, rects: relayout(units, rects, view), view, pan, activeId: null, flash: null };
 }
 
 function saveState(state: WmState): void {
@@ -332,7 +338,7 @@ function saveState(state: WmState): void {
   const rects: Record<string, Rect> = {};
   for (const u of units) if (state.rects[u.id]) rects[u.id] = state.rects[u.id];
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ units, rects } satisfies Saved));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ units, rects, pan: state.pan } satisfies Saved));
   } catch {
     // Storage unavailable: the layout just won't be remembered.
   }
@@ -342,16 +348,8 @@ function saveState(state: WmState): void {
 // The live window manager.
 // ---------------------------------------------------------------------------
 
-/** First launch: status and controls in the middle, the two CLIs and the library around them. */
-const DEFAULT_UNITS: Unit[] = [
-  newUnit("status", "status"),
-  newUnit("controls", "controls"),
-  newUnit("dhm", "dhm"),
-  newUnit("dhm-out", "dhm-out", { parent: "dhm" }),
-  newUnit("di", "di"),
-  newUnit("di-cmds", "di-cmds", { parent: "di" }),
-  newUnit("library", "library"),
-];
+/** First launch: the hub in the middle, scanning (with the library) and du-hast-much beside it. */
+const DEFAULT_UNITS: Unit[] = [newUnit("hub", "hub"), newUnit("scan", "scan"), newUnit("dhm", "dhm")];
 
 export const wmStore = createStore<WmState>(
   initialState(DEFAULT_UNITS, { w: window.innerWidth, h: window.innerHeight }),

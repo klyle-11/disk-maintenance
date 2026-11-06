@@ -8,6 +8,7 @@
 mod overlay;
 
 use disk_core::di::{DiCheck, DiEvent, DiRunner};
+use disk_core::disks::DiskInfo;
 use disk_core::model::*;
 use disk_core::snapshots::{default_db_path, SnapshotStore};
 use disk_core::tips::TipsPayload;
@@ -57,6 +58,12 @@ fn app_info(app: AppHandle) -> Value {
 async fn tips(svc: Svc<'_>) -> CmdResult<TipsPayload> {
     let svc = svc.inner().clone();
     blocking(move || Ok(svc.tips())).await
+}
+
+/// Free space on every disk worth showing, the home disk first.
+#[tauri::command]
+async fn disks() -> CmdResult<Vec<DiskInfo>> {
+    blocking(|| Ok(disk_core::disks::list_disks())).await
 }
 
 #[tauri::command]
@@ -353,6 +360,7 @@ pub fn run() {
             health,
             app_info,
             tips,
+            disks,
             select_directory,
             message_dialog,
             confirm_dialog,
