@@ -3,15 +3,71 @@
  * table below. Click a folder's row to open it, BACK to return. Sized so the
  * controls and a top-10 table fit without scrolling.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../api";
 import { ansiCss, parseAnsi } from "../ansi";
 import { useApp } from "../state/app";
-import { backTarget, dhmBack, dhmLines, openDhmFolder, patchDhm, runDhm, stopDhm, timeAgo, useDhm } from "../state/dhm";
+import { copyText } from "../desktop";
+import {
+  backTarget,
+  dhmBack,
+  dhmLines,
+  openDhmFolder,
+  patchDhm,
+  runDhm,
+  scannedAt,
+  stopDhm,
+  timeAgo,
+  useDhm,
+} from "../state/dhm";
 import { Window } from "../wm/Window";
 import { baseName } from "./common";
 import type { WindowArgs } from "./HubWindows";
 import { pickDirectory } from "./pickDirectory";
+
+const ICON = { width: 9, height: 9, viewBox: "0 0 10 10", fill: "none", stroke: "currentColor", strokeWidth: 1.3 } as const;
+
+const CopyIcon = () => (
+  <svg {...ICON} aria-hidden>
+    <rect x="3.5" y="0.75" width="5.75" height="5.75" />
+    <path d="M1.5 3.5v5.75h5.75" />
+  </svg>
+);
+
+const OpenIcon = () => (
+  <svg {...ICON} aria-hidden>
+    <path d="M0.75 5h8M5.75 2l3 3-3 3" />
+  </svg>
+);
+
+const UpdateIcon = () => (
+  <svg {...ICON} aria-hidden>
+    <path d="M8.6 4.2A3.75 3.75 0 1 0 8.5 6.4" />
+    <path d="M9.25 1.5v3h-3" />
+  </svg>
+);
+
+/** A row's buttons: copy its full path, and open (or update) that folder. */
+function RowActions({ path, copied, onCopy }: { path: string; copied: boolean; onCopy: (path: string) => void }) {
+  const when = scannedAt(path);
+  const name = baseName(path);
+  return (
+    <span className="dhm-actions" onClick={(e) => e.stopPropagation()}>
+      <button type="button" className="dhm-act" title={copied ? "Copied" : `Copy ${path}`} aria-label={`Copy the path of ${name}`} onClick={() => onCopy(path)}>
+        {copied ? "✓" : <CopyIcon />}
+      </button>
+      <button
+        type="button"
+        className={`dhm-act ${when ? "is-update" : ""}`}
+        title={when ? `Update ${name} (last scanned ${timeAgo(when / 1000)})` : `Open and scan ${name}`}
+        aria-label={when ? `Update ${name}` : `Scan ${name}`}
+        onClick={() => openDhmFolder(path)}
+      >
+        {when ? <UpdateIcon /> : <OpenIcon />}
+      </button>
+    </span>
+  );
+}
 
 export function DhmWindow({ view, controls }: WindowArgs) {
   const ready = useApp((s) => s.connected === true);
@@ -32,6 +88,12 @@ export function DhmWindow({ view, controls }: WindowArgs) {
     [results, meta, running, shown, refreshing, shownAt],
   );
   const outputRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const copy = async (path: string) => {
+    if (!(await copyText(path))) return;
+    setCopied(path);
+    setTimeout(() => setCopied((c) => (c === path ? null : c)), 1400);
+  };
 
   // Follow the table as it fills in (not while remembered rows are shown).
   useEffect(() => {
@@ -141,6 +203,7 @@ export function DhmWindow({ view, controls }: WindowArgs) {
                     {seg.text}
                   </span>
                 ))}
+                {line.path ? <RowActions path={line.path} copied={copied === line.path} onCopy={copy} /> : null}
               </div>
             ))
           )}

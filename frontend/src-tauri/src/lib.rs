@@ -299,6 +299,13 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// Dragging the cluster onto another display: move the window there. Returns
+/// the pointer's place in the window afterwards, or null if it didn't move.
+#[tauri::command]
+fn follow_cursor_to_monitor(window: WebviewWindow) -> Option<serde_json::Value> {
+    overlay::follow_cursor(&window).map(|(x, y)| json!({ "x": x, "y": y }))
+}
+
 /// macOS/Windows: let clicks through while the pointer is off the UI's windows.
 #[tauri::command]
 fn set_click_through(
@@ -392,6 +399,7 @@ pub fn run() {
             di_stop,
             minimize_window,
             quit_app,
+            follow_cursor_to_monitor,
             set_click_through,
             set_hit_rects,
             set_input_region,

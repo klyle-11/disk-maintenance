@@ -42,6 +42,12 @@ export interface DesktopAPI {
   setIgnoreMouse: (ignore: boolean, rects: ShellRect[]) => void;
   /** hover: the UI's windows moved (Tauri watches the pointer against them). */
   setHitRects?: (rects: ShellRect[]) => void;
+  /**
+   * Mid-drag of the main window with the pointer off this window: move the
+   * app to the display the pointer is on. Resolves to the pointer's place in
+   * the moved window (CSS px), or null if it stayed put.
+   */
+  followCursorToMonitor?: () => Promise<{ x: number; y: number } | null>;
   /** shape: only these window-relative rects take clicks; [] means all of it. */
   setShape: (rects: ShellRect[]) => void;
 
@@ -74,6 +80,7 @@ function makeTauriDesktop(): DesktopAPI {
     setIgnoreMouse: (ignore, rects) => void invoke("set_click_through", { ignore, rects }).catch(ignoreError),
     setHitRects: (rects) => void invoke("set_hit_rects", { rects }).catch(ignoreError),
     setShape: (rects) => void invoke("set_input_region", { rects }).catch(ignoreError),
+    followCursorToMonitor: () => invoke<{ x: number; y: number } | null>("follow_cursor_to_monitor").catch(() => null),
   };
 }
 
@@ -117,4 +124,31 @@ export async function ask(message: string): Promise<boolean> {
     return invoke<boolean>("confirm_dialog", { message }).catch(() => false);
   }
   return window.confirm(message);
+}
+
+/**
+ * Put text on the clipboard. Falls back to a hidden text field where a
+ * webview refuses the async clipboard API.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Fall through to the old way.
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    area.remove();
+  }
 }
