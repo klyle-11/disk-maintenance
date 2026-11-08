@@ -60,6 +60,11 @@ function readCache(): Record<string, DhmRecord> {
 
 const cache: Record<string, DhmRecord> = readCache();
 
+/** When `path` was last measured (ms), or null if it never was. */
+export function scannedAt(path: string): number | null {
+  return cache[path]?.timestamp ?? null;
+}
+
 function remember(record: DhmRecord): void {
   cache[record.path] = record;
   const keys = Object.keys(cache).sort((a, b) => cache[b].timestamp - cache[a].timestamp);
@@ -307,7 +312,7 @@ export function dhmLines(
   const columns: Column[] = latest
     ? [
         { title: "#", width: 3, right: true },
-        { title: "Directory", width: 26 },
+        { title: "Directory", width: 15 },
         { title: "Size", width: 9, right: true },
         { title: "Files", width: 7, right: true },
         { title: "Avg size", width: 9, right: true },
@@ -315,14 +320,14 @@ export function dhmLines(
       ]
     : [
         { title: "#", width: 3, right: true },
-        { title: "Directory", width: 30 },
+        { title: "Directory", width: 24 },
         { title: "Size", width: 9, right: true },
         { title: "% Total", width: 7, right: true },
         { title: "Usage", width: 12 },
       ];
 
   lines.push(
-    `${ESC}1m${latest ? "Recently modified directories" : "Disk usage by directory"}${RESET}${ESC}2m  · click a row to open it${RESET}`,
+    `${ESC}1m${latest ? "Recently modified directories" : "Disk usage by directory"}${RESET}${ESC}2m  · → open · ⟳ update · copy path${RESET}`,
   );
   lines.push(rule(columns, "┌", "┬", "┐"));
   lines.push(row(columns, columns.map((c) => ({ text: c.title, color: `${ESC}2m` }))));

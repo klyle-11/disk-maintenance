@@ -161,8 +161,9 @@ Each tool is one window; its parts are sections inside it that open and close.
 A first launch opens just the hub, scan and du-hast-much.
 
 - **Moving everything**: drag the main window (DISK INTELLIGENCE) by its title
-  bar and every window moves with it; CENTRE puts them back in the middle. The
-  position is remembered.
+  bar and every window moves with it, onto another display too: drag past the
+  edge of this screen and the app follows the pointer there. CENTRE puts them
+  back in the middle. The position is remembered.
 - **Moving one window**: drag its title bar onto another window to swap the two
   (a drop anywhere else snaps back). ARRANGE re-packs everything.
 - **Resizing**: drag any edge or the corner grip; neighbours act as walls and
@@ -176,7 +177,7 @@ The windows:
 | Disk Intelligence (hub) | Free space on every disk (the home disk first, removable drives marked ⏏, red when under 10% free), and the controls: SCAN, COMPARE, DHM, DI, TIPS, SKINS, ARRANGE, CENTRE. SKINS opens the skin picker inside the hub, which grows to fit. Minimise and quit live here (there is no OS frame). |
 | Scan | Folder bar, progress, then the result's sections: **Findings** (large and old folders, caches, duplicates, cold archives), **File types**, and the **Library** of saved scans and comparisons. One section is open at a time. SAVE keeps a scan; opening a saved one shows it here and quietly refreshes it. |
 | Compare | **Folders** (source, target, optional hash check; folded away once there are results), status filters, TREE/PATHS, SAVE, and the source and target trees side by side like a diff: same rows, one scroll position. PATHS lists each side's differing files as copyable paths. Design: `docs/plans/2026-01-15-folder-comparison-design.md`. |
-| du-hast-much | Folder, top N, latest-first, recent scans (a dropdown), and the CLI-style table with live progress. Click a folder's row to open it and size what's inside; **◀ BACK** returns (to the folder you came from, or the parent of a typed path). Every folder's results are remembered, across restarts too: revisiting one shows them at once and re-runs to update them. Sized to show the controls and a top-10 table without scrolling. |
+| du-hast-much | Folder, top N, latest-first, recent scans (a dropdown), and the CLI-style table with live progress. Each row ends with two buttons: copy the folder's full path, and **→** open it and size what's inside (**⟳** when it has been scanned before: open it and update its remembered results). Clicking the row does the same as the arrow; **◀ BACK** returns (to the folder you came from, or the parent of a typed path). Every folder's results are remembered, across restarts too: revisiting one shows them at once and re-runs to update them. Sized to show the controls and a top-10 table without scrolling. |
 | di | The real `di` command line: quick commands, the prompt, and a **Commands** section listing every command, each with its help folded away until you open it. After a listing (`di .`, scan, recent, growth, reclaim, clean, caches) di stays open at its `delete #` prompt, as in a terminal: type a row's number, confirm with `y`, Enter lists what's left, `q` finishes. Commands that delete or schedule something outright (`clean --yes`, `caches --yes`, `guard --install/--auto`, `ballast set/release`, `forget`) ask in a dialog first. (The legacy Electron app runs di without the prompt.) `di` is Python, so this window needs Python 3.10+ on the machine (or `DI_PYTHON`). |
 | Tips | Every way to keep freed space free (the list `di tips` prints), the ones for this machine first; each opens to its text and a command to copy. |
 | Backend | Legacy Electron app only: appears by itself if the Python backend can't start (why, retry, the log). |

@@ -7,8 +7,9 @@
  * back), dragging an edge resizes, with the opposite edge held still, and
  * dragging the main window moves the whole cluster.
  */
-import { Fragment, useEffect, useRef, useState, type Dispatch, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type ReactNode } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { desktop } from "../desktop";
 import { useHoverClickThrough, updateShape } from "./clickThrough";
 import { bounds, fits, type Point, type Rect } from "./layout";
 import { CLUSTER_PAD as PAD, KINDS, type Unit, type WmAction, type WmState } from "./state";
@@ -77,6 +78,11 @@ function furthest(from: number, to: number, ok: (v: number) => boolean): number 
   return good;
 }
 
+/** The pan that puts a window's grab point under the pointer, kept on screen. */
+function panUnder(pointer: Point, grab: Point, rect: Rect, centred: Point, clamp: (p: Point) => Point): Point {
+  return clamp({ x: pointer.x - grab.x - (centred.x + rect.x), y: pointer.y - grab.y - (centred.y + rect.y) });
+}
+
 /** Follow the pointer until it is released, then clean up. */
 function track(onMove: (e: PointerEvent) => void, onEnd: (cancelled: boolean) => void) {
   const move = (e: PointerEvent) => onMove(e);
@@ -93,8 +99,21 @@ function track(onMove: (e: PointerEvent) => void, onEnd: (cancelled: boolean) =>
   window.addEventListener("pointercancel", cancel);
 }
 
+/** A drag of the main window that just moved the app onto another display. */
+interface Hop {
+  id: string;
+  /** Where the pointer was in the moved window (CSS px). */
+  at: Point;
+  /** Where in the dragged window it was grabbed. */
+  grab: Point;
+  time: number;
+}
+
 export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
   const desktopRef = useRef<HTMLDivElement>(null);
+  const hop = useRef<Hop | null>(null);
+  const lastPointer = useRef<{ x: number; y: number; time: number } | null>(null);
+  const [hopCount, setHopCount] = useState(0);
   const [interaction, setInteraction] = useState<Interaction>(null);
   // While a gesture is under way the cluster stays put instead of
   // re-centring under the pointer.
@@ -136,6 +155,23 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
   };
   const pan = clampPan(state.pan);
   const offset = frozen ?? { x: centred.x + pan.x, y: centred.y + pan.y };
+
+  // After moving to another display, put the dragged window back under the
+  // pointer, and again once the new display's size arrives.
+  useEffect(() => {
+    const h = hop.current;
+    if (!h) return;
+    if (Date.now() - h.time > 1500) {
+      hop.current = null;
+      return;
+    }
+    const r = state.rects[h.id];
+    if (!r) return;
+    const seen = lastPointer.current;
+    const pointer = seen && seen.time > h.time ? seen : h.at;
+    dispatch({ type: "pan", pan: panUnder(pointer, h.grab, r, centred, clampPan) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- placed on a hop and when the view resizes
+  }, [hopCount, state.view.w, state.view.h]);
 
   useHoverClickThrough();
 
@@ -245,16 +281,46 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
     );
   };
 
-  const beginPan = (e: ReactPointerEvent) => {
+  // The latest layout, for a drag that outlives the render it began in.
+  const geometry = useRef({ clampPan, centred, rects: state.rects });
+  useLayoutEffect(() => {
+    geometry.current = { clampPan, centred, rects: state.rects };
+  });
+
+  const beginPan = (id: string, e: ReactPointerEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const start = pan;
+    const win = (e.currentTarget as HTMLElement).closest(".wm-window")?.getBoundingClientRect();
+    const grab = win ? { x: e.clientX - win.left, y: e.clientY - win.top } : { x: 0, y: 0 };
+    let asking = false;
     setInteraction({ kind: "pan" });
     track(
-      (ev) => dispatch({ type: "pan", pan: clampPan({ x: start.x + ev.clientX - startX, y: start.y + ev.clientY - startY }) }),
+      (ev) => {
+        lastPointer.current = { x: ev.clientX, y: ev.clientY, time: Date.now() };
+        const off = ev.clientX < 0 || ev.clientY < 0 || ev.clientX >= window.innerWidth || ev.clientY >= window.innerHeight;
+        // Off this window: maybe onto another display; the app follows.
+        if (off && desktop?.followCursorToMonitor) {
+          if (!asking) {
+            asking = true;
+            void desktop
+              .followCursorToMonitor()
+              .then((at) => {
+                if (!at) return;
+                hop.current = { id, at, grab, time: Date.now() };
+                setHopCount((n) => n + 1);
+              })
+              .finally(() => {
+                asking = false;
+              });
+          }
+          return;
+        }
+        // Keep the grabbed point under the pointer (as far as the screen allows).
+        const g = geometry.current;
+        const r = g.rects[id];
+        if (r) dispatch({ type: "pan", pan: panUnder({ x: ev.clientX, y: ev.clientY }, grab, r, g.centred, g.clampPan) });
+      },
       () => setInteraction(null),
     );
   };
@@ -278,6 +344,7 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
       ].join(" ")}
     >
       <div className="wm-canvas" style={{ width: canvas.w, height: canvas.h }}>
+        {/* eslint-disable-next-line react-hooks/refs -- the controls touch refs only in pointer handlers, never while rendering */}
         {units.map((unit) => {
           const r = state.rects[unit.id];
           if (!r) return null;
@@ -298,7 +365,7 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
             shade: () => dispatch({ type: "shade", id: unit.id }),
             close: () => dispatch({ type: "close", id: unit.id }),
             move: (delta) => dispatch({ type: "move", id: unit.id, delta }),
-            beginPan,
+            beginPan: (e) => beginPan(unit.id, e),
             resetPan: () => dispatch({ type: "pan", pan: { x: 0, y: 0 } }),
           };
           return <Fragment key={unit.id}>{renderUnit(view, controls)}</Fragment>;

@@ -1549,6 +1549,37 @@
   background: var(--lcd-hover);
 }
 
+.dhm-actions {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 5px;
+  vertical-align: top;
+}
+
+.dhm-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 14px;
+  margin-top: 1px;
+  padding: 0;
+  color: var(--lcd-dim);
+  font: 700 10px var(--font-lcd);
+  background: var(--lcd-bg-2);
+  border: 1px solid var(--lcd-line-2);
+  cursor: pointer;
+}
+
+.dhm-act:hover {
+  color: var(--lcd-accent);
+  border-color: var(--lcd-accent);
+}
+
+.dhm-act.is-update {
+  color: var(--lcd-accent);
+}
+
 .dhm-recent {
   flex: 0 1 190px;
   min-width: 0;

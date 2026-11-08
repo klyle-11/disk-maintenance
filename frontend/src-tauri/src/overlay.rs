@@ -46,6 +46,36 @@ pub fn fit_to_work_area(window: &WebviewWindow) {
     }
 }
 
+/// Moving to another display: when the pointer (mid-drag of the main window)
+/// is on a different monitor than the window, cover that monitor's work area
+/// instead. Returns where the pointer now is inside the window, in CSS
+/// pixels, so the UI can put the dragged window back under it.
+pub fn follow_cursor(window: &WebviewWindow) -> Option<(f64, f64)> {
+    let cursor = window.cursor_position().ok()?;
+    let monitors = window.available_monitors().ok()?;
+    let target = monitors.iter().find(|m| {
+        let (p, s) = (m.position(), m.size());
+        cursor.x >= p.x as f64
+            && cursor.x < p.x as f64 + s.width as f64
+            && cursor.y >= p.y as f64
+            && cursor.y < p.y as f64 + s.height as f64
+    })?;
+    let current = window.current_monitor().ok().flatten();
+    let same =
+        current.is_some_and(|c| c.position() == target.position() && c.size() == target.size());
+    if same {
+        return None;
+    }
+    let area = target.work_area();
+    let _ = window.set_position(area.position);
+    let _ = window.set_size(area.size);
+    let scale = target.scale_factor();
+    Some((
+        (cursor.x - area.position.x as f64) / scale,
+        (cursor.y - area.position.y as f64) / scale,
+    ))
+}
+
 /// True when the pointer is over one of the UI's windows, or when that can't
 /// be told (then the window should keep taking clicks).
 fn pointer_over_ui(window: &WebviewWindow, state: &ClickThrough) -> bool {
