@@ -98,6 +98,40 @@ function unsaved(session: ScanSession | undefined): boolean {
   return !!session && session.phase === "results" && !!session.scanId && !session.snapshotId;
 }
 
+/** Before the scan window shows something else: ask if that would stop a scan or lose results. */
+async function mayReplace(session: ScanSession | undefined, action: string): Promise<boolean> {
+  if (session?.phase === "scanning") return ask(`A scan of ${session.path} is still running. Stop it and ${action}?`);
+  if (unsaved(session)) return ask(`This scan isn't saved as a snapshot. ${action[0].toUpperCase()}${action.slice(1)} anyway?`);
+  return true;
+}
+
+/** A path as a comparable key: Windows paths ignore case and slash direction. */
+function pathKey(path: string): string {
+  const windows = /^[a-z]:|\\/i.test(path);
+  const key = windows ? path.replace(/\//g, "\\").toLowerCase() : path;
+  return key.length > 1 ? key.replace(/[\\/]+$/, "") : key;
+}
+
+/** The newest saved scan of this folder, if there is one. */
+export function savedScanOf(snapshots: ComparisonSnapshot[], path: string): ComparisonSnapshot | undefined {
+  const key = pathKey(path);
+  let newest: ComparisonSnapshot | undefined;
+  for (const s of snapshots) {
+    if (!s?.id || s.snapshotType === "comparison" || pathKey(s.rootPath) !== key) continue;
+    if (!newest || Date.parse(s.savedAt) > Date.parse(newest.savedAt)) newest = s;
+  }
+  return newest;
+}
+
+/** Send a folder to the scan window and scan it there. */
+export async function scanFolder(path: string): Promise<void> {
+  if (!(await mayReplace(store.get()[SCAN], `scan ${path} instead`))) return;
+  cancelScan(SCAN);
+  store.set((all) => ({ ...all, [SCAN]: { ...blank(SCAN), path } }));
+  newScan();
+  if (isReady()) void startScan(SCAN);
+}
+
 /** Open (or flash) the scan window. */
 export function newScan(): void {
   openWindow("scan", SCAN, { ref: SCAN });
@@ -115,7 +149,7 @@ export async function resetScan(): Promise<void> {
 export async function openScanSnapshot(snapshot: ComparisonSnapshot): Promise<void> {
   const current = store.get()[SCAN];
   if (current?.snapshotId !== snapshot.id) {
-    if (unsaved(current) && !(await ask("This scan isn't saved as a snapshot. Open the other one anyway?"))) return;
+    if (!(await mayReplace(current, "open the other one"))) return;
     cancelScan(SCAN);
     store.set((all) => ({
       ...all,
@@ -140,35 +174,44 @@ export async function startScan(id: string): Promise<void> {
   const session = store.get()[id];
   const root = session?.path.trim();
   if (!root) return;
+  cancelScan(id);
   const controller = new AbortController();
   aborts.set(id, controller);
+  // A cancelled run must not write over whatever the window shows next.
+  const live = () => aborts.get(id) === controller;
   patchScan(id, { phase: "scanning", error: null, progress: null, log: [`Starting scan of ${root}`] });
   try {
     const result = await scanWithProgress(
       root,
-      (event) =>
+      (event) => {
+        if (!live()) return;
         patchScan(id, (s) => ({
           progress: event,
           log: [...s.log.slice(-199), `[${event.progress_percent}%] ${event.message}`],
-        })),
+        }));
+      },
       controller.signal,
     );
-    aborts.delete(id);
+    if (!live()) return;
     patchScan(id, { info: result, scanId: result.scanId, phase: "results", loadingResults: true, section: "findings" });
     const [findings, extensions] = await Promise.all([getFindings(result.scanId), getExtensionSummary(result.scanId)]);
+    if (!live()) return;
+    aborts.delete(id);
     patchScan(id, { findings, extensions, loadingResults: false });
   } catch (err) {
+    if (!live()) return;
     aborts.delete(id);
-    if (controller.signal.aborted) {
-      patchScan(id, { phase: "setup", loadingResults: false });
-      return;
-    }
     patchScan(id, { phase: "error", error: errorMessage(err), loadingResults: false });
   }
 }
 
+/** Stop a scan (or the loading of its results) and go back to the folder bar. */
 export function cancelScan(id: string): void {
-  aborts.get(id)?.abort();
+  const controller = aborts.get(id);
+  if (!controller) return;
+  aborts.delete(id);
+  controller.abort();
+  patchScan(id, (s) => (s.phase === "scanning" ? { phase: "setup", loadingResults: false } : { loadingResults: false }));
 }
 
 export async function saveScan(id: string): Promise<void> {
@@ -187,8 +230,9 @@ export async function saveScan(id: string): Promise<void> {
 
 /** Re-scan a snapshot's folder and update it. Keeps the saved numbers on failure. */
 export async function refreshScan(id: string): Promise<void> {
-  const snapshotId = store.get()[id]?.snapshotId;
-  if (!snapshotId) return;
+  const session = store.get()[id];
+  const snapshotId = session?.snapshotId;
+  if (!snapshotId || session.busy) return;
   patchScan(id, { busy: "refreshing" });
   try {
     const updated: ComparisonSnapshot = { ...(await updateSnapshot(snapshotId)), snapshotType: "scan" };

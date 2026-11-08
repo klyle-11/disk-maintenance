@@ -60,11 +60,6 @@ function readCache(): Record<string, DhmRecord> {
 
 const cache: Record<string, DhmRecord> = readCache();
 
-/** When `path` was last measured (ms), or null if it never was. */
-export function scannedAt(path: string): number | null {
-  return cache[path]?.timestamp ?? null;
-}
-
 function remember(record: DhmRecord): void {
   cache[record.path] = record;
   const keys = Object.keys(cache).sort((a, b) => cache[b].timestamp - cache[a].timestamp);
@@ -327,7 +322,7 @@ export function dhmLines(
       ];
 
   lines.push(
-    `${ESC}1m${latest ? "Recently modified directories" : "Disk usage by directory"}${RESET}${ESC}2m  · → open · ⟳ update · copy path${RESET}`,
+    `${ESC}1m${latest ? "Recently modified directories" : "Disk usage by directory"}${RESET}${ESC}2m  · → send to SCAN · ⟳ update snapshot${RESET}`,
   );
   lines.push(rule(columns, "┌", "┬", "┐"));
   lines.push(row(columns, columns.map((c) => ({ text: c.title, color: `${ESC}2m` }))));
