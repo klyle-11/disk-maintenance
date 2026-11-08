@@ -1,7 +1,8 @@
 /**
  * du-hast-much in one window: the folder and options on top, the CLI-style
- * table below. Click a folder's row to open it, BACK to return. Sized so the
- * controls and a top-10 table fit without scrolling.
+ * table below. Click a folder's row to open it, BACK to return; each row's
+ * buttons copy its path or send it to the scan window. Sized so the controls
+ * and a top-10 table fit without scrolling.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes } from "../api";
@@ -15,11 +16,11 @@ import {
   openDhmFolder,
   patchDhm,
   runDhm,
-  scannedAt,
   stopDhm,
   timeAgo,
   useDhm,
 } from "../state/dhm";
+import { openScanSnapshot, savedScanOf, scanFolder } from "../state/scan";
 import { Window } from "../wm/Window";
 import { baseName } from "./common";
 import type { WindowArgs } from "./HubWindows";
@@ -47,9 +48,12 @@ const UpdateIcon = () => (
   </svg>
 );
 
-/** A row's buttons: copy its full path, and open (or update) that folder. */
+/**
+ * A row's buttons: copy its full path, and scan it in the scan window, or,
+ * once it has a saved scan, update that snapshot.
+ */
 function RowActions({ path, copied, onCopy }: { path: string; copied: boolean; onCopy: (path: string) => void }) {
-  const when = scannedAt(path);
+  const saved = useApp((s) => savedScanOf(s.snapshots, path));
   const name = baseName(path);
   return (
     <span className="dhm-actions" onClick={(e) => e.stopPropagation()}>
@@ -58,12 +62,16 @@ function RowActions({ path, copied, onCopy }: { path: string; copied: boolean; o
       </button>
       <button
         type="button"
-        className={`dhm-act ${when ? "is-update" : ""}`}
-        title={when ? `Update ${name} (last scanned ${timeAgo(when / 1000)})` : `Open and scan ${name}`}
-        aria-label={when ? `Update ${name}` : `Scan ${name}`}
-        onClick={() => openDhmFolder(path)}
+        className={`dhm-act ${saved ? "is-update" : ""}`}
+        title={
+          saved
+            ? `Update the saved scan of ${name} (saved ${timeAgo(Date.parse(saved.savedAt) / 1000)})`
+            : `Scan ${name} in SCAN`
+        }
+        aria-label={saved ? `Update the saved scan of ${name}` : `Scan ${name} in SCAN`}
+        onClick={() => void (saved ? openScanSnapshot(saved) : scanFolder(path))}
       >
-        {when ? <UpdateIcon /> : <OpenIcon />}
+        {saved ? <UpdateIcon /> : <OpenIcon />}
       </button>
     </span>
   );
