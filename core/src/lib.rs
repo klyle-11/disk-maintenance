@@ -5,6 +5,7 @@
 //! backend (snake_case), so the frontend's transforms work unchanged.
 
 pub mod analyzer;
+pub mod caches;
 pub mod compare;
 pub mod di;
 pub mod disks;

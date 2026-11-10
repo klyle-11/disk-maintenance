@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ansiCss, parseAnsi, type AnsiSegment } from "../ansi";
 import { useApp } from "../state/app";
+import { clearCaches, getCacheTargets } from "../state/caches";
 import { answerDi, diHistory, promptKind, runDi, setDiColumns, setDiInput, stopDi, clearDi, useDi, visible } from "../state/di";
 import { Window } from "../wm/Window";
 import type { WindowArgs } from "./HubWindows";
@@ -46,6 +47,12 @@ export function DiWindow({ view, controls }: WindowArgs) {
   const outputRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
   const stickRef = useRef(true);
+  // CLEAR CACHES shows on macOS and Windows only.
+  const [canClearCaches, setCanClearCaches] = useState(false);
+
+  useEffect(() => {
+    void getCacheTargets().then((targets) => setCanClearCaches(!!targets?.length));
+  }, []);
 
   // di lays its tables out for the terminal's width.
   useEffect(() => {
@@ -172,6 +179,20 @@ export function DiWindow({ view, controls }: WindowArgs) {
             aria-label="di command"
             disabled={!ready}
           />
+          {canClearCaches ? (
+            <button
+              type="button"
+              className="steel-btn"
+              disabled={!ready || running}
+              title="Clear system and user caches (asks for an administrator's permission)"
+              onClick={() => {
+                stickRef.current = true;
+                void clearCaches().then(focusPrompt);
+              }}
+            >
+              CLEAR CACHES
+            </button>
+          ) : null}
           <button
             type="button"
             className="steel-btn"

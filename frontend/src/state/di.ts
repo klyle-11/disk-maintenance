@@ -232,3 +232,13 @@ export function diHistory(step: 1 | -1): void {
 export function setDiColumns(columns: number): void {
   if (columns !== diStore.get().columns) patch({ columns });
 }
+
+/** Print a line in the terminal, for actions that aren't di commands. */
+export function diPrint(segments: AnsiSegment[]): void {
+  append([segments]);
+}
+
+/** Mark the terminal busy (or free) while such an action runs. */
+export function setDiRunning(running: boolean): void {
+  patch({ running });
+}
