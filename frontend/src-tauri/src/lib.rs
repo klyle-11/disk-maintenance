@@ -479,10 +479,8 @@ pub fn run() {
         // A second launch focuses the running window instead of fighting
         // over the snapshot database.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            // The window may be hidden in the tray: bring it back.
+            tray::show_main(app, None);
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -512,6 +510,7 @@ pub fn run() {
                 }
                 window.show()?;
             }
+            app.manage(tray::InTray::default());
             // A desktop without a tray (some Linux setups) still gets the app.
             if let Err(e) = tray::setup(app.handle()) {
                 eprintln!("No tray icon: {e}");
@@ -521,6 +520,15 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() == tray::PANEL {
                 tray::on_panel_event(window.app_handle(), event);
+                return;
+            }
+            // Closing the main window (Alt+F4, the taskbar) hides it to the
+            // tray, where the app keeps running; Quit is in the tray.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && tray::keeps_running(window.app_handle()) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
                 return;
             }
             // Follow resolution changes and moves to another monitor.
@@ -574,6 +582,8 @@ pub fn run() {
             caches::clear_caches,
             tray::tray_open,
             tray::tray_hide,
+            tray::close_main_window,
+            tray::keeps_running_in_tray,
             tray::tray_summary,
             minimize_window,
             quit_app,
@@ -582,6 +592,14 @@ pub fn run() {
             set_hit_rects,
             set_input_region,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Disk Intelligence");
+        .build(tauri::generate_context!())
+        .expect("error while running Disk Intelligence")
+        .run(|app, event| {
+            // macOS: clicking the Dock icon brings a hidden main window back.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                tray::show_main(app, None);
+            }
+            let _ = (app, event);
+        });
 }
