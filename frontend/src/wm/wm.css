@@ -1728,3 +1728,133 @@
 .cmp-split .cmp-side + .cmp-side {
   margin-left: 3px;
 }
+
+/* ── Offload ───────────────────────────────────────────────────────────── */
+
+.off-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-tag.off-tag {
+  width: 32px;
+}
+
+.off-scroll {
+  flex: 1;
+  min-height: 40px;
+  overflow: auto;
+}
+
+.off-chips {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.off-chips .chip.is-on {
+  box-shadow: inset 0 0 0 1px var(--glow);
+}
+
+.off-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 1px 2px;
+  color: var(--lcd-text);
+  font: 11.5px/1.5 var(--font-lcd);
+  text-align: left;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.off-row:hover {
+  background: var(--lcd-hover);
+}
+
+.off-row.is-on .off-name {
+  color: var(--lcd-strong);
+}
+
+.off-row input[type="checkbox"] {
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--lcd-accent);
+}
+
+.off-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.off-size {
+  flex-shrink: 0;
+  min-width: 7ch;
+  text-align: right;
+  color: var(--lcd-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.off-store + .off-store {
+  margin-top: 6px;
+}
+
+.off-store-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.off-indent {
+  padding-left: 14px;
+}
+
+.off-job.is-open {
+  background: var(--lcd-bg-2);
+}
+
+.off-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 4px 6px 16px;
+}
+
+.off-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+
+.off-report {
+  padding: 2px 0 6px;
+}
+
+.off-report-head {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.off-problems {
+  margin-top: 2px;
+  padding-left: 8px;
+  border-left: 1px solid var(--lcd-bad);
+}
+
+.off-problem {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

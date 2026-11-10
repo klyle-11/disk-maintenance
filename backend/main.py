@@ -698,7 +698,13 @@ class Analyzer:
                     ref_size = group[0][1]["total_size"]
                     if ref_size > 0:
                         diff = abs(info["total_size"] - ref_size) / ref_size
-                        if diff <= 0.10:  # Within 10%
+                        # A folder and one inside it are the same files
+                        # counted twice, not two copies.
+                        nested = any(
+                            Path(path).is_relative_to(other) or Path(other).is_relative_to(path)
+                            for other, _ in group
+                        )
+                        if diff <= 0.10 and not nested:  # Within 10%
                             group.append((path, info))
                             placed = True
                             break

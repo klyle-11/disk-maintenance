@@ -28,6 +28,10 @@ pub struct Service {
     store: Mutex<SnapshotStore>,
     scans: Mutex<VecDeque<(ScanResponse, Arc<ScanData>)>>,
     cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// The database the offload catalog lives in (see `offload_service`).
+    pub(crate) catalog_path: std::path::PathBuf,
+    /// An offload, release, check or restore is running.
+    pub(crate) offload_busy: AtomicBool,
 }
 
 fn db_err(e: rusqlite::Error) -> String {
@@ -40,10 +44,17 @@ fn to_value<T: serde::Serialize>(v: &T) -> Value {
 
 impl Service {
     pub fn new(store: SnapshotStore) -> Self {
+        Self::with_catalog(store, crate::snapshots::default_db_path())
+    }
+
+    /// A service whose offload catalog is the database at `catalog_path`.
+    pub fn with_catalog(store: SnapshotStore, catalog_path: std::path::PathBuf) -> Self {
         Service {
             store: Mutex::new(store),
             scans: Mutex::new(VecDeque::new()),
             cancels: Mutex::new(HashMap::new()),
+            catalog_path,
+            offload_busy: AtomicBool::new(false),
         }
     }
 
@@ -53,7 +64,7 @@ impl Service {
 
     /// The flag for a long-running request, created on first use, so a
     /// cancel that arrives before the work starts still counts.
-    fn cancel_flag(&self, request_id: &str) -> Arc<AtomicBool> {
+    pub(crate) fn cancel_flag(&self, request_id: &str) -> Arc<AtomicBool> {
         self.cancels
             .lock()
             .unwrap()
@@ -62,7 +73,7 @@ impl Service {
             .clone()
     }
 
-    fn finish_request(&self, request_id: &str) {
+    pub(crate) fn finish_request(&self, request_id: &str) {
         self.cancels.lock().unwrap().remove(request_id);
     }
 
@@ -128,7 +139,7 @@ impl Service {
             .ok_or_else(|| format!("Scan not found: {scan_id}"))
     }
 
-    fn scan_data(&self, scan_id: &str) -> Result<Arc<ScanData>> {
+    pub(crate) fn scan_data(&self, scan_id: &str) -> Result<Arc<ScanData>> {
         self.scan_entry(scan_id).map(|(_, data)| data)
     }
 

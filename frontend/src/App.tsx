@@ -10,6 +10,7 @@ import { CompareWindow } from "./windows/CompareWindows";
 import { DhmWindow } from "./windows/DhmWindows";
 import { DiWindow } from "./windows/DiWindows";
 import { BackendWindow, HubWindow } from "./windows/HubWindows";
+import { OffloadWindow } from "./windows/OffloadWindow";
 import { ScanWindow } from "./windows/ScanWindows";
 import { TipsWindow } from "./windows/TipsWindow";
 import { desktop } from "./desktop";
@@ -32,6 +33,8 @@ function renderUnit(view: UnitView, controls: UnitControls) {
       return <ScanWindow {...args} />;
     case "compare":
       return <CompareWindow {...args} />;
+    case "offload":
+      return <OffloadWindow {...args} />;
   }
 }
 
