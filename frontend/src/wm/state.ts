@@ -10,7 +10,7 @@ import { createStore } from "../store";
 import { bounds, fits, packCluster, type Point, type Rect, type Size } from "./layout";
 
 /** One window per feature; each feature's parts are sections inside it. */
-export type Kind = "hub" | "backend" | "dhm" | "di" | "tips" | "scan" | "compare";
+export type Kind = "hub" | "backend" | "dhm" | "di" | "tips" | "scan" | "compare" | "offload";
 
 interface KindSpec {
   /** Default size of each member window. */
@@ -33,6 +33,7 @@ export const KINDS: Record<Kind, KindSpec> = {
   di: { size: { w: 580, h: 340 }, min: { w: 380, h: 200 }, members: 1, persist: true, closable: true },
   tips: { size: { w: 320, h: 300 }, min: { w: 240, h: 150 }, members: 1, persist: true, closable: true },
   scan: { size: { w: 480, h: 330 }, min: { w: 380, h: 220 }, members: 1, persist: true, closable: true },
+  offload: { size: { w: 560, h: 400 }, min: { w: 420, h: 260 }, members: 1, persist: true, closable: true },
   compare: { size: { w: 600, h: 400 }, min: { w: 420, h: 240 }, members: 1, persist: false, closable: true },
 };
 

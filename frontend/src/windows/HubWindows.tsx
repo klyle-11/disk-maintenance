@@ -10,6 +10,7 @@ import { desktop } from "../desktop";
 import { SKINS } from "../skins";
 import { backendFailed, retryBackend, setPanel, setSkin, useApp } from "../state/app";
 import { closeCompare, newCompare } from "../state/compare";
+import { openOffload } from "../state/offload";
 import { closeScan, newScan } from "../state/scan";
 import { useStore } from "../store";
 import type { UnitControls, UnitView } from "../wm/Cluster";
@@ -95,6 +96,7 @@ function toggleTool(kind: Exclude<Kind, "hub" | "backend">): void {
   const open = wmStore.get().units.some((u) => u.id === kind);
   if (kind === "scan") return open ? void closeScan() : newScan();
   if (kind === "compare") return open ? void closeCompare() : newCompare();
+  if (kind === "offload" && !open) return openOffload();
   if (open) closeWindow(kind);
   else openWindow(kind);
 }
@@ -187,6 +189,7 @@ export function HubWindow({ view, controls }: WindowArgs) {
           <div className="controls">
             {toggle("SCAN", kinds.has("scan"), () => toggleTool("scan"), "Scan a folder; saved scans are in its library")}
             {toggle("COMPARE", kinds.has("compare"), () => toggleTool("compare"), "Compare two folders")}
+            {toggle("OFFLOAD", kinds.has("offload"), () => toggleTool("offload"), "Move folders to an external drive, verified, and keep track of them")}
             {toggle("DHM", kinds.has("dhm"), () => toggleTool("dhm"), "du-hast-much: folder sizes, CLI style")}
             {toggle("DI", kinds.has("di"), () => toggleTool("di"), "di: the Disk Intelligence command line")}
             {toggle("TIPS", kinds.has("tips"), () => toggleTool("tips"), "Ways to keep freed space free")}

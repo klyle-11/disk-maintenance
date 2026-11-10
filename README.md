@@ -174,11 +174,12 @@ The windows:
 
 | Window | What it does |
 |---|---|
-| Disk Intelligence (hub) | Free space on every disk (the home disk first, removable drives marked ⏏, red when under 10% free), and the controls: SCAN, COMPARE, DHM, DI, TIPS, SKINS, ARRANGE, CENTRE. SKINS opens the skin picker inside the hub, which grows to fit. Minimise and quit live here (there is no OS frame). |
+| Disk Intelligence (hub) | Free space on every disk (the home disk first, removable drives marked ⏏, red when under 10% free), and the controls: SCAN, COMPARE, OFFLOAD, DHM, DI, TIPS, SKINS, ARRANGE, CENTRE. SKINS opens the skin picker inside the hub, which grows to fit. Minimise and quit live here (there is no OS frame). |
 | Scan | Folder bar, progress, then the result's sections: **Findings** (large and old folders, caches, duplicates, cold archives), **File types**, and the **Library** of saved scans and comparisons. One section is open at a time. SAVE keeps a scan; opening a saved one shows it here and quietly refreshes it. |
 | Compare | **Folders** (source, target, optional hash check; folded away once there are results), status filters, TREE/PATHS, SAVE, and the source and target trees side by side like a diff: same rows, one scroll position. PATHS lists each side's differing files as copyable paths. Design: `docs/plans/2026-01-15-folder-comparison-design.md`. |
 | du-hast-much | Folder, top N, latest-first, recent scans (a dropdown), and the CLI-style table with live progress. Click a row to open that folder and size what's inside; **◀ BACK** returns (to the folder you came from, or the parent of a typed path). Every folder's results are remembered, across restarts too: revisiting one shows them at once and re-runs to update them. Each row ends with two buttons: copy the folder's full path, and **→** send it to SCAN and scan it there (**⟳** once it has a saved scan in the library: open that snapshot in SCAN and update it). Sized to show the controls and a top-10 table without scrolling. |
 | di | The real `di` command line: quick commands, the prompt, and a **Commands** section listing every command, each with its help folded away until you open it. After a listing (`di .`, scan, recent, growth, reclaim, clean, caches) di stays open at its `delete #` prompt, as in a terminal: type a row's number, confirm with `y`, Enter lists what's left, `q` finishes. Commands that delete or schedule something outright (`clean --yes`, `caches --yes`, `guard --install/--auto`, `ballast set/release`, `forget`) ask in a dialog first. (The legacy Electron app runs di without the prompt.) `di` is Python, so this window needs Python 3.10+ on the machine (or `DI_PYTHON`). |
+| Offload | Moves folders to an external drive and keeps track of them. **TO** is a folder on the drive (connected drives are offered as chips). **Move**: pick a folder, or press OFFLOAD on a scan's results to tick its big, long-untouched folders; choose KEEP ORIGINALS, THEN TRASH or THEN DELETE; START. **Drives**: every drive used, connected or not, and each offload on it, with CHECK (read every copy back), RESTORE, TRASH / DELETE ORIGINALS, PROBLEMS, FORGET, and IMPORT to read a drive's own list back in. **Find**: search every offloaded file by name, plugged in or not. See "Offloading to an external drive" below. |
 | Tips | Every way to keep freed space free (the list `di tips` prints), the ones for this machine first; each opens to its text and a command to copy. |
 | Backend | Legacy Electron app only: appears by itself if the Python backend can't start (why, retry, the log). |
 
@@ -186,7 +187,44 @@ Skins: Cold Steel, Silver, Butter, Sun Metal (hot orange metal fading to yellow)
 Frost, Gunmetal, Obsidian. Any of them can have a DARK display or WHITE paper
 inside; each skin remembers which.
 
-Apart from the di window, the app only analyses; cleanup lives in `di`.
+Apart from the di and offload windows, the app only analyses; cleanup lives in `di`.
+
+### Offloading to an external drive
+
+The offload window copies a folder to `<drive folder>/<this computer's name>/<the folder's full path>`
+and removes the originals only if you ask, and only under these rules (`core/src/offload.rs`):
+
+1. A file counts as copied only after the copy has been **read back from the drive** and its SHA-256
+   matches what was read from the original. Copies are written under a temporary name and renamed
+   once they pass, so a half-written file never has the real name.
+2. Nothing on the drive is overwritten. A different file already at the destination is a problem
+   that is reported, not replaced.
+3. Before an original is removed, its copy is read from the drive **again**, and the original must
+   be unchanged since it was copied. Anything that fails either check stays where it is.
+4. Nothing is skipped silently: every item found is verified, failed or skipped with a reason, and
+   the three add up to the number of items seen. Unreadable folders, special files and names the
+   drive can't hold are reported; their originals are left alone.
+5. THEN TRASH moves the whole folder to the Trash only when every item in it passed; otherwise
+   nothing is trashed. THEN DELETE removes file by file, then folders that are empty.
+6. Stopping is safe at any point (cancel, unplugged drive, full drive, crash, power cut). Running
+   the same offload again continues from what is already verified.
+
+The catalog of what is on which drive lives in the app's database, so it can be browsed and
+searched with the drive unplugged. The drive carries its own copy (`.di-catalog/`, plus a
+`.di-store.json` that identifies it whatever letter or mount point it gets), which IMPORT reads
+back if the computer's database is lost. Drives are told apart by that id, not by their path.
+
+The app refuses to offload a disk root, the home folder or anything above it, system locations,
+its own data folder, a symlink, onto the same disk the folder is on, or into the folder itself.
+
+Limits, so nothing surprises you: contents, names, files' modified times and (on macOS/Linux) permission
+bits are kept, and symlinks are kept as links. Extended attributes, ACLs, macOS resource forks,
+owners, hard-link grouping and sparseness are **not** kept. Files being written during the copy
+are reported and not taken. CHECK re-reads a drive to catch copies that have gone bad since.
+
+Tests: `core/tests/offload_safety.rs` (damaged copies, changed originals, a crash or failure at
+every step, full and unplugged drives, random trees with random faults) and
+`core/tests/offload_service.rs`; `cargo test --manifest-path core/Cargo.toml`.
 
 How the floating works: the app opens one transparent, undecorated window over
 the screen's work area (`frontend/src-tauri/src/overlay.rs`). On macOS and
