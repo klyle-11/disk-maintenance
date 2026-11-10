@@ -1442,10 +1442,15 @@ fn dangerous_or_pointless_requests_are_refused_before_anything_happens() {
         std::os::unix::fs::symlink(&w.src, w.root.join("link")).unwrap();
         assert!(refuse(&w.root.join("link"), &w.store, &loose).contains("is a link"));
         fs::remove_file(w.root.join("link")).unwrap();
-        assert!(
-            refuse(Path::new("/usr"), &w.store, &loose).contains("system location")
-                || cfg!(target_os = "macos")
-        );
+        for system in ["/usr", "/bin", "/etc", "/opt"] {
+            if Path::new(system).is_dir() {
+                let refused = refuse(Path::new(system), &w.store, &loose);
+                assert!(
+                    refused.contains("system location") || refused.contains("is a link"),
+                    "{system}: {refused}"
+                );
+            }
+        }
     }
 
     assert_eq!(snap(&w.root), before, "checking writes nothing that stays");

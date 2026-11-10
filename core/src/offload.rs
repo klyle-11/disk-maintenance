@@ -859,6 +859,32 @@ pub struct Checked {
     pub free_bytes: u64,
 }
 
+/// System locations beyond the ones a scan skips: places that hold the
+/// system or installed software, which must never be moved off the disk.
+#[cfg(target_os = "macos")]
+const SYSTEM_PATHS: &[&str] = &[
+    "/usr", "/bin", "/sbin", "/etc", "/var", "/dev", "/opt", "/cores",
+];
+#[cfg(all(unix, not(target_os = "macos")))]
+const SYSTEM_PATHS: &[&str] = &["/boot", "/opt", "/run", "/snap"];
+#[cfg(not(unix))]
+const SYSTEM_PATHS: &[&str] = &[];
+
+fn is_system_path(source: &Path) -> bool {
+    let fold = |path: &str| {
+        if cfg!(target_os = "macos") {
+            path.to_lowercase()
+        } else {
+            path.to_string()
+        }
+    };
+    let source = fold(&source.to_string_lossy());
+    SYSTEM_PATHS.iter().any(|prefix| {
+        let prefix = fold(prefix);
+        source == prefix || source.starts_with(&format!("{prefix}/"))
+    })
+}
+
 fn canonical(path: &Path, what: &str) -> Result<PathBuf, String> {
     // dunce: plain C:\ paths on Windows rather than \\?\ ones.
     dunce::canonicalize(path)
@@ -927,7 +953,7 @@ pub fn preflight(source: &Path, store_root: &Path, options: &Options) -> Result<
     }
     // The rules a scan of the whole disk would use: system locations are out.
     let disk_root = source.ancestors().last().unwrap_or(&source);
-    if IgnoreRules::for_root(disk_root).should_ignore(&source) {
+    if IgnoreRules::for_root(disk_root).should_ignore(&source) || is_system_path(&source) {
         return Err(format!(
             "{} is a system location. It can't be offloaded.",
             source.display()
