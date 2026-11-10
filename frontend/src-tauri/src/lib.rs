@@ -7,6 +7,7 @@
 
 mod caches;
 mod overlay;
+mod tray;
 
 use disk_core::catalog::{FileRow, Hit};
 use disk_core::di::{DiCheck, DiEvent, DiRunner};
@@ -511,9 +512,17 @@ pub fn run() {
                 }
                 window.show()?;
             }
+            // A desktop without a tray (some Linux setups) still gets the app.
+            if let Err(e) = tray::setup(app.handle()) {
+                eprintln!("No tray icon: {e}");
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
+            if window.label() == tray::PANEL {
+                tray::on_panel_event(window.app_handle(), event);
+                return;
+            }
             // Follow resolution changes and moves to another monitor.
             if let WindowEvent::ScaleFactorChanged { .. } = event {
                 if let Some(window) = window.app_handle().get_webview_window(window.label()) {
@@ -563,6 +572,9 @@ pub fn run() {
             di_stop,
             caches::cache_targets,
             caches::clear_caches,
+            tray::tray_open,
+            tray::tray_hide,
+            tray::tray_summary,
             minimize_window,
             quit_app,
             follow_cursor_to_monitor,
