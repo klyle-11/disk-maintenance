@@ -2,8 +2,8 @@
  * Frontend API client for Disk Intelligence backend.
  *
  * In the Tauri app every call is a Tauri command handled in-process by the
- * Rust core. Under Electron (legacy) or in a browser tab it is an HTTP call
- * to the Python backend. Both return the same snake_case JSON, so the
+ * Rust core. In a plain browser tab it is an HTTP call to the Python
+ * backend (`backend/main.py`). Both return the same snake_case JSON, so the
  * transforms below are shared.
  */
 
@@ -64,16 +64,12 @@ const DEFAULT_API_BASE_URL =
 validateLocalhostUrl(DEFAULT_API_BASE_URL);
 
 /**
- * The build-time default. Kept as a named export for tests and as the value
- * used until Electron reports where the backend actually landed.
+ * The build-time default. Kept as a named export for tests.
  */
 export const API_BASE_URL = DEFAULT_API_BASE_URL;
 
 /**
- * The live base URL. The backend does not always get port 8001 — if something
- * else already holds it, Electron starts the backend on the next free port and
- * tells us which. Baking the port in at build time was why a busy port turned
- * into "the backend didn't start".
+ * The live base URL (the browser-tab backend), changeable with setApiBaseUrl.
  */
 let activeApiBaseUrl = DEFAULT_API_BASE_URL;
 
@@ -501,7 +497,7 @@ export async function healthCheck(): Promise<{ status: string; api?: number }> {
 
 /**
  * The backend API this app needs, as reported by /api/health. Must match
- * API_VERSION in backend/main.py and frontend/electron/backend.cjs.
+ * API_VERSION in backend/main.py.
  */
 export const API_VERSION = 2;
 

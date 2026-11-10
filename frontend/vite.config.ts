@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
 
-  // Use relative paths so Electron can load built files via file:// protocol
+  // Relative asset paths, so the built files load from any base
   base: './',
 
   // SECURITY: Disable Vite telemetry (CRITICAL-004)

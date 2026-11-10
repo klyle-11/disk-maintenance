@@ -105,7 +105,7 @@ def _events(response) -> list[dict]:
 
 def test_health_reports_the_api_version(client):
     # The app refuses a backend whose API doesn't match (see API_VERSION in
-    # main.py, frontend/electron/backend.cjs and frontend/src/api.ts).
+    # main.py and frontend/src/api.ts).
     from backend.main import API_VERSION
 
     assert client.get("/api/health").json() == {"status": "ok", "api": API_VERSION}

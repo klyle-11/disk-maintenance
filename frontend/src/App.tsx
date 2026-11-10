@@ -1,6 +1,5 @@
 import { useEffect } from "react";
-import { API_VERSION, healthCheck, setApiBaseUrl } from "./api";
-import type { BackendStatus } from "./electron.d";
+import { API_VERSION, healthCheck } from "./api";
 import { appStore, backendFailed, loadDisks, loadSnapshots, loadTips, patchApp, useApp } from "./state/app";
 import { loadDiCommands } from "./state/di";
 import { useStore } from "./store";
@@ -13,7 +12,6 @@ import { BackendWindow, HubWindow } from "./windows/HubWindows";
 import { OffloadWindow } from "./windows/OffloadWindow";
 import { ScanWindow } from "./windows/ScanWindows";
 import { TipsWindow } from "./windows/TipsWindow";
-import { desktop } from "./desktop";
 import "./wm/wm.css";
 
 function renderUnit(view: UnitView, controls: UnitControls) {
@@ -50,35 +48,6 @@ function App() {
     document.documentElement.setAttribute("data-theme", skin);
     document.documentElement.setAttribute("data-panel", panel);
   }, [skin, panel]);
-
-  // Electron: follow the backend supervisor in the main process. It knows the
-  // port the backend actually landed on, which is not always 8001, and why it
-  // failed when it did. (In Tauri the backend is part of the app.)
-  useEffect(() => {
-    let cancelled = false;
-
-    const apply = (status: BackendStatus | null) => {
-      if (cancelled || !status) return;
-      if (status.baseUrl) {
-        try {
-          setApiBaseUrl(status.baseUrl);
-        } catch (err) {
-          console.error("[Backend] refused base URL:", err);
-        }
-      }
-      // 'ready' means the supervisor's own health probe passed; the renderer
-      // still confirms for itself below.
-      patchApp(status.state === "ready" ? { backend: status } : { backend: status, connected: false });
-    };
-
-    desktop?.getBackendStatus?.().then(apply).catch(() => {});
-    const unsubscribe = desktop?.onBackendStatus?.(apply);
-
-    return () => {
-      cancelled = true;
-      unsubscribe?.();
-    };
-  }, []);
 
   // Confirm the backend answers us directly, and keep retrying while it does
   // not. Backs off once connected so an idle app is not polling constantly.

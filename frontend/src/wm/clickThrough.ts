@@ -1,6 +1,6 @@
 /**
  * Floating windows: the app is one transparent window over the desktop, so it
- * has to tell the shell (Tauri or Electron) where its windows are. Clicks
+ * has to tell the shell (Tauri) where its windows are. Clicks
  * anywhere else go through to whatever is underneath.
  */
 import { useEffect } from "react";
@@ -18,8 +18,7 @@ const toShell = (rects: Rect[]): ShellRect[] => rects.map((r) => ({ x: r.x, y: r
 
 /**
  * macOS and Windows: ignore the mouse except while it is over a window.
- * Electron still forwards ignored mouse moves, which is how we notice the
- * pointer coming back; Tauri watches the pointer against the rects we send.
+ * Tauri watches the pointer against the rects we send to notice it coming back.
  */
 export function useHoverClickThrough(): void {
   useEffect(() => {
@@ -53,9 +52,7 @@ let settleTimer: ReturnType<typeof setTimeout> | null = null;
  * also covers where they're headed, so nothing is clipped mid-animation; once
  * the animation settles it shrinks back to just the windows.
  *
- * Linux shapes the window to them. Never the whole window: under Electron
- * without a compositor, that would paint the screen black. Under Tauri on
- * macOS/Windows this keeps the pointer watch's rects current.
+ * Linux shapes the window to them. On macOS/Windows this keeps the pointer watch's rects current.
  */
 export function updateShape(targets: Rect[]): void {
   const api = desktop;

@@ -1,14 +1,9 @@
 /**
- * The desktop shell the UI is running in: Tauri, Electron (legacy), or none
- * (a plain browser tab against the dev server).
- *
- * Components use `desktop` instead of `window.electronAPI` so they work the
- * same in both shells. Backend supervision only exists under Electron; in
- * Tauri the backend is part of the app, so those methods are absent.
+ * The desktop shell the UI is running in: Tauri, or none (a plain browser tab
+ * against the dev server).
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { BackendStatus } from "./electron.d";
 
 /** True inside the Tauri app. */
 export const isTauri =
@@ -50,12 +45,6 @@ export interface DesktopAPI {
   followCursorToMonitor?: () => Promise<{ x: number; y: number } | null>;
   /** shape: only these window-relative rects take clicks; [] means all of it. */
   setShape: (rects: ShellRect[]) => void;
-
-  // Electron only: the Python backend runs as a separate, supervised process.
-  getBackendStatus?: () => Promise<BackendStatus | null>;
-  onBackendStatus?: (callback: (status: BackendStatus) => void) => () => void;
-  retryBackend?: () => Promise<BackendStatus | null>;
-  openBackendLog?: () => Promise<boolean>;
 }
 
 /** The webview's OS, read from its user agent (no round trip needed). */
@@ -84,27 +73,7 @@ function makeTauriDesktop(): DesktopAPI {
   };
 }
 
-function electronDesktop(): DesktopAPI | undefined {
-  const api = typeof window !== "undefined" ? window.electronAPI : undefined;
-  if (!api) return undefined;
-  return {
-    platform: api.platform,
-    selectDirectory: api.selectDirectory,
-    revealPath: api.revealPath,
-    minimize: api.minimize,
-    quit: api.quit,
-    // Electron forwards mouse moves while ignoring, so it needs no rects.
-    clickThrough: api.platform === "linux" ? "shape" : "hover",
-    setIgnoreMouse: (ignore) => api.setIgnoreMouse(ignore),
-    setShape: api.setShape,
-    getBackendStatus: api.getBackendStatus,
-    onBackendStatus: api.onBackendStatus,
-    retryBackend: api.retryBackend,
-    openBackendLog: api.openBackendLog,
-  };
-}
-
-export const desktop: DesktopAPI | undefined = isTauri ? makeTauriDesktop() : electronDesktop();
+export const desktop: DesktopAPI | undefined = isTauri ? makeTauriDesktop() : undefined;
 
 /**
  * Tell the user something. A native message box in Tauri (not every

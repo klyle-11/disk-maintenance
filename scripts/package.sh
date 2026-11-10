@@ -2,9 +2,6 @@
 # Full build and package for macOS (Tauri).
 # Creates a .app and .dmg under frontend/src-tauri/target/release/bundle/.
 # Run from anywhere: ./scripts/package.sh
-#
-# The legacy Electron + Python build is still available:
-#   ./scripts/build-backend.sh && npm --prefix frontend run dist:electron:mac
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

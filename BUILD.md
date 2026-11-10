@@ -99,12 +99,11 @@ The source is `frontend/src-tauri/icons/icon.svg` (a #FFFFFC wrench on a
 cd frontend && npm run icons
 ```
 
-`frontend/public/icon.svg` (the window favicon) and `frontend/build/icon.png`
-(the legacy Electron build) are copies of the same icon.
+`frontend/public/icon.svg` (the window favicon) is a copy of the same icon.
 
 ## Database location
 
-Snapshots live in the same SQLite file the Electron app used, so they carry over:
+Snapshots live in the same SQLite file the old Electron app used, so they carry over:
 
 - Windows: `%APPDATA%\DiskIntelligence\disk_intelligence.db`
 - macOS: `~/Library/Application Support/DiskIntelligence/disk_intelligence.db`
@@ -128,17 +127,3 @@ the app at all; the first launch may need right-click → Open.
 - **Stale build**: `cargo clean --manifest-path frontend/src-tauri/Cargo.toml`.
 - **Blank window in dev**: the Vite server must be on 127.0.0.1:5176
   (`npm run dev` starts it for you).
-
-## Legacy Electron + Python build
-
-The previous app (Electron shell + PyInstaller-bundled FastAPI backend) still
-builds until it is removed:
-
-```bash
-./scripts/build-backend.sh                     # PyInstaller → backend/dist/
-npm --prefix frontend run dist:electron:mac    # or :win / :linux → release/
-npm run verify                                 # checks the packaged backend
-npm run dev:electron                           # dev: Python backend + Electron
-```
-
-It needs Python 3.10+ and `pip install -r backend/requirements.txt`.

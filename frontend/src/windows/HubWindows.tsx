@@ -1,7 +1,7 @@
 /**
  * The hub, the main window: status and free space on every disk, the controls
  * that open each tool, and the skins. Dragging it moves every window. Plus the
- * backend window that appears when the (Electron) backend can't start.
+ * backend window that appears when the HTTP backend (browser tab) can't answer.
  */
 import { useLayoutEffect, useRef, useState } from "react";
 import { API_VERSION, formatBytes, getApiBaseUrl, type DiskSpace } from "../api";
@@ -230,15 +230,12 @@ export function BackendWindow({ view, controls }: WindowArgs) {
             </p>
             <p>
               If an older Disk Intelligence (or a <code>python backend/main.py</code> from an older checkout) is still
-              running, quit it. If this app was packaged with an old backend build, run{" "}
-              <code>scripts/build-backend.sh</code> and package again.
+              running, quit it. Then retry.
             </p>
             {backend?.state === "error" && backend.detail ? <p className="lcd-dim">{backend.detail}</p> : null}
-            {desktop?.retryBackend ? (
-              <button type="button" className="chip" onClick={() => void retryBackend()}>
-                RETRY
-              </button>
-            ) : null}
+            <button type="button" className="chip" onClick={() => void retryBackend()}>
+              RETRY
+            </button>
           </div>
         ) : (
           <BackendStatus status={backend} connected={connected} onRetry={retryBackend} />

@@ -51,11 +51,12 @@ the installers as artifacts, so they need not be built on a machine short of spa
 - [ ] Run the Tauri app on macOS and Windows: folder picker, Full Disk Access prompt,
       click-through between the floating windows, transparency, WebView2 bootstrapper on
       Windows 10, the di window finding Python.
-- [ ] Once it has been used for a while, remove the legacy app: `frontend/electron/`,
-      `backend/main.py`, `backend/di_runner.py`, `backend/database.py`, `backend/security/`,
-      `backend/disk-intelligence.spec`,
-      `scripts/build-backend.*`, `scripts/verify-package.sh`, the Electron npm scripts and
-      dependencies, and the HTTP fallback in `frontend/src/api.ts`.
+- [x] Remove the Electron shell and PyInstaller packaging (`frontend/electron/`,
+      `backend/disk-intelligence.spec`, `scripts/build-backend.*`, `scripts/verify-package.sh`,
+      the Electron npm scripts and dependencies).
+- [ ] Remove the rest of the legacy backend: `backend/main.py`, `backend/di_runner.py`,
+      `backend/database.py`, `backend/security/`, the HTTP fallback in `frontend/src/api.ts`
+      and the Backend window.
 - [ ] `di` could become a thin Rust binary over `disk-core` later (it is fast enough in Python).
 - [ ] Tips exist twice (`core/src/tips.rs`, `backend/diskcli/tips.py`); a test checks the ids
       match. Consider one shared data file.

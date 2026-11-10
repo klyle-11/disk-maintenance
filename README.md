@@ -13,10 +13,6 @@ Two front ends:
 
 Everything runs locally. Nothing leaves the machine (see [Security](#security)).
 
-> The previous Electron + Python (FastAPI) desktop app still builds
-> (`npm run dev:electron`, `npm run dist:electron`) while the Tauri app beds in.
-> It will be removed once the Tauri app has been used for a while.
-
 ## Quick start
 
 ```bash
@@ -242,8 +238,7 @@ Windows it lets clicks through while the pointer is off our windows, and
 watches the pointer to take them back when it returns; on Linux the window's
 input shape is set to our windows, so only they take clicks. Transparency on
 macOS uses Tauri's `macOSPrivateApi` (fine outside the App Store). In a plain
-browser tab (`npm run dev:vite`) the windows sit on the page instead. The
-legacy Electron app does the same with `setIgnoreMouseEvents` / `setShape`.
+browser tab (`npm run dev:vite`) the windows sit on the page instead.
 
 ## Architecture
 
@@ -269,19 +264,19 @@ scans stream progress over a Tauri `Channel` and can be cancelled.
 |---|---|
 | `core/` | `disk-core`, the Rust library with everything the app does. `cargo test` runs without a GUI |
 | `frontend/src-tauri/` | The Tauri shell: commands, the floating window, bundle config, icons (`icons/icon.svg` is the source) |
-| `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` calls Tauri commands (HTTP under Electron); `desktop.ts` wraps the shell (folder picker, dialogs, click-through) |
+| `frontend/src/` | React 19 + TypeScript + Vite. `api.ts` calls Tauri commands (HTTP to `backend/main.py` in a plain browser tab); `desktop.ts` wraps the shell (folder picker, dialogs, click-through) |
 | `frontend/src/wm/` | The window manager: `layout.ts` packs the docked cluster, `state.ts` is its reducer, `Cluster`/`Window` draw it, `clickThrough.ts` lets clicks reach the desktop |
 | `frontend/src/windows/` | The windows, grouped by tool (hub, scan, compare, dhm, di, tips, library) |
 | `frontend/src/state/` | Shared state for each tool, so its separate windows show the same scan, comparison or terminal |
 | `backend/diskcli/` | The `di` CLI. `walker.py` is the fast single-pass scanner; `maint.py` holds clean/caches/guard/ballast; `app_bridge.py` tells the app which commands exist and which change the disk |
-| `backend/main.py`, `backend/di_runner.py`, `backend/security/`, `frontend/electron/` | Legacy Electron + FastAPI app |
+| `backend/main.py`, `backend/di_runner.py`, `backend/security/` | Legacy FastAPI backend, only for the UI in a plain browser tab |
 | `scripts/` | Build, package, verify and audit scripts |
 
 ## Data locations
 
 | What | Where (macOS) |
 |---|---|
-| App snapshots | `~/Library/Application Support/DiskIntelligence/disk_intelligence.db` (same file and schema as the Electron app, so existing snapshots carry over) |
+| App snapshots | `~/Library/Application Support/DiskIntelligence/disk_intelligence.db` (same file and schema as the old Electron app, so existing snapshots carry over) |
 | CLI baselines, guard log, ballast, tip state | `~/Library/Application Support/DiskIntelligence/` (override the DB with `DISK_INTELLIGENCE_DB`) |
 | Guard launchd agent | `~/Library/LaunchAgents/com.diskintelligence.guard.plist` |
 
@@ -297,11 +292,11 @@ Build each OS's installer on that OS.
 
 Size: the Tauri app is a single binary of a few MB plus diskcli's Python
 sources; the system webview (WebView2, WKWebView, WebKitGTK) does the drawing.
-The legacy Electron build was about 270 MB unpacked: ~230 MB of Chromium and a
-30 MB PyInstaller backend.
-
-Legacy Electron packaging refuses a `backend/dist` binary that is older than the
-backend source: run `scripts/build-backend.sh` first, or set `DI_ALLOW_STALE_BACKEND=1`.
+The old Electron build, now removed, was about 270 MB unpacked: ~230 MB of
+Chromium and a 30 MB PyInstaller backend. If an Electron "Disk Intelligence" is
+still installed, uninstall it; snapshots live in the same database either way.
+Vite only runs at build time: it bundles the UI into `frontend/dist`, which
+Tauri embeds in the binary.
 
 ## Security
 
@@ -309,8 +304,8 @@ The app is local-only: there is no network listener at all (the UI talks to the
 Rust core over Tauri's in-process IPC), the CSP only allows the app's own
 content and that IPC channel, every path from the UI is validated
 (`core/src/paths.rs`), the app only reads (cleanup lives in `di`), and
-dependencies are audited with telemetry disabled. The legacy Electron app keeps
-its 127.0.0.1-only backend, CORS and input sanitising.
+dependencies are audited with telemetry disabled. The legacy FastAPI backend (browser-tab
+development only) keeps its 127.0.0.1-only binding, CORS and input sanitising.
 
 Background documents (written during the March 2026 hardening pass; see
 `todo.md` for what's still open):
