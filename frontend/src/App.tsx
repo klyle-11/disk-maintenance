@@ -3,6 +3,7 @@ import { API_VERSION, healthCheck, setApiBaseUrl } from "./api";
 import type { BackendStatus } from "./electron.d";
 import { appStore, backendFailed, loadDisks, loadSnapshots, loadTips, patchApp, useApp } from "./state/app";
 import { loadDiCommands } from "./state/di";
+import { followTray } from "./state/fromTray";
 import { useStore } from "./store";
 import { Cluster, type UnitControls, type UnitView } from "./wm/Cluster";
 import { closeWindow, openWindow, wmDispatch, wmStore } from "./wm/state";
@@ -132,6 +133,9 @@ function App() {
     }, 60_000);
     return () => clearInterval(timer);
   }, [connected]);
+
+  // The tray panel's buttons open tools here.
+  useEffect(() => followTray(), []);
 
   // When the backend can't start, say so in a window of its own.
   useEffect(() => {

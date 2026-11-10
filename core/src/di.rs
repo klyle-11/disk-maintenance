@@ -358,6 +358,24 @@ impl DiRunner {
         }
     }
 
+    /// `di summary --json`: the at-a-glance numbers (disk, drives, memory,
+    /// recent changes) without walking the disk. For the tray's quick check.
+    pub fn summary(&self) -> Result<Value, String> {
+        let output = self
+            .python_command()?
+            .args(["-m", "diskcli", "summary", "--json"])
+            .env("NO_COLOR", "1")
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("could not start di: {e}"))?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            let last = err.lines().last().unwrap_or("").trim();
+            return Err(format!("di summary failed: {last}"));
+        }
+        serde_json::from_slice(&output.stdout).map_err(|e| format!("di summary gave bad output: {e}"))
+    }
+
     /// The folder this runner loads diskcli from.
     pub fn root(&self) -> &Path {
         &self.root
@@ -373,6 +391,15 @@ mod tests {
         let runner = DiRunner::new(root);
         // These tests need a Python 3.10+, like di itself.
         runner.python_command().is_ok().then_some(runner)
+    }
+
+    #[test]
+    fn summary_is_json_with_the_home_disk() {
+        let Some(runner) = runner() else { return };
+        let summary = runner.summary().expect("di summary --json");
+        let disk = &summary["disk"];
+        assert!(disk["total"].as_u64().unwrap_or(0) > 0, "{summary}");
+        assert!(disk["free"].as_u64().is_some(), "{summary}");
     }
 
     #[test]
