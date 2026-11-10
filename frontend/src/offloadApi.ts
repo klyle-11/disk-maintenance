@@ -94,7 +94,7 @@ export interface ImportReport {
 }
 
 export interface OffloadProgress {
-  phase: "starting" | "counting" | "copying" | "removing" | "checking" | "restoring";
+  phase: "starting" | "counting" | "copying" | "removing" | "checking" | "restoring" | "cataloging";
   files_total: number;
   bytes_total: number;
   files_done: number;
@@ -150,6 +150,61 @@ export interface OffloadCatalog {
   host: string;
   stores: OffloadStore[];
   jobs: OffloadJob[];
+  /** Drives with a catalog of everything on them (offloaded or not). */
+  drive_catalogs: DriveCatalog[];
+}
+
+/** What a drive held when it was last cataloged. */
+export interface DriveCatalog {
+  store_id: string;
+  root_path: string;
+  cataloged_at: string;
+  files: number;
+  dirs: number;
+  bytes: number;
+  /** Folders that could not be read. */
+  unreadable: number;
+}
+
+/** A file, folder or link in a drive catalog. A folder's size and files count everything under it. */
+export interface DriveEntry {
+  /** "/"-separated under the drive's folder; "" is the drive's folder itself. */
+  rel_path: string;
+  name: string;
+  kind: "file" | "dir" | "symlink";
+  size: number;
+  files: number;
+  mtime_ns: number | null;
+  unreadable: boolean;
+}
+
+export interface ListedEntry extends DriveEntry {
+  /** Where it is on the drive now; null while the drive is unplugged. */
+  path: string | null;
+}
+
+export interface DriveListing {
+  store: OffloadStore;
+  catalog: DriveCatalog;
+  folder: ListedEntry;
+  entries: ListedEntry[];
+  more: boolean;
+}
+
+export interface DriveHit extends DriveEntry {
+  store_id: string;
+  store_label: string;
+}
+
+export interface CatalogReport {
+  store_id: string;
+  store_label: string;
+  root: string;
+  outcome: "complete" | "cancelled";
+  files: number;
+  dirs: number;
+  bytes: number;
+  unreadable: number;
 }
 
 export interface OffloadHit {
@@ -257,3 +312,9 @@ export const getOffloadCandidates = (scanId: string) => command<OffloadCandidate
 export const importOffloadStore = (path: string) => command<ImportReport>("offload_import", { path });
 export const forgetOffload = (jobId: string) => command<void>("offload_forget", { jobId });
 export const getVolumes = () => command<Volume[]>("offload_volumes");
+
+export const catalogDrive = (path: string, onProgress: (p: OffloadProgress) => void, signal?: AbortSignal) =>
+  run<CatalogReport>("drive_catalog", { path }, onProgress, signal);
+export const listDrive = (storeId: string, relPath: string) => command<DriveListing>("drive_list", { storeId, relPath });
+export const searchDrives = (query: string) => command<DriveHit[]>("drive_search", { query });
+export const forgetDriveCatalog = (storeId: string) => command<void>("drive_forget", { storeId });

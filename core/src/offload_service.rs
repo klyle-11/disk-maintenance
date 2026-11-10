@@ -8,7 +8,10 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::catalog::{Catalog, FileRow, Hit, JobSummary, StoreRecord};
+use crate::catalog::{
+    Catalog, DriveCatalog, DriveEntry, DriveHit, FileRow, Hit, JobSummary, StoreRecord,
+};
+use crate::drive_catalog::{self, CatalogReport};
 use crate::drives::{self, Volume};
 use crate::offload::{
     self, Candidate, CandidateOptions, CheckReport, Checked, Control, ImportReport, NoHook,
@@ -39,6 +42,29 @@ pub struct CatalogView {
     pub host: String,
     pub stores: Vec<StoreStatus>,
     pub jobs: Vec<JobSummary>,
+    /// The drives that have a catalog of everything on them.
+    pub drive_catalogs: Vec<DriveCatalog>,
+}
+
+/// An entry of a drive catalog, with where it is right now when the drive
+/// is plugged in.
+#[derive(Debug, Clone, Serialize)]
+pub struct ListedEntry {
+    #[serde(flatten)]
+    pub entry: DriveEntry,
+    /// The full path on the connected drive; None while it is unplugged.
+    pub path: Option<String>,
+}
+
+/// One folder of a drive catalog, for browsing.
+#[derive(Debug, Clone, Serialize)]
+pub struct DriveListing {
+    pub store: StoreStatus,
+    pub catalog: DriveCatalog,
+    pub folder: ListedEntry,
+    pub entries: Vec<ListedEntry>,
+    /// More entries than were listed.
+    pub more: bool,
 }
 
 /// Clears the busy flag however the run ends.
@@ -238,6 +264,7 @@ impl Service {
             host: offload::host_name(),
             stores,
             jobs: catalog.jobs().map_err(sql)?,
+            drive_catalogs: catalog.drive_catalogs().map_err(sql)?,
         })
     }
 
@@ -300,6 +327,89 @@ impl Service {
         match self.catalog()?.forget_job(job_id).map_err(sql)? {
             true => Ok(()),
             false => Err(format!("No such offload: {job_id}")),
+        }
+    }
+
+    /// Catalog everything on the drive at `path` (a drive, or a folder on
+    /// one), with or without anything offloaded to it.
+    pub fn drive_catalog(
+        &self,
+        path: &str,
+        request_id: &str,
+        mut on_progress: impl FnMut(ProgressEvent) + Send,
+    ) -> Result<CatalogReport> {
+        let path = user_path(path, "The drive to catalog")?;
+        self.offload_run(request_id, &mut on_progress, |catalog, ctl| {
+            drive_catalog::catalog_drive(catalog, &path, ctl)
+        })
+    }
+
+    /// One folder of a drive's catalog: what is in it, and where it all is
+    /// now if the drive is plugged in (so it can be scanned).
+    pub fn drive_list(&self, store_id: &str, rel_path: &str) -> Result<DriveListing> {
+        const LIMIT: usize = 2000;
+        let rel_path = rel_path.trim_matches('/');
+        let catalog = self.catalog()?;
+        let store = catalog
+            .store(store_id)
+            .map_err(sql)?
+            .ok_or_else(|| format!("No such drive: {store_id}"))?;
+        let summary = catalog
+            .drive_catalog(store_id)
+            .map_err(sql)?
+            .ok_or_else(|| format!("\"{}\" has not been cataloged yet.", store.label))?;
+        let folder = catalog
+            .drive_entry(store_id, rel_path)
+            .map_err(sql)?
+            .filter(|e| e.kind == "dir")
+            .ok_or_else(|| {
+                format!(
+                    "\"{rel_path}\" is not a folder in the catalog of \"{}\".",
+                    store.label
+                )
+            })?;
+        let mut entries = catalog
+            .drive_children(store_id, rel_path, LIMIT + 1)
+            .map_err(sql)?;
+        let more = entries.len() > LIMIT;
+        entries.truncate(LIMIT);
+        let root = drives::locate(&store);
+        let place = |entry: DriveEntry| ListedEntry {
+            path: root
+                .as_ref()
+                .and_then(|root| offload::join_rel(root, &entry.rel_path))
+                .map(|p| p.to_string_lossy().into_owned()),
+            entry,
+        };
+        Ok(DriveListing {
+            store: StoreStatus {
+                free_bytes: root.as_ref().and_then(|p| fs4::available_space(p).ok()),
+                path: root.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                store,
+            },
+            catalog: summary,
+            folder: place(folder),
+            entries: entries.into_iter().map(place).collect(),
+            more,
+        })
+    }
+
+    pub fn drive_search(&self, query: &str) -> Result<Vec<DriveHit>> {
+        self.catalog()?.drive_search(query, 300).map_err(sql)
+    }
+
+    /// Forget a drive's catalog. Nothing on the drive is touched.
+    pub fn drive_forget(&self, store_id: &str) -> Result<()> {
+        if self.offload_busy.load(Ordering::SeqCst) {
+            return Err("Wait for the running offload or catalog to finish first.".into());
+        }
+        match self
+            .catalog()?
+            .forget_drive_catalog(store_id)
+            .map_err(sql)?
+        {
+            true => Ok(()),
+            false => Err("That drive has no catalog.".into()),
         }
     }
 

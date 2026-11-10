@@ -10,6 +10,7 @@ pub mod catalog;
 pub mod compare;
 pub mod di;
 pub mod disks;
+pub mod drive_catalog;
 pub mod drives;
 pub mod duhast;
 pub mod model;

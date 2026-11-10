@@ -131,6 +131,7 @@ pub fn progress_event(progress: &Progress) -> ProgressEvent {
             PHASE_REMOVING => "removing",
             PHASE_CHECKING => "checking",
             PHASE_RESTORING => "restoring",
+            crate::drive_catalog::PHASE_CATALOGING => "cataloging",
             _ => "starting",
         },
         files_total: progress.files_total.load(Ordering::Relaxed),

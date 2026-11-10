@@ -1,19 +1,25 @@
 /**
  * Offloading in one window: the drive on top, then MOVE (copy folders to it,
  * verified), DRIVES (what is on which drive; check it, bring it back, remove
- * the originals) and FIND (any offloaded file, whether or not its drive is
- * plugged in), as sections of which one is open at a time.
+ * the originals), CATALOG (list everything on a drive, offloaded or not,
+ * browse it and scan any folder of it) and FIND (any offloaded or cataloged
+ * file, whether or not its drive is plugged in), as sections of which one is
+ * open at a time.
  */
 import { useEffect } from "react";
 import { formatBytes } from "../api";
 import { isTauri } from "../desktop";
-import type { OffloadJob, OffloadProblem, OffloadProgress, OffloadReport, OffloadStore, RemoveMode } from "../offloadApi";
+import type { DriveCatalog, ListedEntry, OffloadJob, OffloadProblem, OffloadProgress, OffloadReport, OffloadStore, RemoveMode } from "../offloadApi";
 import { useApp } from "../state/app";
 import {
+  browseDrive,
   cancelAction,
+  cancelCatalog,
   cancelOffload,
   checkJob,
   chosenSources,
+  closeBrowse,
+  forgetCatalog,
   forgetJob,
   importStore,
   loadCatalog,
@@ -25,6 +31,8 @@ import {
   removalLines,
   resetOffload,
   restoreJob,
+  runCatalog,
+  scanCatalogPath,
   selectJob,
   setDest,
   setQuery,
@@ -48,6 +56,7 @@ const PHASE_WORDS: Record<OffloadProgress["phase"], string> = {
   removing: "CHECKING AGAIN, THEN REMOVING",
   checking: "READING BACK",
   restoring: "RESTORING",
+  cataloging: "CATALOGING",
 };
 
 const MODES: { mode: RemoveMode; label: string }[] = [
@@ -65,6 +74,7 @@ function percent(p: OffloadProgress | null): number {
 }
 
 function ProgressRows({ progress }: { progress: OffloadProgress | null }) {
+  // Cataloging doesn't know the total up front: no bar, just counts.
   const pct = percent(progress);
   return (
     <>
@@ -359,6 +369,15 @@ function DrivesSection({ s }: { s: OffloadState }) {
                 <span className="lcd-dim lcd-ellipsis">{store.path ?? `not connected · last seen ${formatDate(store.last_seen_at)}`}</span>
                 <span className="spacer" />
                 {store.free_bytes != null ? <span className="lcd-dim">{formatBytes(store.free_bytes)} free</span> : null}
+                {catalog.drive_catalogs.some((c) => c.store_id === store.id) ? (
+                  <button type="button" className="chip" onClick={() => void browseDrive(store.id, "")} title="Browse everything on this drive, and scan any folder of it">
+                    CATALOG
+                  </button>
+                ) : store.path ? (
+                  <button type="button" className="chip" disabled={offloadBusy(s)} onClick={() => void runCatalog(store.path!)} title="List everything on this drive, offloaded or not, to browse and scan">
+                    CATALOG IT
+                  </button>
+                ) : null}
               </div>
               {jobs.length === 0 ? <div className="lcd-dim off-indent">No offloads recorded on it.</div> : null}
               {jobs.map((job) => {
@@ -411,8 +430,8 @@ function FindSection({ s }: { s: OffloadState }) {
         <input className="lcd-input" value={s.query} placeholder="part of a file or folder name" onChange={(e) => setQuery(e.target.value)} spellCheck={false} aria-label="Find an offloaded file" />
       </div>
       <div className="lcd off-scroll" role="list">
-        {s.hits === null ? <div className="lcd-dim">Searches every offload's file list, including drives that aren't plugged in.</div> : null}
-        {s.hits?.length === 0 ? <div className="lcd-dim">No offloaded file or folder matches.</div> : null}
+        {s.hits === null ? <div className="lcd-dim">Searches every offload's file list and every drive catalog, including drives that aren't plugged in.</div> : null}
+        {s.hits?.length === 0 && !s.driveHits?.length ? <div className="lcd-dim">No offloaded or cataloged file or folder matches.</div> : null}
         {s.hits?.map((hit) => {
           const original = hit.rel_path ? `${hit.source_path}/${hit.rel_path}` : hit.source_path;
           return (
@@ -436,7 +455,239 @@ function FindSection({ s }: { s: OffloadState }) {
           );
         })}
         {s.hits && s.hits.length >= 300 ? <div className="lcd-dim">Showing the first 300. Add a word to narrow it down.</div> : null}
+        {s.driveHits?.length ? <div className="lcd-dim off-divider">IN DRIVE CATALOGS</div> : null}
+        {s.driveHits?.map((hit) => (
+          <button
+            key={`${hit.store_id}:${hit.rel_path}`}
+            type="button"
+            role="listitem"
+            className="off-row off-hit"
+            title={`${hit.rel_path}\non "${hit.store_label}"${connected.has(hit.store_id) ? "" : " (not connected)"}\nOpen its folder in CATALOG`}
+            onClick={() => void browseDrive(hit.store_id, hit.kind === "dir" ? hit.rel_path : relParent(hit.rel_path))}
+          >
+            <span className="library-kind">{hit.kind === "dir" ? "▣" : hit.kind === "symlink" ? "↗" : "·"}</span>
+            <span className="off-name">
+              {hit.name} <span className="lcd-dim">{relParent(hit.rel_path)}</span>
+            </span>
+            <span className={connected.has(hit.store_id) ? "lcd-accent" : "lcd-dim"}>{hit.store_label}</span>
+            <span className="off-size">{formatBytes(hit.size)}</span>
+          </button>
+        ))}
+        {s.driveHits && s.driveHits.length >= 300 ? <div className="lcd-dim">Showing the first 300 cataloged. Add a word to narrow it down.</div> : null}
       </div>
+    </div>
+  );
+}
+
+
+function relParent(rel: string): string {
+  const i = rel.lastIndexOf("/");
+  return i < 0 ? "" : rel.slice(0, i);
+}
+
+function catalogLine(c: DriveCatalog): string {
+  return `${c.files.toLocaleString()} files · ${formatBytes(c.bytes)} · cataloged ${formatDate(c.cataloged_at)}${c.unreadable ? ` · ${c.unreadable} unreadable folders` : ""}`;
+}
+
+/** The drives there are, cataloged or not, and a way to catalog one. */
+function CatalogDrives({ s }: { s: OffloadState }) {
+  const busy = offloadBusy(s);
+  const stores = s.catalog?.stores ?? [];
+  const catalogs = new Map((s.catalog?.drive_catalogs ?? []).map((c) => [c.store_id, c]));
+  // Connected drives the app has never seen are offered too.
+  const fresh = s.volumes.filter((v) => !stores.some((st) => st.path === v.mount));
+  return (
+    <div className="lcd off-scroll" role="list">
+      {stores.length === 0 && fresh.length === 0 ? <div className="lcd-dim">Plug in an external drive, or pick a folder on one below, to list everything on it.</div> : null}
+      {stores.map((store) => {
+        const c = catalogs.get(store.id);
+        return (
+          <div key={store.id} role="listitem" className="off-store-head off-cat-row" title={store.path ?? `not connected · last seen at ${store.last_path}`}>
+            <span className="led" data-on={!!store.path} />
+            <span className="lcd-strong">{store.label}</span>
+            <span className="lcd-dim lcd-ellipsis off-name">{c ? catalogLine(c) : store.path ? "not cataloged yet" : "not cataloged · not connected"}</span>
+            {c ? (
+              <button type="button" className="chip" onClick={() => void browseDrive(store.id, "")}>
+                BROWSE
+              </button>
+            ) : null}
+            {store.path ? (
+              <>
+                <button type="button" className="chip" disabled={busy} onClick={() => void runCatalog(store.path!)} title={c ? "Read the drive again and replace its catalog" : "List everything on this drive"}>
+                  {c ? "RECATALOG" : "CATALOG"}
+                </button>
+                <button type="button" className="chip" onClick={() => scanCatalogPath(store.path!)} title={`Scan ${store.path}`}>
+                  SCAN
+                </button>
+              </>
+            ) : null}
+          </div>
+        );
+      })}
+      {fresh.map((v) => (
+        <div key={v.mount} role="listitem" className="off-store-head off-cat-row" title={v.mount}>
+          <span className="led" data-on />
+          <span className="lcd-strong">{v.name || v.mount}</span>
+          <span className="lcd-dim lcd-ellipsis off-name">
+            new drive · {formatBytes(v.total_bytes - v.free_bytes)} used of {formatBytes(v.total_bytes)}
+          </span>
+          <button type="button" className="chip" disabled={busy} onClick={() => void runCatalog(v.mount)} title="List everything on this drive. Nothing is offloaded.">
+            CATALOG
+          </button>
+          <button type="button" className="chip" onClick={() => scanCatalogPath(v.mount)} title={`Scan ${v.mount}`}>
+            SCAN
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EntryRow({ entry, storeId, connected }: { entry: ListedEntry; storeId: string; connected: boolean }) {
+  const dir = entry.kind === "dir";
+  const when = entry.mtime_ns != null ? formatDate(new Date(entry.mtime_ns / 1e6).toISOString()) : "";
+  return (
+    <div role="listitem" className="off-row off-entry" title={`${entry.path ?? entry.rel_path}${when ? `\nchanged ${when}` : ""}${entry.unreadable ? "\ncouldn't be read when cataloged" : ""}`}>
+      <span className="library-kind">{dir ? "▣" : entry.kind === "symlink" ? "↗" : "·"}</span>
+      {dir ? (
+        <button type="button" className="off-name off-link" onClick={() => void browseDrive(storeId, entry.rel_path)}>
+          {entry.name}/
+        </button>
+      ) : (
+        <span className="off-name">{entry.name}</span>
+      )}
+      {entry.unreadable ? <span className="lcd-bad">unreadable</span> : null}
+      {dir ? <span className="lcd-dim">{entry.files.toLocaleString()} files</span> : null}
+      <span className="off-size">{entry.kind === "symlink" ? "" : formatBytes(entry.size)}</span>
+      {dir ? (
+        <button type="button" className="chip off-scan" disabled={!connected || !entry.path} onClick={() => entry.path && scanCatalogPath(entry.path)} title={connected ? `Scan ${entry.path}` : "Plug in the drive to scan it"}>
+          SCAN
+        </button>
+      ) : (
+        <span className="off-scan" />
+      )}
+    </div>
+  );
+}
+
+/** One folder of a drive's catalog: go into folders, scan any of them. */
+function CatalogBrowser({ s }: { s: OffloadState }) {
+  const b = s.browse!;
+  const listing = b.listing;
+  const label = listing?.store.label ?? s.catalog?.stores.find((st) => st.id === b.storeId)?.label ?? "drive";
+  const connected = !!listing?.store.path;
+  const parts = b.rel ? b.rel.split("/") : [];
+  return (
+    <>
+      <div className="field-row off-crumbs">
+        <button type="button" className="chip" onClick={closeBrowse} title="Back to the list of drives">
+          ‹ DRIVES
+        </button>
+        <span className="lcd-ellipsis off-name">
+          <button type="button" className="off-link lcd-strong" onClick={() => void browseDrive(b.storeId, "")}>
+            {label}
+          </button>
+          {parts.map((part, i) => (
+            <span key={i}>
+              <span className="lcd-dim"> / </span>
+              <button type="button" className="off-link" onClick={() => void browseDrive(b.storeId, parts.slice(0, i + 1).join("/"))}>
+                {part}
+              </button>
+            </span>
+          ))}
+        </span>
+        <button
+          type="button"
+          className="steel-btn is-primary"
+          disabled={!connected || !listing?.folder.path || listing.folder.rel_path !== b.rel}
+          onClick={() => listing?.folder.path && scanCatalogPath(listing.folder.path)}
+          title={connected ? `Scan ${listing?.folder.path}` : `Plug in "${label}" to scan it`}
+        >
+          {b.rel ? "SCAN FOLDER" : "SCAN DRIVE"}
+        </button>
+      </div>
+      <div className="lcd off-scroll" role="list">
+        {b.error ? <div className="lcd-bad">{b.error}</div> : null}
+        {b.loading && !listing ? <div className="lcd-dim blink">READING THE CATALOG…</div> : null}
+        {listing ? (
+          <div className="lcd-dim lcd-ellipsis off-cat-sum" title={catalogLine(listing.catalog)}>
+            {listing.folder.files.toLocaleString()} files · {formatBytes(listing.folder.size)} · as of {formatDate(listing.catalog.cataloged_at)}
+            {connected ? "" : ` · not plugged in: plug in "${label}" to scan`}
+          </div>
+        ) : null}
+        {listing && listing.entries.length === 0 && !b.loading ? <div className="lcd-dim">This folder was empty when the drive was cataloged.</div> : null}
+        {listing?.entries.map((entry) => (
+          <EntryRow key={entry.rel_path} entry={entry} storeId={b.storeId} connected={connected} />
+        ))}
+        {listing?.more ? <div className="lcd-dim">Showing the first 2,000: the folders and biggest files.</div> : null}
+      </div>
+      {listing ? (
+        <div className="field-row is-end">
+          <button type="button" className="steel-btn" disabled={offloadBusy(s) || !connected} onClick={() => listing.store.path && void runCatalog(listing.store.path)} title="Read the drive again and replace its catalog">
+            RECATALOG
+          </button>
+          <button type="button" className="steel-btn" disabled={offloadBusy(s)} onClick={() => void forgetCatalog(b.storeId, label)} title="Remove the catalog. Nothing on the drive is touched.">
+            FORGET
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function CatalogSection({ s }: { s: OffloadState }) {
+  const busy = offloadBusy(s);
+  return (
+    <div className="off-pane">
+      {s.cataloging ? (
+        <>
+          <div className="lcd lcd-banner">
+            <span className="lcd-ellipsis">Cataloging {s.cataloging.path}</span>
+          </div>
+          <div className="lcd stats">
+            <span className="lcd-accent blink">CATALOGING</span>
+            <span>{(s.cataloging.progress?.files_done ?? 0).toLocaleString()} files</span>
+            <span>{formatBytes(s.cataloging.progress?.bytes_done ?? 0)}</span>
+            <span className="lcd-dim lcd-ellipsis">{s.cataloging.progress?.current_path}</span>
+          </div>
+          <div className="field-row is-end">
+            <span className="hint">Only reads the drive. Stopping keeps its previous catalog.</span>
+            <span className="spacer" />
+            <button type="button" className="steel-btn is-warn" onClick={cancelCatalog}>
+              CANCEL
+            </button>
+          </div>
+        </>
+      ) : null}
+      {s.catalogNote ? <div className={s.catalogNote.good ? "lcd-accent" : "lcd-bad"}>{s.catalogNote.text}</div> : null}
+      {s.browse ? (
+        <CatalogBrowser s={s} />
+      ) : (
+        <>
+          <CatalogDrives s={s} />
+          <div className="field-row is-end">
+            <span className="hint" title="A catalog lists everything on a drive, before or without offloading to it, to browse while it's unplugged and scan any folder when it's plugged in.">
+              Lists a whole drive, offloaded or not.
+            </span>
+            <span className="spacer" />
+            <button type="button" className="steel-btn" onClick={() => void loadVolumes().then(loadCatalog)} title="Look again for connected drives">
+              REFRESH
+            </button>
+            <button
+              type="button"
+              className="steel-btn"
+              disabled={busy}
+              title="Catalog a drive, or a folder on one, that isn't listed"
+              onClick={async () => {
+                const path = await pickDirectory();
+                if (path) void runCatalog(path);
+              }}
+            >
+              CATALOG A FOLDER…
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -452,12 +703,13 @@ export function OffloadWindow({ view, controls }: WindowArgs) {
   }, [ready]);
   const busy = offloadBusy(s);
   const running = s.phase === "running" ? s.progress : (s.action?.progress ?? null);
-  const shadeInfo = busy ? `${percent(running)}%` : s.catalog ? `${s.catalog.jobs.length} offloaded` : undefined;
+  const shadeInfo = s.cataloging ? "cataloging" : busy ? `${percent(running)}%` : s.catalog ? `${s.catalog.jobs.length} offloaded` : undefined;
   const section = (id: OffloadSection) => ({
     open: s.section === id,
     onToggle: () => {
       patchOffload({ section: s.section === id ? (id === "move" ? "drives" : "move") : id });
       if (id !== "move") void loadCatalog();
+      if (id === "catalog") void loadVolumes();
     },
   });
 
@@ -478,57 +730,70 @@ export function OffloadWindow({ view, controls }: WindowArgs) {
   return (
     <Window title="OFFLOAD" shadeInfo={shadeInfo} view={view} controls={controls} className="kind-offload">
       <div className="tool">
-        <div className="field-row">
-          <span className={`led ${busy ? "is-busy" : ""}`} data-on={ready} />
-          <span className="field-tag off-tag">TO</span>
-          <input
-            className="lcd-input"
-            value={s.dest}
-            placeholder="a folder on the external drive"
-            onChange={(e) => setDest(e.target.value)}
-            spellCheck={false}
-            aria-label="Destination on the external drive"
-            disabled={busy}
-          />
-          <button
-            type="button"
-            className="steel-btn"
-            disabled={busy}
-            onClick={async () => {
-              const picked = await pickDirectory();
-              if (picked) setDest(picked);
-              void loadVolumes();
-            }}
-          >
-            BROWSE
-          </button>
-        </div>
-        {s.volumes.length || stores.some((st) => st.path) ? (
-          <div className="off-chips">
-            {stores
-              .filter((st) => st.path)
-              .map((st) => (
-                <button key={st.id} type="button" className={`chip ${s.dest === st.path ? "is-on" : ""}`} disabled={busy} onClick={() => setDest(st.path!)} title={`${st.path}\nused for offloads before`}>
-                  ★ {st.label}
-                  {st.free_bytes != null ? ` · ${formatBytes(st.free_bytes)} free` : ""}
-                </button>
-              ))}
-            {s.volumes
-              .filter((v) => !stores.some((st) => st.path === v.mount))
-              .map((v) => (
-                <button key={v.mount} type="button" className={`chip ${s.dest === v.mount ? "is-on" : ""}`} disabled={busy} onClick={() => setDest(v.mount)} title={v.mount}>
-                  {v.name || v.mount} · {formatBytes(v.free_bytes)} free
-                </button>
-              ))}
-          </div>
-        ) : null}
+        {/* The destination is for moving: CATALOG has its own list of drives and needs the room. */}
+        {s.section === "catalog" ? null : (
+          <>
+            <div className="field-row">
+              <span className={`led ${busy ? "is-busy" : ""}`} data-on={ready} />
+              <span className="field-tag off-tag">TO</span>
+              <input
+                className="lcd-input"
+                value={s.dest}
+                placeholder="a folder on the external drive"
+                onChange={(e) => setDest(e.target.value)}
+                spellCheck={false}
+                aria-label="Destination on the external drive"
+                disabled={busy}
+              />
+              <button
+                type="button"
+                className="steel-btn"
+                disabled={busy}
+                onClick={async () => {
+                  const picked = await pickDirectory();
+                  if (picked) setDest(picked);
+                  void loadVolumes();
+                }}
+              >
+                BROWSE
+              </button>
+            </div>
+            {s.volumes.length || stores.some((st) => st.path) ? (
+              <div className="off-chips">
+                {stores
+                  .filter((st) => st.path)
+                  .map((st) => (
+                    <button key={st.id} type="button" className={`chip ${s.dest === st.path ? "is-on" : ""}`} disabled={busy} onClick={() => setDest(st.path!)} title={`${st.path}\nused for offloads before`}>
+                      ★ {st.label}
+                      {st.free_bytes != null ? ` · ${formatBytes(st.free_bytes)} free` : ""}
+                    </button>
+                  ))}
+                {s.volumes
+                  .filter((v) => !stores.some((st) => st.path === v.mount))
+                  .map((v) => (
+                    <button key={v.mount} type="button" className={`chip ${s.dest === v.mount ? "is-on" : ""}`} disabled={busy} onClick={() => setDest(v.mount)} title={v.mount}>
+                      {v.name || v.mount} · {formatBytes(v.free_bytes)} free
+                    </button>
+                  ))}
+              </div>
+            ) : null}
+          </>
+        )}
         <Section title="MOVE" info={s.phase === "running" ? "running" : s.candidates.length ? `${s.candidates.length} suggested` : undefined} fill {...section("move")}>
           <MoveSection s={s} />
         </Section>
         <Section title="DRIVES" info={s.catalog ? `${stores.length} · ${formatBytes(removedTotal)} moved off this computer` : undefined} fill {...section("drives")}>
           <DrivesSection s={s} />
         </Section>
-        <Section title="FIND" info={s.hits ? s.hits.length : undefined} fill {...section("find")}>
+        <Section
+          title="CATALOG"
+          info={s.cataloging ? "cataloging" : s.catalog?.drive_catalogs.length ? `${s.catalog.drive_catalogs.length} ${s.catalog.drive_catalogs.length === 1 ? "drive" : "drives"}` : undefined}
+          fill
+          {...section("catalog")}
+        >
+          <CatalogSection s={s} />
+        </Section>
+        <Section title="FIND" info={s.hits ? s.hits.length + (s.driveHits?.length ?? 0) : undefined} fill {...section("find")}>
           <FindSection s={s} />
         </Section>
       </div>

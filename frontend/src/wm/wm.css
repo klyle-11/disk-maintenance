@@ -1858,3 +1858,61 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* Offload › CATALOG: a drive's contents, browsable, with a scan per folder */
+
+.off-cat-row {
+  padding: 1px 2px;
+}
+
+.off-cat-row + .off-cat-row {
+  margin-top: 3px;
+}
+
+.off-crumbs {
+  flex-shrink: 0;
+}
+
+.off-link {
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.off-link:hover {
+  color: var(--lcd-strong);
+  text-decoration: underline;
+}
+
+.off-entry {
+  cursor: default;
+}
+
+.off-entry .off-scan {
+  flex-shrink: 0;
+  min-width: 5ch;
+}
+
+.off-entry .chip.off-scan {
+  visibility: hidden;
+}
+
+.off-entry:hover .chip.off-scan,
+.off-entry .chip.off-scan:focus-visible {
+  visibility: visible;
+}
+
+.off-cat-sum {
+  padding-bottom: 3px;
+  white-space: nowrap;
+}
+
+.off-divider {
+  margin-top: 6px;
+  padding-top: 3px;
+  border-top: 1px solid var(--lcd-dim);
+}
