@@ -490,13 +490,25 @@ impl Catalog {
         self.batched_write()
     }
 
-    /// An earlier problem that no longer applies (the entry is gone locally).
-    pub fn clear_problem(&mut self, job_id: &str, rel_path: &str) -> Sql<()> {
+    /// Forget what earlier runs could not copy. The run that follows finds
+    /// each problem again if it is still one. Verified entries are untouched.
+    pub fn clear_problems(&mut self, job_id: &str) -> Sql<()> {
+        self.begin()?;
         self.conn.execute(
-            "DELETE FROM offload_files WHERE job_id = ?1 AND rel_path = ?2 AND state != 'verified'",
-            params![job_id, rel_path],
+            "DELETE FROM offload_files WHERE job_id = ?1 AND state != 'verified'",
+            [job_id],
         )?;
-        Ok(())
+        self.batched_write()
+    }
+
+    /// How many files and links of a job are on the drive, and their bytes.
+    pub fn verified_totals(&self, job_id: &str) -> Sql<(u64, u64)> {
+        self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM offload_files
+             WHERE job_id = ?1 AND state = 'verified' AND kind != 'dir'",
+            [job_id],
+            |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)),
+        )
     }
 
     pub fn set_source_removed(&mut self, job_id: &str, rel_path: &str, removed: bool) -> Sql<()> {

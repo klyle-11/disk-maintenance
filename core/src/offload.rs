@@ -564,6 +564,31 @@ fn stamp(meta: &fs::Metadata) -> String {
 /// read again instead.
 const STRONG_STAMPS: bool = cfg!(unix);
 
+/// How long a file must have been left alone before its stamp is trusted.
+/// File systems record times in coarse steps, so two writes a moment apart
+/// can leave the same stamp; a file touched this recently gets no stamp, and
+/// is compared by contents before its original is removed.
+#[cfg(unix)]
+const SETTLE_SECS: i64 = 3;
+
+/// The stamp to record for a file just copied, if it can be trusted later.
+#[cfg(unix)]
+fn settled_stamp(meta: &fs::Metadata) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(i64::MAX);
+    let last = meta.mtime().max(meta.ctime());
+    // A time in the future is no proof of anything either.
+    (last <= now && now - last >= SETTLE_SECS).then(|| stamp(meta))
+}
+
+#[cfg(not(unix))]
+fn settled_stamp(_meta: &fs::Metadata) -> Option<String> {
+    None
+}
+
 #[cfg(unix)]
 fn mode_of(meta: &fs::Metadata) -> Option<i64> {
     use std::os::unix::fs::MetadataExt;
@@ -663,6 +688,22 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// A folder that is really there, not a link to one.
+fn is_real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
+}
+
+/// Flush `dir` and each folder above it, up to and including `top`, so the
+/// names of folders just created are on the drive.
+fn sync_up_to(dir: &Path, top: &Path) {
+    for folder in dir.ancestors() {
+        sync_dir(folder);
+        if folder == top || !folder.starts_with(top) {
+            break;
+        }
+    }
+}
+
 /// Remove leftovers of interrupted copies from a folder this run writes to.
 fn clear_stale_parts(dir: &Path) {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -684,7 +725,7 @@ fn clear_stale_parts(dir: &Path) {
 struct Copied {
     sha256: String,
     size: u64,
-    stamp: String,
+    stamp: Option<String>,
     mtime_ns: i64,
     mode: Option<i64>,
 }
@@ -814,7 +855,7 @@ fn copy_through(
     Ok(Copied {
         sha256,
         size: total,
-        stamp: stamp(&after),
+        stamp: settled_stamp(&after),
         mtime_ns: mtime_ns(meta),
         mode: mode_of(meta),
     })
@@ -1204,6 +1245,8 @@ impl Work<'_> {
         // that first read-back may have been answered from memory, and this
         // one is the last chance to notice before the original is gone.
         if let Err((state, why)) = self.copy_intact(row, true)? {
+            // A drive pulled out is not a finding about this file.
+            self.drive_present()?;
             self.catalog
                 .set_drive_state(&self.job.id, &row.rel_path, state)
                 .map_err(db)?;
@@ -1256,10 +1299,10 @@ impl Work<'_> {
         self.ctl.progress.set_current(&row.rel_path);
         self.catalog.settle(row.size as u64).map_err(db)?;
         self.ctl.hook(Point::BeforeRemove, &src)?;
-        removal.checked += 1;
         let meta = match fs::symlink_metadata(&src) {
             Ok(meta) => meta,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                removal.checked += 1;
                 removal.already_gone += 1;
                 if !row.source_removed {
                     self.catalog
@@ -1269,6 +1312,7 @@ impl Work<'_> {
                 return Ok(());
             }
             Err(e) => {
+                removal.checked += 1;
                 removal.kept_files += 1;
                 self.problems.add(
                     &row.rel_path,
@@ -1278,7 +1322,11 @@ impl Work<'_> {
                 return Ok(());
             }
         };
-        if let Err(why) = self.safe_to_remove(row, &src, &meta)? {
+        // Counted once its fate is known: a check cut short (cancel, drive
+        // gone) decided nothing about this one.
+        let safe = self.safe_to_remove(row, &src, &meta)?;
+        removal.checked += 1;
+        if let Err(why) = safe {
             removal.kept_files += 1;
             self.problems.add(&row.rel_path, "kept", why);
             return Ok(());
@@ -1467,6 +1515,12 @@ impl Work<'_> {
 
     fn remove_originals(&mut self, mode: RemoveMode) -> Step<Removal> {
         let mut removal = Removal::default();
+        // Originals on a disk that isn't connected are not "already gone".
+        if mode != RemoveMode::Keep && !source_reachable(&self.src_root) {
+            return Err(Fail::Abort(
+                "the disk the originals are on is not connected".into(),
+            ));
+        }
         self.ctl
             .progress
             .phase
@@ -1587,6 +1641,7 @@ impl Copy<'_, '_> {
                 .to_path_buf();
             fs::create_dir_all(&parent)
                 .map_err(|e| Fail::Abort(format!("couldn't create a folder on the drive: {e}")))?;
+            sync_up_to(&parent, &self.work.store_root);
             clear_stale_parts(&parent);
             self.file(&src, "", &dst)?;
             sync_dir(&parent);
@@ -1594,6 +1649,7 @@ impl Copy<'_, '_> {
         }
         fs::create_dir_all(&self.work.dst_base)
             .map_err(|e| Fail::Abort(format!("couldn't create a folder on the drive: {e}")))?;
+        sync_up_to(&self.work.dst_base, &self.work.store_root);
         let mut stack = vec![String::new()];
         while let Some(rel_dir) = stack.pop() {
             ctl.cancelled()?;
@@ -1604,6 +1660,15 @@ impl Copy<'_, '_> {
 
     fn dir(&mut self, rel_dir: &str, stack: &mut Vec<String>) -> Step<()> {
         let (src_dir, dst_dir) = (self.work.src(rel_dir)?, self.work.dst(rel_dir)?);
+        // A folder swapped for a link since it was listed is not followed.
+        if !is_real_dir(&src_dir) {
+            return self.problem(
+                rel_dir,
+                "dir",
+                "failed",
+                "this is not a folder any more; nothing in it was copied".into(),
+            );
+        }
         let read = fs::read_dir(&src_dir).and_then(|entries| {
             let mut list: Vec<(OsString, fs::FileType)> = Vec::new();
             for entry in entries {
@@ -1628,8 +1693,15 @@ impl Copy<'_, '_> {
 
         if !rel_dir.is_empty() {
             match fs::create_dir(&dst_dir) {
-                Ok(()) => {}
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists && dst_dir.is_dir() => {}
+                // The new folder's name lives in its parent: flush that too,
+                // or a power cut could leave verified files in a folder the
+                // drive has no record of.
+                Ok(()) => {
+                    if let Some(parent) = dst_dir.parent() {
+                        sync_dir(parent);
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists && is_real_dir(&dst_dir) => {}
                 Err(e) => {
                     let failure = fail("the folder couldn't be created on the drive", e);
                     let (Fail::Io(message) | Fail::Full(message)) = &failure else {
@@ -1784,7 +1856,7 @@ impl Copy<'_, '_> {
                         mtime_ns: Some(copied.mtime_ns),
                         mode: copied.mode,
                         sha256: Some(copied.sha256),
-                        src_stamp: Some(copied.stamp),
+                        src_stamp: copied.stamp,
                         state: "verified".into(),
                         ..FileRow::default()
                     })
@@ -1841,7 +1913,7 @@ impl Copy<'_, '_> {
             Copied {
                 sha256: source_sha,
                 size,
-                stamp: stamp(&after),
+                stamp: settled_stamp(&after),
                 mtime_ns: mtime_ns(&before),
                 mode: mode_of(&before),
             },
@@ -1988,6 +2060,10 @@ pub fn offload(
         removal_so_far: None,
     };
 
+    // What an earlier run could not copy is found again by this one, or is
+    // no longer true.
+    work.catalog.clear_problems(&work.job.id).map_err(sql)?;
+
     let folds_case = ctl
         .hook
         .folds_case()
@@ -2109,6 +2185,16 @@ pub fn offload(
 // Release, check, restore, import
 // ---------------------------------------------------------------------------
 
+/// Can anything be said about the originals under `root`? Not when the
+/// folder it sat in is gone too: that is a disk that isn't connected, not a
+/// folder that was removed.
+fn source_reachable(root: &Path) -> bool {
+    fs::symlink_metadata(root).is_ok()
+        || root
+            .parent()
+            .is_some_and(|parent| fs::symlink_metadata(parent).is_ok())
+}
+
 /// Open a job whose drive is connected.
 fn work_on<'a>(
     catalog: &'a mut Catalog,
@@ -2137,6 +2223,9 @@ fn work_on<'a>(
         .map_err(sql)?;
     let dst_base = join_rel(&store_root, &job.rel_base)
         .ok_or("This offload's place on the drive is not a valid path.")?;
+    let (files, bytes) = catalog.verified_totals(&job.id).map_err(sql)?;
+    ctl.progress.files_total.store(files, Ordering::Relaxed);
+    ctl.progress.bytes_total.store(bytes, Ordering::Relaxed);
     Ok(Work {
         catalog,
         ctl,
@@ -2155,6 +2244,9 @@ fn work_on<'a>(
 /// catalog. No decision ever rests on the flag, but people read it.
 fn reconcile(catalog: &mut Catalog, job: &JobRecord) -> rusqlite::Result<()> {
     let root = PathBuf::from(&job.source_path);
+    if !source_reachable(&root) {
+        return Ok(());
+    }
     let mut after: Option<String> = None;
     loop {
         let page = catalog.files_after(&job.id, after.as_deref(), 500)?;
@@ -2223,7 +2315,13 @@ pub fn release(
         outcome: "complete".into(),
         ..ReleaseReport::default()
     };
-    match work.remove_originals(mode) {
+    // The drive's own list first, as in an offload: the run that made these
+    // copies may have been cut short before it wrote one.
+    let removed = ctl
+        .hook(Point::Manifest, &work.store_root)
+        .and_then(|()| work.write_manifest())
+        .and_then(|()| work.remove_originals(mode));
+    match removed {
         Ok(removal) => report.removal = removal,
         Err(Fail::Crash) => {
             work.catalog.rollback();
@@ -2282,6 +2380,8 @@ pub fn check(catalog: &mut Catalog, job_id: &str, ctl: &Control) -> Result<Check
                     "ok"
                 }
                 Err((state, why)) => {
+                    // A drive pulled out is not a finding about this file.
+                    work.drive_present()?;
                     if state == "missing" {
                         report.missing += 1;
                     } else {
@@ -2301,14 +2401,6 @@ pub fn check(catalog: &mut Catalog, job_id: &str, ctl: &Control) -> Result<Check
     })();
     match run {
         Ok(()) => {
-            // Nothing verified because the drive went away mid-check is not a
-            // finding about the files.
-            if report.missing > 0 && work.drive_present().is_err() {
-                work.catalog.rollback();
-                return Err(
-                    "The drive was disconnected during the check. Nothing was recorded.".into(),
-                );
-            }
             work.catalog.commit().map_err(sql)?;
             let problems = (report.missing + report.damaged) as i64;
             work.catalog.job_checked(job_id, problems).map_err(sql)?;
@@ -2325,8 +2417,11 @@ pub fn check(catalog: &mut Catalog, job_id: &str, ctl: &Control) -> Result<Check
             return Err(CRASHED.into());
         }
         Err(Fail::Abort(reason)) | Err(Fail::Io(reason)) | Err(Fail::Full(reason)) => {
+            // Half a check says nothing reliable: record none of it.
             work.catalog.rollback();
-            return Err(reason);
+            return Err(format!(
+                "The check stopped: {reason}. Nothing was recorded."
+            ));
         }
     }
     let Problems { list, total } = std::mem::take(&mut work.problems);
@@ -2471,6 +2566,18 @@ fn restore_one(work: &Work, row: &FileRow, target_root: &Path) -> Step<Placed> {
     let from = work.dst(&row.rel_path)?;
     let to = join_rel(target_root, &row.rel_path)
         .ok_or_else(|| Fail::Io("is not a valid path".into()))?;
+    // Never write through a link: a folder on the way that is really a link
+    // (put there since, or named by a doctored list on the drive) would send
+    // the file somewhere else.
+    let mut above = to.parent();
+    while let Some(folder) = above.filter(|f| f.starts_with(target_root) && *f != target_root) {
+        if fs::symlink_metadata(folder).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err(Fail::Io(
+                "a link is in the way where this belongs; nothing was written through it".into(),
+            ));
+        }
+        above = folder.parent();
+    }
     let existing = fs::symlink_metadata(&to).ok();
     match row.kind.as_str() {
         "dir" => match existing {
@@ -2528,6 +2635,24 @@ fn restore_one(work: &Work, row: &FileRow, target_root: &Path) -> Step<Placed> {
                     fs::create_dir_all(parent)
                         .map_err(|e| fail("couldn't create the folder", e))?;
                     copy_verified(work.ctl, &from, &to, Some(expected))?;
+                    // The time and permissions the original had, from the
+                    // catalog: the drive's file system may not have kept them.
+                    if let Some(ns) = row.mtime_ns.filter(|ns| *ns >= 0) {
+                        let when =
+                            std::time::UNIX_EPOCH + std::time::Duration::from_nanos(ns as u64);
+                        let _ = fs::OpenOptions::new()
+                            .write(true)
+                            .open(&to)
+                            .and_then(|f| f.set_modified(when));
+                    }
+                    #[cfg(unix)]
+                    if let Some(mode) = row.mode {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = fs::set_permissions(
+                            &to,
+                            fs::Permissions::from_mode(mode as u32 & 0o7777),
+                        );
+                    }
                     sync_dir(parent);
                     Ok(Placed::Copied)
                 }
@@ -2597,7 +2722,7 @@ pub fn import_store(catalog: &mut Catalog, store_root: &Path) -> Result<ImportRe
             continue;
         }
         report.jobs_added += 1;
-        let here = job.host == host;
+        let here = job.host == host && source_reachable(Path::new(&job.source_path));
         for line in lines {
             let Ok(mut row) = serde_json::from_str::<FileRow>(line) else {
                 report.rows_rejected += 1;
@@ -2611,6 +2736,9 @@ pub fn import_store(catalog: &mut Catalog, store_root: &Path) -> Result<ImportRe
                 continue;
             }
             row.job_id = job.id.clone();
+            // Whether an original is unchanged is decided here, by reading
+            // it, never by what a file on the drive claims.
+            row.src_stamp = None;
             row.source_removed = here
                 && join_rel(Path::new(&job.source_path), &row.rel_path)
                     .is_some_and(|p| fs::symlink_metadata(p).is_err());
