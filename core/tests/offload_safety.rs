@@ -1150,8 +1150,19 @@ fn an_unplugged_drive_during_removal_stops_the_removal() {
         report.removal.removed_files, 2,
         "only the two that were checked against the drive while it was there"
     );
-    assert_eq!(report.removal.kept_files as usize, files_in(&before) - 2);
+    assert_eq!(
+        report.stopped.as_deref(),
+        Some("the drive is no longer connected"),
+        "it stops, rather than calling every remaining copy missing"
+    );
+    assert_eq!(report.outcome, "incomplete");
     fs::rename(&away, &w.store).unwrap();
+    assert!(
+        w.rows()
+            .values()
+            .all(|r| r.drive_state.as_deref() == Some("ok")),
+        "no copy was recorded as missing or damaged"
+    );
     assert_nothing_lost(&w, &before);
     assert_report_true(&w, &before, &report);
 }
@@ -1645,7 +1656,7 @@ fn check_of_an_unplugged_drive_condemns_nothing() {
         )
     });
     match result {
-        Err(e) => assert!(e.contains("disconnected"), "{e}"),
+        Err(e) => assert!(e.contains("no longer connected"), "{e}"),
         // The check may have finished before the drive went.
         Ok(report) => assert_eq!(report.outcome, "ok"),
     }
@@ -2123,4 +2134,266 @@ fn two_folders_offloaded_to_one_drive_do_not_mix() {
     assert_eq!(catalog.jobs().unwrap().len(), 2);
     assert_eq!(catalog.stores().unwrap().len(), 1, "one drive, known once");
     assert_eq!(catalog.search("same-name", 10).unwrap().len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Found on review
+// ---------------------------------------------------------------------------
+
+#[test]
+fn release_writes_the_drives_own_list_before_any_original_goes() {
+    let w = world();
+    plant(&w.src);
+    w.offload(RemoveMode::Keep, &NoHook).unwrap();
+    let job = w.job();
+    // As after a run that was cut short before it wrote the list.
+    let manifest = w.store.join(drives::MANIFESTS).join(format!("{job}.jsonl"));
+    fs::remove_file(&manifest).unwrap();
+    let hook = On(|point, _: &Path| {
+        if point == Point::BeforeRemove {
+            assert!(manifest.is_file(), "the list must be on the drive first");
+        }
+        Ok(())
+    });
+
+    let report = with(&hook, |ctl| {
+        offload::release(&mut w.catalog(), &job, RemoveMode::Delete, ctl)
+    })
+    .unwrap();
+
+    assert_eq!(report.outcome, "complete");
+    assert!(manifest.is_file());
+    assert!(!w.src.exists());
+}
+
+#[test]
+fn a_problem_that_no_longer_exists_is_not_reported_for_ever() {
+    let w = world();
+    plant(&w.src);
+    let hook = On(|point, path: &Path| {
+        if point == Point::FileStart && path.ends_with("a.txt") {
+            return Err(io::Error::other("locked"));
+        }
+        Ok(())
+    });
+    let first = w.offload(RemoveMode::Keep, &hook).unwrap();
+    assert_eq!(first.failed, 1);
+    assert_eq!(w.catalog().jobs().unwrap()[0].problem_files, 1);
+
+    // The file that couldn't be copied is deleted by its owner.
+    fs::remove_file(w.src.join("a.txt")).unwrap();
+    let second = w.offload(RemoveMode::Keep, &NoHook).unwrap();
+
+    assert_eq!(second.outcome, "complete");
+    let summary = &w.catalog().jobs().unwrap()[0];
+    assert_eq!(
+        summary.problem_files, 0,
+        "the old failure is not carried along"
+    );
+    assert_eq!(summary.job.state, "complete");
+    assert_catalog_true(&w);
+}
+
+#[cfg(unix)]
+#[test]
+fn restore_never_writes_through_a_link() {
+    let w = world();
+    plant(&w.src);
+    w.offload(RemoveMode::Keep, &NoHook).unwrap();
+    let job = w.job();
+    // Where "docs" belongs there is a link to somewhere else entirely.
+    let (target, elsewhere) = (
+        w.root.join("computer/Restored"),
+        w.root.join("computer/elsewhere"),
+    );
+    fs::create_dir_all(&target).unwrap();
+    fs::create_dir_all(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, target.join("docs")).unwrap();
+
+    let report =
+        plain(|ctl| offload::restore(&mut w.catalog(), &job, None, Some(&target), ctl)).unwrap();
+
+    assert_eq!(report.outcome, "incomplete");
+    assert!(report.failed > 0);
+    assert_eq!(
+        fs::read_dir(&elsewhere).unwrap().count(),
+        0,
+        "nothing was written through the link"
+    );
+    assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"alpha");
+}
+
+#[cfg(unix)]
+#[test]
+fn restore_gives_back_the_time_and_permissions_the_original_had() {
+    use std::os::unix::fs::PermissionsExt;
+    let w = world();
+    plant(&w.src);
+    let original = w.src.join("a.txt");
+    fs::set_permissions(&original, fs::Permissions::from_mode(0o640)).unwrap();
+    let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_500_000_000);
+    fs::File::options()
+        .write(true)
+        .open(&original)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+    w.offload(RemoveMode::Keep, &NoHook).unwrap();
+    // A drive that keeps neither (FAT, exFAT): its copy has other values.
+    let copy = w.dest().join("a.txt");
+    fs::set_permissions(&copy, fs::Permissions::from_mode(0o777)).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&copy)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now())
+        .unwrap();
+
+    let target = w.root.join("computer/Restored");
+    plain(|ctl| offload::restore(&mut w.catalog(), &w.job(), None, Some(&target), ctl)).unwrap();
+
+    let restored = fs::metadata(target.join("a.txt")).unwrap();
+    assert_eq!(restored.modified().unwrap(), when);
+    assert_eq!(restored.permissions().mode() & 0o7777, 0o640);
+}
+
+#[test]
+fn what_a_drive_claims_about_originals_is_not_believed() {
+    let w = world();
+    plant(&w.src);
+    w.offload(RemoveMode::Keep, &NoHook).unwrap();
+    fs::remove_file(&w.db).unwrap();
+
+    offload::import_store(&mut w.catalog(), &w.store).unwrap();
+
+    assert!(
+        w.rows().values().all(|row| row.src_stamp.is_none()),
+        "an imported list never vouches for a file on this computer"
+    );
+    // The originals can still be released: each is compared by its contents.
+    let report =
+        plain(|ctl| offload::release(&mut w.catalog(), &w.job(), RemoveMode::Delete, ctl)).unwrap();
+    assert_eq!(report.outcome, "complete");
+    assert!(!w.src.exists());
+}
+
+#[test]
+fn originals_on_a_disk_that_is_not_connected_are_not_called_removed() {
+    let w = world();
+    // The folder sits on "another disk", which then goes away.
+    let disk = w.root.join("computer/second-disk");
+    let source = disk.join("stuff/Archive");
+    plant(&source);
+    w.offload_from(&source, RemoveMode::Keep, &NoHook, &AtomicBool::new(false))
+        .unwrap();
+    let job = w.job();
+    let away = w.root.join("computer/disconnected");
+    fs::rename(&disk, &away).unwrap();
+
+    let report =
+        plain(|ctl| offload::release(&mut w.catalog(), &job, RemoveMode::Delete, ctl)).unwrap();
+
+    assert_eq!(report.outcome, "incomplete");
+    assert!(report.stopped.as_deref().unwrap().contains("not connected"));
+    assert_eq!(report.removal, offload::Removal::default());
+    let trash =
+        plain(|ctl| offload::release(&mut w.catalog(), &job, RemoveMode::Trash, ctl)).unwrap();
+    assert!(trash.stopped.as_deref().unwrap().contains("not connected"));
+    offload::recover(&mut w.catalog()).unwrap();
+    assert!(
+        w.rows().values().all(|row| !row.source_removed),
+        "nothing is recorded as removed"
+    );
+    fs::rename(&away, &disk).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_touched_a_moment_ago_is_compared_by_contents_before_it_goes() {
+    let w = world();
+    plant(&w.src);
+    w.offload(RemoveMode::Keep, &NoHook).unwrap();
+    // Just written: two writes this close can leave the same timestamp, so
+    // the timestamp is not recorded as proof.
+    assert!(w
+        .rows()
+        .values()
+        .filter(|r| r.kind == "file")
+        .all(|r| r.src_stamp.is_none()));
+
+    // Left alone for a while, a file's stamp is kept, and still catches an edit.
+    std::thread::sleep(std::time::Duration::from_millis(3200));
+    fs::remove_file(&w.db).unwrap();
+    w.offload(RemoveMode::Keep, &NoHook).unwrap();
+    assert!(w
+        .rows()
+        .values()
+        .filter(|r| r.kind == "file")
+        .all(|r| r.src_stamp.is_some()));
+    fs::write(w.src.join("a.txt"), b"omega").unwrap();
+    let report =
+        plain(|ctl| offload::release(&mut w.catalog(), &w.job(), RemoveMode::Delete, ctl)).unwrap();
+    assert_eq!(report.removal.kept_files, 1);
+    assert_eq!(fs::read(w.src.join("a.txt")).unwrap(), b"omega");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_folder_swapped_for_a_link_mid_run_is_not_followed() {
+    let w = world();
+    plant(&w.src);
+    let outside = w.root.join("computer/Outside");
+    write(&outside.join("precious.txt"), b"not part of this offload");
+    let (docs, moved) = (w.src.join("docs"), w.root.join("computer/docs-moved"));
+    let once = AtomicBool::new(false);
+    let hook = On(|point, _: &Path| {
+        if point == Point::FileStart && !once.swap(true, Ordering::SeqCst) {
+            fs::rename(&docs, &moved).unwrap();
+            std::os::unix::fs::symlink(&outside, &docs).unwrap();
+        }
+        Ok(())
+    });
+
+    let report = w.offload(RemoveMode::Delete, &hook).unwrap();
+
+    assert!(once.load(Ordering::SeqCst));
+    assert!(report.failed >= 1);
+    assert!(report
+        .problems
+        .iter()
+        .any(|p| p.path == "docs" && p.message.contains("not a folder")));
+    assert_eq!(
+        fs::read(outside.join("precious.txt")).unwrap(),
+        b"not part of this offload"
+    );
+    assert!(!w.dest().join("docs/precious.txt").exists());
+}
+
+#[test]
+fn check_and_restore_say_how_much_there_is_to_do() {
+    let w = world();
+    plant(&w.src);
+    let offloaded = w.offload(RemoveMode::Keep, &NoHook).unwrap();
+    let progress = Progress::default();
+    let cancel = AtomicBool::new(false);
+    let ctl = Control {
+        progress: &progress,
+        cancel: &cancel,
+        hook: &NoHook,
+    };
+
+    offload::check(&mut w.catalog(), &w.job(), &ctl).unwrap();
+
+    assert_eq!(
+        progress.files_total.load(Ordering::Relaxed),
+        offloaded.verified_files
+    );
+    assert_eq!(
+        progress.bytes_total.load(Ordering::Relaxed),
+        offloaded.verified_bytes
+    );
+    assert_eq!(
+        progress.bytes_done.load(Ordering::Relaxed),
+        offloaded.verified_bytes
+    );
 }

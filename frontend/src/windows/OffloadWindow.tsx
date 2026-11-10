@@ -57,8 +57,11 @@ const MODES: { mode: RemoveMode; label: string }[] = [
 ];
 
 function percent(p: OffloadProgress | null): number {
-  if (!p || !p.bytes_total) return 0;
-  return Math.min(100, Math.round((p.bytes_done / p.bytes_total) * 100));
+  if (!p) return 0;
+  // Removing reads nothing new into the byte count: it goes by files.
+  const byFiles = p.phase === "removing" || !p.bytes_total;
+  const [done, total] = byFiles ? [p.files_done, p.files_total] : [p.bytes_done, p.bytes_total];
+  return total ? Math.min(100, Math.round((done / total) * 100)) : 0;
 }
 
 function ProgressRows({ progress }: { progress: OffloadProgress | null }) {
@@ -163,7 +166,7 @@ function MoveSection({ s }: { s: OffloadState }) {
     return (
       <div className="off-pane">
         <div className="lcd off-scroll">
-          {s.error ? <div className="lcd-bad">NOT STARTED · {s.error}</div> : null}
+          {s.error ? <div className="lcd-bad">STOPPED · {s.error}</div> : null}
           {s.reports.map((r) => (
             <ReportView key={r.job_id} report={r} />
           ))}
@@ -237,10 +240,12 @@ function MoveSection({ s }: { s: OffloadState }) {
   );
 }
 
-function jobBadge(job: OffloadJob): { text: string; bad: boolean } {
+function jobBadge(job: OffloadJob, host: string | undefined): { text: string; bad: boolean } {
   if (job.damaged_files) return { text: `${job.damaged_files.toLocaleString()} damaged or missing on the drive`, bad: true };
   if (job.state !== "complete") return { text: job.state === "running" ? "interrupted" : "incomplete", bad: true };
   if (job.problem_files) return { text: `${job.problem_files.toLocaleString()} not copied`, bad: true };
+  // Whether another computer still has its originals isn't known here.
+  if (job.host !== host) return { text: `from ${job.host}`, bad: false };
   if (job.verified_files > 0 && job.removed_files >= job.verified_files) return { text: "only on the drive", bad: false };
   if (job.removed_files > 0) return { text: "partly removed here", bad: false };
   return { text: "copy · originals still here", bad: false };
@@ -357,7 +362,7 @@ function DrivesSection({ s }: { s: OffloadState }) {
               </div>
               {jobs.length === 0 ? <div className="lcd-dim off-indent">No offloads recorded on it.</div> : null}
               {jobs.map((job) => {
-                const badge = jobBadge(job);
+                const badge = jobBadge(job, catalog.host);
                 const open = s.selectedJob === job.id;
                 return (
                   <div key={job.id} className={`off-job ${open ? "is-open" : ""}`}>
@@ -425,7 +430,7 @@ function FindSection({ s }: { s: OffloadState }) {
               </span>
               {hit.drive_state && hit.drive_state !== "ok" ? <span className="lcd-bad">{hit.drive_state} on the drive</span> : null}
               <span className={connected.has(hit.store_id) ? "lcd-accent" : "lcd-dim"}>{hit.store_label}</span>
-              <span className="lcd-dim">{hit.source_removed ? "drive only" : "also here"}</span>
+              <span className="lcd-dim">{hit.host !== s.catalog?.host ? `from ${hit.host}` : hit.source_removed ? "drive only" : "also here"}</span>
               <span className="off-size">{hit.kind === "file" ? formatBytes(hit.size) : ""}</span>
             </button>
           );

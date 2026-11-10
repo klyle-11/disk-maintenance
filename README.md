@@ -217,10 +217,20 @@ back if the computer's database is lost. Drives are told apart by that id, not b
 The app refuses to offload a disk root, the home folder or anything above it, system locations,
 its own data folder, a symlink, onto the same disk the folder is on, or into the folder itself.
 
+Running an offload again copies what is new. A file that changed on the computer since it was
+copied is **not** updated on the drive: it is reported as differing, and its original stays.
+
 Limits, so nothing surprises you: contents, names, files' modified times and (on macOS/Linux) permission
 bits are kept, and symlinks are kept as links. Extended attributes, ACLs, macOS resource forks,
 owners, hard-link grouping and sparseness are **not** kept. Files being written during the copy
-are reported and not taken. CHECK re-reads a drive to catch copies that have gone bad since.
+are reported and not taken. Links can't be stored on FAT/exFAT drives; they are reported and
+left where they are. CHECK re-reads a drive to catch copies that have gone bad since.
+
+"Read back from the drive" asks the system not to answer from memory (Linux, macOS); Windows
+offers no such request, so there the strongest proof is a CHECK after the drive has been
+unplugged and plugged back in. Do that once before deleting anything you can't replace. Use
+"safely remove" before unplugging: on Windows the names of freshly copied files can't be forced
+onto the drive the way their contents are.
 
 Tests: `core/tests/offload_safety.rs` (damaged copies, changed originals, a crash or failure at
 every step, full and unplugged drives, random trees with random faults) and
