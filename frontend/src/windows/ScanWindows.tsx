@@ -9,7 +9,9 @@ import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ExtensionSummary } from "../components/ExtensionSummary";
 import { FiltersBar } from "../components/FiltersBar";
 import { FindingsTable } from "../components/FindingsTable";
+import { isTauri } from "../desktop";
 import { useApp, useLibrarySummary } from "../state/app";
+import { openOffloadForScan } from "../state/offload";
 import {
   cancelScan,
   closeScan,
@@ -140,6 +142,11 @@ export function ScanWindow({ view, controls }: WindowArgs) {
                 {s.busy === "saving" ? "SAVING…" : "SAVE"}
               </button>
             )}
+            {isTauri && s.scanId ? (
+              <button type="button" className="chip" onClick={() => void openOffloadForScan(s.scanId!, s.info!.rootPath)} title="List this scan's big, long-untouched folders to move to an external drive">
+                OFFLOAD
+              </button>
+            ) : null}
             <button type="button" className="chip" onClick={() => void resetScan()} title="Clear these results">
               NEW
             </button>

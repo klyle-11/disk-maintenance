@@ -188,7 +188,8 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// Folders with the same name and sizes within 10% of each other.
+    /// Folders with the same name and sizes within 10% of each other, none
+    /// of them inside another.
     fn duplicate_folder_candidates(&mut self) {
         let mut by_name: BTreeMap<String, Vec<(&str, u64)>> = BTreeMap::new();
         for (path, s) in &self.folders {
@@ -210,6 +211,11 @@ impl<'a> Analyzer<'a> {
                     let reference = g[0].1;
                     reference > 0
                         && (size as f64 - reference as f64).abs() / reference as f64 <= 0.10
+                        // A folder and one inside it are the same files
+                        // counted twice, not two copies.
+                        && !g.iter().any(|(other, _)| {
+                            Path::new(path).starts_with(other) || Path::new(other).starts_with(path)
+                        })
                 });
                 match slot {
                     Some(g) => g.push((path, size)),
@@ -358,6 +364,45 @@ mod tests {
             .map(|f| f.paths[0].as_str())
             .collect();
         assert_eq!(paths, vec!["/r/app/node_modules", "/r/tmp"]);
+    }
+
+    #[test]
+    fn a_folder_and_the_same_named_one_inside_it_are_not_duplicates() {
+        let now = now_secs();
+        let mb = 1024 * 1024;
+        // An album folder holding one folder of the same name: the same
+        // files, counted at two levels.
+        let nested = data(
+            &[
+                ("/r/Music/Vespertine", folder(138 * mb, now)),
+                ("/r/Music/Vespertine/Vespertine", folder(137 * mb, now)),
+            ],
+            &[],
+        );
+        assert!(!categories(&Analyzer::new(&nested).analyze())
+            .contains_key("duplicate_folder_candidate"));
+
+        // A real second copy elsewhere is still found, listed once against
+        // the outer folder.
+        let with_copy = data(
+            &[
+                ("/r/Music/Vespertine", folder(138 * mb, now)),
+                ("/r/Music/Vespertine/Vespertine", folder(137 * mb, now)),
+                ("/r/Backup/vespertine", folder(137 * mb, now)),
+            ],
+            &[],
+        );
+        let findings = Analyzer::new(&with_copy).analyze();
+        let dupes: Vec<_> = findings
+            .iter()
+            .filter(|f| f.category == "duplicate_folder_candidate")
+            .collect();
+        assert_eq!(dupes.len(), 1);
+        assert_eq!(
+            dupes[0].paths,
+            ["/r/Music/Vespertine", "/r/Backup/vespertine"]
+        );
+        assert_eq!(dupes[0].total_bytes, 137 * mb);
     }
 
     #[test]

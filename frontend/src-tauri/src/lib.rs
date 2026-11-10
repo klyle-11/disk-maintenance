@@ -7,9 +7,16 @@
 
 mod overlay;
 
+use disk_core::catalog::{FileRow, Hit};
 use disk_core::di::{DiCheck, DiEvent, DiRunner};
 use disk_core::disks::DiskInfo;
+use disk_core::drives::Volume;
 use disk_core::model::*;
+use disk_core::offload::{
+    Candidate, CheckReport, ImportReport, ProgressEvent as OffloadProgress, ReleaseReport,
+    Report as OffloadReport, RestoreReport,
+};
+use disk_core::offload_service::{CatalogView, Plan};
 use disk_core::snapshots::{default_db_path, SnapshotStore};
 use disk_core::tips::TipsPayload;
 use disk_core::Service;
@@ -231,6 +238,141 @@ async fn du_hast_much_stream(
 }
 
 // ---------------------------------------------------------------------------
+// Offload: verified moves to an external drive, and the catalog of them
+// ---------------------------------------------------------------------------
+
+/// Check a source and a destination, and count what there is to move.
+#[tauri::command]
+async fn offload_plan(svc: Svc<'_>, source: String, dest: String) -> CmdResult<Plan> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.offload_plan(&source, &dest)).await
+}
+
+/// Copy a folder to a drive, read every copy back, and only then (if asked)
+/// remove the originals. `remove` is "keep", "trash" or "delete".
+#[tauri::command]
+async fn offload_run(
+    svc: Svc<'_>,
+    source: String,
+    dest: String,
+    remove: String,
+    request_id: String,
+    on_progress: Channel<OffloadProgress>,
+) -> CmdResult<OffloadReport> {
+    let svc = svc.inner().clone();
+    blocking(move || {
+        svc.offload(&source, &dest, &remove, &request_id, |event| {
+            let _ = on_progress.send(event);
+        })
+    })
+    .await
+}
+
+/// Remove the originals of an earlier offload, after checking each copy again.
+#[tauri::command]
+async fn offload_release(
+    svc: Svc<'_>,
+    job_id: String,
+    remove: String,
+    request_id: String,
+    on_progress: Channel<OffloadProgress>,
+) -> CmdResult<ReleaseReport> {
+    let svc = svc.inner().clone();
+    blocking(move || {
+        svc.offload_release(&job_id, &remove, &request_id, |event| {
+            let _ = on_progress.send(event);
+        })
+    })
+    .await
+}
+
+/// Read every copy on the drive again and compare it with the catalog.
+#[tauri::command]
+async fn offload_check(
+    svc: Svc<'_>,
+    job_id: String,
+    request_id: String,
+    on_progress: Channel<OffloadProgress>,
+) -> CmdResult<CheckReport> {
+    let svc = svc.inner().clone();
+    blocking(move || {
+        svc.offload_check(&job_id, &request_id, |event| {
+            let _ = on_progress.send(event);
+        })
+    })
+    .await
+}
+
+/// Copy an offload (or one path in it) back, to where it was or to `to`.
+#[tauri::command]
+async fn offload_restore(
+    svc: Svc<'_>,
+    job_id: String,
+    only: Option<String>,
+    to: Option<String>,
+    request_id: String,
+    on_progress: Channel<OffloadProgress>,
+) -> CmdResult<RestoreReport> {
+    let svc = svc.inner().clone();
+    blocking(move || {
+        svc.offload_restore(
+            &job_id,
+            only.as_deref(),
+            to.as_deref(),
+            &request_id,
+            |event| {
+                let _ = on_progress.send(event);
+            },
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn offload_catalog(svc: Svc<'_>) -> CmdResult<CatalogView> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.offload_catalog()).await
+}
+
+#[tauri::command]
+async fn offload_search(svc: Svc<'_>, query: String) -> CmdResult<Vec<Hit>> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.offload_search(&query)).await
+}
+
+#[tauri::command]
+async fn offload_problems(svc: Svc<'_>, job_id: String) -> CmdResult<Vec<FileRow>> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.offload_problems(&job_id)).await
+}
+
+#[tauri::command]
+async fn offload_candidates(svc: Svc<'_>, scan_id: String) -> CmdResult<Vec<Candidate>> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.offload_candidates(&scan_id)).await
+}
+
+/// Read a drive's own list of what it holds into the catalog.
+#[tauri::command]
+async fn offload_import(svc: Svc<'_>, path: String) -> CmdResult<ImportReport> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.offload_import(&path)).await
+}
+
+/// Forget an offload's record. Nothing on any disk is touched.
+#[tauri::command]
+async fn offload_forget(svc: Svc<'_>, job_id: String) -> CmdResult<()> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.offload_forget(&job_id)).await
+}
+
+#[tauri::command]
+async fn offload_volumes(svc: Svc<'_>) -> CmdResult<Vec<Volume>> {
+    let svc = svc.inner().clone();
+    blocking(move || Ok(svc.offload_volumes())).await
+}
+
+// ---------------------------------------------------------------------------
 // di: the command line, run from the di window
 // ---------------------------------------------------------------------------
 
@@ -347,7 +489,16 @@ pub fn run() {
                 eprintln!("Cannot open the snapshot database ({e}); snapshots will not be saved.");
                 SnapshotStore::in_memory()
             })?;
-            app.manage(Arc::new(Service::new(store)));
+            let service = Arc::new(Service::new(store));
+            // An offload cut short (a crash, a power cut) may have removed
+            // originals its records never caught up with. Put them right.
+            let recovering = service.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = recovering.offload_recover() {
+                    eprintln!("Could not check unfinished offloads: {e}");
+                }
+            });
+            app.manage(service);
             app.manage(Arc::new(DiRunner::new(diskcli_root(app.handle()))));
 
             let click_through = Arc::new(ClickThrough::default());
@@ -392,6 +543,18 @@ pub fn run() {
             update_comparison_snapshot,
             du_hast_much,
             du_hast_much_stream,
+            offload_plan,
+            offload_run,
+            offload_release,
+            offload_check,
+            offload_restore,
+            offload_catalog,
+            offload_search,
+            offload_problems,
+            offload_candidates,
+            offload_import,
+            offload_forget,
+            offload_volumes,
             di_commands,
             di_check,
             di_run,
