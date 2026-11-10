@@ -11,6 +11,8 @@ import { FiltersBar } from "../components/FiltersBar";
 import { FindingsTable } from "../components/FindingsTable";
 import { isTauri } from "../desktop";
 import { useApp, useLibrarySummary } from "../state/app";
+import { compareWith } from "../state/compare";
+import { showInDhm } from "../state/dhm";
 import { openOffloadForScan } from "../state/offload";
 import {
   cancelScan,
@@ -27,6 +29,7 @@ import {
 import { Window } from "../wm/Window";
 import { baseName, formatDate } from "./common";
 import type { WindowArgs } from "./HubWindows";
+import { FolderChoice } from "./FolderChoice";
 import { Library } from "./Library";
 import { pickDirectory } from "./pickDirectory";
 import { Section } from "./Section";
@@ -121,35 +124,46 @@ export function ScanWindow({ view, controls }: WindowArgs) {
             <span className="lcd-dim">
               {s.info.totalFiles.toLocaleString()} files · {s.info.totalFolders.toLocaleString()} folders
             </span>
-            <span className="spacer" />
-            {s.busy === "refreshing" ? (
-              <span className="lcd-accent blink">REFRESHING</span>
-            ) : s.problem ? (
-              <span className="lcd-bad lcd-ellipsis" title={s.problem}>
-                ⚠ {s.problem}
-              </span>
-            ) : s.savedAt ? (
-              <span className="lcd-dim" title={`saved ${formatDate(s.savedAt)}`}>
-                saved
-              </span>
-            ) : null}
-            {s.snapshotId ? (
-              <button type="button" className="chip" onClick={() => void refreshScan(SCAN)} disabled={!!s.busy || !ready}>
-                UPDATE
+            <span className="scan-actions">
+              {s.busy === "refreshing" ? (
+                <span className="lcd-accent blink">REFRESHING</span>
+              ) : s.problem ? (
+                <span className="lcd-bad lcd-ellipsis" title={s.problem}>
+                  ⚠ {s.problem}
+                </span>
+              ) : s.savedAt ? (
+                <span className="lcd-dim" title={`saved ${formatDate(s.savedAt)}`}>
+                  saved
+                </span>
+              ) : null}
+              {s.snapshotId ? (
+                <button type="button" className="chip" onClick={() => void refreshScan(SCAN)} disabled={!!s.busy || !ready}>
+                  UPDATE
+                </button>
+              ) : (
+                <button type="button" className="chip is-cmd" onClick={() => void saveScan(SCAN)} disabled={!!s.busy || !s.scanId}>
+                  {s.busy === "saving" ? "SAVING…" : "SAVE"}
+                </button>
+              )}
+              <FolderChoice
+                label="COMPARE ⇄"
+                className="is-chip"
+                exclude={[s.info.rootPath]}
+                title={`Compare ${s.info.rootPath} with another folder`}
+                onPick={(target) => void compareWith(s.info!.rootPath, target)}
+              />
+              <button type="button" className="chip" onClick={() => showInDhm(s.info!.rootPath)} title="See this folder's biggest subfolders in DU-HAST-MUCH">
+                DHM
               </button>
-            ) : (
-              <button type="button" className="chip is-cmd" onClick={() => void saveScan(SCAN)} disabled={!!s.busy || !s.scanId}>
-                {s.busy === "saving" ? "SAVING…" : "SAVE"}
+              {isTauri && s.scanId ? (
+                <button type="button" className="chip" onClick={() => void openOffloadForScan(s.scanId!, s.info!.rootPath)} title="List this scan's big, long-untouched folders to move to an external drive">
+                  OFFLOAD
+                </button>
+              ) : null}
+              <button type="button" className="chip" onClick={() => void resetScan()} title="Clear these results">
+                NEW
               </button>
-            )}
-            {isTauri && s.scanId ? (
-              <button type="button" className="chip" onClick={() => void openOffloadForScan(s.scanId!, s.info!.rootPath)} title="List this scan's big, long-untouched folders to move to an external drive">
-                OFFLOAD
-              </button>
-            ) : null}
-            <button type="button" className="chip" onClick={() => void resetScan()} title="Clear these results">
-              NEW
-            </button>
+            </span>
           </div>
         ) : (
           <div className="lcd lcd-banner">
