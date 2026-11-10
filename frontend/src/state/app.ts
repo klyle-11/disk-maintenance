@@ -12,10 +12,9 @@ import {
   type DiskSpace,
   type SpaceTips,
 } from "../api";
-import type { BackendStatus } from "../electron.d";
+import type { BackendStatus } from "../backendStatus";
 import { readPanels, readSkin, savePanels, saveSkin, type Panel, type Skin } from "../skins";
 import { createStore, useStore } from "../store";
-import { desktop } from "../desktop";
 
 export interface AppState {
   /** True once /api/health answers; null while we don't know yet. */
@@ -72,7 +71,7 @@ export function isReady(): boolean {
   return appStore.get().connected === true;
 }
 
-/** The backend failed to start (or, outside Electron, stopped answering). */
+/** The backend stopped answering (browser tab only). */
 export function backendFailed(state: AppState): boolean {
   if (state.outdated !== null) return true;
   if (state.connected === true) return false;
@@ -150,9 +149,7 @@ export async function loadDisks(): Promise<void> {
   }
 }
 
-/** Restart the backend after a failure (Electron only). */
+/** Check the backend again after a failure. */
 export async function retryBackend(): Promise<void> {
   patchApp({ connected: null });
-  const status = await desktop?.retryBackend?.();
-  if (status) patchApp({ backend: status });
 }

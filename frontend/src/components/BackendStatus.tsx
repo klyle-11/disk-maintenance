@@ -8,8 +8,7 @@
  */
 
 import { useState } from "react";
-import type { BackendStatus as Status } from "../electron.d";
-import { desktop } from "../desktop";
+import type { BackendStatus as Status } from "../backendStatus";
 import "./BackendStatus.css";
 
 interface Props {
@@ -26,8 +25,8 @@ export function BackendStatus({ status, connected, onRetry }: Props) {
   // Nothing to say once the backend is answering.
   if (connected === true) return null;
 
-  // Outside Electron (a browser tab against a dev server) there is no
-  // supervisor to report on; fall back to the connection state alone.
+  // There is no supervisor to report on (a browser tab against a dev
+  // server); fall back to the connection state alone.
   const state = status?.state ?? (connected === false ? "error" : "starting");
   const isError = state === "error";
 
@@ -71,15 +70,6 @@ export function BackendStatus({ status, connected, onRetry }: Props) {
                 {showLog ? "Hide log" : "Show log"}
               </button>
             ) : null}
-            {desktop?.openBackendLog && (
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => desktop?.openBackendLog?.()}
-              >
-                Open log file
-              </button>
-            )}
           </div>
         )}
       </div>

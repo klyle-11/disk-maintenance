@@ -82,7 +82,7 @@ DEFAULT_PORT = 8001
 
 # The API this backend speaks, reported by /api/health. Bump it when the app
 # starts relying on new endpoints, along with API_VERSION in
-# frontend/electron/backend.cjs and frontend/src/api.ts: the app refuses an
+# frontend/src/api.ts: the app refuses an
 # older backend (an old install left running, or a stale build that got
 # packaged) instead of half-working against it.
 #   1: scans, snapshots, compare, du-hast-much, tips

@@ -4,7 +4,6 @@
   "version": "1.0.0",
   "description": "Disk Intelligence - Analyze and manage disk space",
   "type": "module",
-  "main": "electron/main.cjs",
   "author": "Disk Intelligence",
   "scripts": {
     "dev": "tauri dev",
@@ -13,28 +12,18 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "dist": "tauri build",
-    "icons": "tauri icon src-tauri/icons/icon.svg && rm -rf src-tauri/icons/android src-tauri/icons/ios",
-    "dev:electron": "concurrently \"npm:dev:vite\" \"npm:electron\"",
-    "electron": "cross-env NODE_ENV=development electron .",
-    "dist:electron": "npm run build && electron-builder",
-    "dist:electron:win": "npm run build && electron-builder --win",
-    "dist:electron:mac": "npm run build && electron-builder --mac",
-    "dist:electron:linux": "npm run build && electron-builder --linux"
+    "icons": "tauri icon src-tauri/icons/icon.svg && rm -rf src-tauri/icons/android src-tauri/icons/ios"
   },
   "devDependencies": {
     "@tauri-apps/api": "^2.12.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "electron": "^39.2.7",
     "@eslint/js": "^9.39.1",
     "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
-    "concurrently": "^9.2.1",
-    "cross-env": "^10.1.0",
-    "electron-builder": "^26.4.0",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
@@ -42,86 +31,5 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
     "vite": "^7.2.4"
-  },
-  "build": {
-    "appId": "com.disk-intelligence.app",
-    "productName": "Disk Intelligence",
-    "directories": {
-      "output": "../release"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "../backend/dist/",
-        "to": "backend",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "signAndEditExecutable": false
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
-    },
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "category": "public.app-category.utilities",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "../backend/entitlements.plist",
-      "entitlementsInherit": "../backend/entitlements.plist"
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Utility",
-      "maintainer": "Disk Intelligence <disk-intelligence@localhost>",
-      "synopsis": "Find what is eating your disk"
-    },
-    "dmg": {
-      "contents": [
-        {
-          "x": 130,
-          "y": 220
-        },
-        {
-          "x": 410,
-          "y": 220,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ]
-    },
-    "afterPack": "build/after-pack.cjs",
-    "electronLanguages": [
-      "en-US"
-    ],
-    "asar": true
   }
 }

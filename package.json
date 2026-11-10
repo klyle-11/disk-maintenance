@@ -11,19 +11,9 @@
     "dist": "npm --prefix frontend run dist",
     "di": "./di",
     "di:win": "di.cmd",
-    "dev:electron": "concurrently \"npm run dev:backend\" \"npm --prefix frontend run dev:electron\"",
-    "dev:electron:win": "concurrently \"npm run dev:backend:win\" \"npm --prefix frontend run dev:electron\"",
     "dev:backend": "python3 backend/main.py",
     "dev:backend:win": "python backend/main.py",
-    "dist:electron": "npm --prefix frontend run dist:electron",
-    "dist:electron:win": "npm --prefix frontend run dist:electron:win",
-    "dist:electron:mac": "npm --prefix frontend run dist:electron:mac",
-    "dist:electron:linux": "npm --prefix frontend run dist:electron:linux",
-    "verify": "./scripts/verify-package.sh",
     "package:mac": "./scripts/package.sh",
     "package:linux": "./scripts/package-linux.sh"
-  },
-  "dependencies": {
-    "concurrently": "^9.2.1"
   }
 }
