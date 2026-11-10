@@ -1,4 +1,5 @@
-# Tests the app and builds its installers on Windows, macOS and Linux.
+# Tests the app, builds its installers on Windows, macOS and Linux, and checks
+# that the built app launches and stays up.
 # Each run keeps the installers as artifacts (Actions → the run → Artifacts),
 # so they never have to be built on a machine short of disk space.
 name: Build
@@ -79,6 +80,62 @@ jobs:
         run: |
           npm install
           npm run dist
+      # Launch check: start the built app, wait, fail if it has exited, and keep
+      # a screenshot and its output (Artifacts → launch-<platform>).
+      - name: Launch check (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p launch
+          "frontend/src-tauri/target/release/bundle/macos/Disk Intelligence.app/Contents/MacOS/disk-intelligence" > launch/app.log 2>&1 &
+          PID=$!
+          sleep 25
+          screencapture -x launch/macos.png || true
+          if ! kill -0 "$PID" 2>/dev/null; then
+            echo "::error::The app exited during the launch check"; cat launch/app.log; exit 1
+          fi
+          kill "$PID"; cat launch/app.log; echo "The app stayed up for 25 s"
+      - name: Launch check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force launch | Out-Null
+          $p = Start-Process -FilePath "frontend\src-tauri\target\release\disk-intelligence.exe" -PassThru `
+            -RedirectStandardOutput launch\app.out.log -RedirectStandardError launch\app.err.log
+          Start-Sleep -Seconds 25
+          try {
+            Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("launch\windows.png")
+          } catch { Write-Host "Screenshot failed: $_" }
+          if ($p.HasExited) {
+            Write-Host "::error::The app exited during the launch check (code $($p.ExitCode))"
+            Get-Content launch\app.*.log; exit 1
+          }
+          Stop-Process -Id $p.Id -Force
+          Get-Content launch\app.*.log; Write-Host "The app stayed up for 25 s"
+      - name: Launch check (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y xvfb imagemagick
+          mkdir -p launch
+          Xvfb :99 -screen 0 1600x1000x24 & sleep 2
+          export DISPLAY=:99
+          frontend/src-tauri/target/release/disk-intelligence > launch/app.log 2>&1 &
+          PID=$!
+          sleep 25
+          import -window root launch/linux.png || true
+          if ! kill -0 "$PID" 2>/dev/null; then
+            echo "::error::The app exited during the launch check"; cat launch/app.log; exit 1
+          fi
+          kill "$PID"; cat launch/app.log; echo "The app stayed up for 25 s"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: launch-${{ matrix.name }}
+          path: launch/
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: disk-intelligence-${{ matrix.name }}
