@@ -5,6 +5,7 @@
 //! the UI never stalls. Long scans stream progress through a `Channel` and
 //! stop when the UI calls `cancel` (`di_stop` for di) with the same request id.
 
+mod caches;
 mod overlay;
 
 use disk_core::catalog::{FileRow, Hit};
@@ -560,6 +561,8 @@ pub fn run() {
             di_run,
             di_input,
             di_stop,
+            caches::cache_targets,
+            caches::clear_caches,
             minimize_window,
             quit_app,
             follow_cursor_to_monitor,
