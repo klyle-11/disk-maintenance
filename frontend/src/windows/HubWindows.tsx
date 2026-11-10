@@ -3,7 +3,7 @@
  * that open each tool, and the skins. Dragging it moves every window. Plus the
  * backend window that appears when the HTTP backend (browser tab) can't answer.
  */
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { API_VERSION, formatBytes, getApiBaseUrl, type DiskSpace } from "../api";
 import { BackendStatus } from "../components/BackendStatus";
 import { desktop } from "../desktop";
@@ -134,6 +134,10 @@ export function HubWindow({ view, controls }: WindowArgs) {
   const open = useStore(wmStore, (s) => s.units.map((u) => u.kind).join(" "));
   const kinds = new Set(open.split(" "));
   const [skinsOpen, setSkinsOpen] = useState(false);
+  const [toTray, setToTray] = useState(false);
+  useEffect(() => {
+    void desktop?.closesToTray().then(setToTray);
+  }, []);
   const { outer, inner } = useFitHeight(view.unit.id, view.unit.shaded, view.unit.sizes[0].h);
 
   const state = connected === true ? "READY" : failed ? "OFFLINE" : "STARTING";
@@ -163,8 +167,8 @@ export function HubWindow({ view, controls }: WindowArgs) {
       className="kind-hub"
       anchor
       closable={!!desktop}
-      closeLabel="Quit"
-      onClose={() => desktop?.quit()}
+      closeLabel={toTray ? "Close (keeps running in the tray)" : "Quit"}
+      onClose={() => desktop?.close()}
       onMinimize={desktop ? () => desktop?.minimize() : undefined}
     >
       <div className="hub" ref={outer}>

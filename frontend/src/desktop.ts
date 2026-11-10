@@ -25,6 +25,10 @@ export interface DesktopAPI {
   revealPath: (targetPath: string) => Promise<boolean>;
   minimize: () => void;
   quit: () => void;
+  /** The main window's close button: hides to the tray where there is one, else quits. */
+  close: () => void;
+  /** Whether `close` hides to the tray (macOS, Windows) rather than quitting. */
+  closesToTray: () => Promise<boolean>;
 
   /**
    * The app floats on the desktop, so clicks must pass through it except over
@@ -65,6 +69,8 @@ function makeTauriDesktop(): DesktopAPI {
     revealPath: (path) => invoke<boolean>("reveal_path", { path }),
     minimize: () => void invoke("minimize_window").catch(ignoreError),
     quit: () => void invoke("quit_app").catch(ignoreError),
+    close: () => void invoke("close_main_window").catch(ignoreError),
+    closesToTray: () => invoke<boolean>("keeps_running_in_tray").catch(() => false),
     clickThrough: platform === "linux" ? "shape" : "hover",
     setIgnoreMouse: (ignore, rects) => void invoke("set_click_through", { ignore, rects }).catch(ignoreError),
     setHitRects: (rects) => void invoke("set_hit_rects", { rects }).catch(ignoreError),

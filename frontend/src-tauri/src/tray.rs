@@ -6,6 +6,7 @@
 //! Quick panel, Quit). Linux tray hosts send no clicks, so there the panel is
 //! opened from the menu.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,28 @@ const TOOLS: &[&str] = &["scan", "compare", "offload", "dhm", "di", "tips", "cac
 #[derive(Default)]
 pub struct PanelState {
     hidden_at: Mutex<Option<Instant>>,
+}
+
+/// Whether closing the main window hides it to the tray instead of quitting.
+/// On for macOS and Windows once the icon is up. Linux keeps quitting: many
+/// desktops there (GNOME) show no tray, which would leave the app unreachable.
+#[derive(Default)]
+pub struct InTray(pub AtomicBool);
+
+pub fn keeps_running<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.try_state::<InTray>()
+        .is_some_and(|t| t.0.load(Ordering::Relaxed))
+}
+
+/// Close the main window: hide it while the tray keeps the app going, or quit.
+pub fn close_main<R: Runtime>(app: &AppHandle<R>) {
+    if !keeps_running(app) {
+        app.exit(0);
+        return;
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.hide();
+    }
 }
 
 pub fn setup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -79,6 +102,9 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
+    if !cfg!(target_os = "linux") {
+        app.state::<InTray>().0.store(true, Ordering::Relaxed);
+    }
     Ok(())
 }
 
@@ -189,6 +215,18 @@ pub fn show_main<R: Runtime>(app: &AppHandle<R>, tool: Option<String>) {
 #[tauri::command]
 pub fn tray_open(app: AppHandle, tool: Option<String>) {
     show_main(&app, tool);
+}
+
+/// The main window's close button.
+#[tauri::command]
+pub fn close_main_window(app: AppHandle) {
+    close_main(&app);
+}
+
+/// Whether the main window's close button hides to the tray (else it quits).
+#[tauri::command]
+pub fn keeps_running_in_tray(app: AppHandle) -> bool {
+    keeps_running(&app)
 }
 
 #[tauri::command]
