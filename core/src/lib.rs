@@ -8,8 +8,10 @@
 //! - [`store`]: saved snapshots, in the database `di` shares
 //! - [`tips`]: keeping freed space free
 //! - [`di`]: running the `di` command line
+//! - [`caches`]: clearing system and user caches (macOS, Windows)
 
 pub mod analyze;
+pub mod caches;
 pub mod compare;
 pub mod dhm;
 pub mod di;

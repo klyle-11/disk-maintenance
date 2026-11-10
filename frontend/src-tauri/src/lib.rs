@@ -5,6 +5,7 @@
 //! pass through it wherever the UI has no window. The disk work is the
 //! diskcore crate, called directly: no server, no ports.
 
+mod caches;
 mod commands;
 
 use std::sync::{Arc, Mutex};
@@ -108,6 +109,8 @@ pub fn run() {
             commands::di_commands,
             commands::di_register,
             commands::di_stream,
+            caches::cache_targets,
+            caches::clear_caches,
             commands::select_directory,
             commands::ask_dialog,
             commands::message_dialog,
