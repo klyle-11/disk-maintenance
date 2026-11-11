@@ -136,7 +136,11 @@ export function HubWindow({ view, controls }: WindowArgs) {
   const [skinsOpen, setSkinsOpen] = useState(false);
   const [toTray, setToTray] = useState(false);
   useEffect(() => {
-    void desktop?.closesToTray().then(setToTray);
+    // Linux: whether there is a tray can change (a panel restarted), so ask again on focus.
+    const check = () => void desktop?.closesToTray().then(setToTray);
+    check();
+    window.addEventListener("focus", check);
+    return () => window.removeEventListener("focus", check);
   }, []);
   const { outer, inner } = useFitHeight(view.unit.id, view.unit.shaded, view.unit.sizes[0].h);
 

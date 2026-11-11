@@ -52,6 +52,10 @@ jobs:
           - name: linux
             # The oldest supported Ubuntu, so the .deb and AppImage run on more systems.
             os: ubuntu-22.04
+          - name: linux-arm64
+            # Raspberry Pi OS 64-bit (Pi 3, 4, 5, Zero 2 W) and other arm64 Linux.
+            # Ubuntu 22.04's glibc is older than Pi OS Bookworm's, so it runs there.
+            os: ubuntu-22.04-arm
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -130,6 +134,14 @@ jobs:
             echo "::error::The app exited during the launch check"; cat launch/app.log; exit 1
           fi
           kill "$PID"; cat launch/app.log; echo "The app stayed up for 25 s"
+      # The close button and tray as on macOS/Windows: with no tray, closing
+      # quits; with a StatusNotifierItem tray (as on Raspberry Pi OS), the app
+      # stays in the tray and its menu works (Artifacts → launch-<platform>).
+      - name: Tray check (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y openbox wmctrl xdotool dbus-x11 python3-dbus python3-gi
+          scripts/ci/linux-tray-check.sh frontend/src-tauri/target/release/disk-intelligence launch/tray
       - uses: actions/upload-artifact@v4
         if: always()
         with:

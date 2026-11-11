@@ -513,6 +513,13 @@ fn set_input_region(window: WebviewWindow, rects: Vec<Rect>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Raspberry Pi: WebKitGTK's DMA-BUF renderer often can't get buffers from
+    // the Pi's GPU driver and leaves the window blank. Use its fallback unless
+    // the user set the variable (WEBKIT_DISABLE_DMABUF_RENDERER=0 turns it back on).
+    #[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "arm")))]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
     tauri::Builder::default()
         // A second launch focuses the running window instead of fighting
         // over the snapshot database.
@@ -561,11 +568,13 @@ pub fn run() {
                 return;
             }
             // Closing the main window (Alt+F4, the taskbar) hides it to the
-            // tray, where the app keeps running; Quit is in the tray.
+            // tray, where the app keeps running; Quit is in the tray. With no
+            // tray it quits: the hidden panel window would otherwise keep the
+            // app running with nothing on screen.
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" && tray::keeps_running(window.app_handle()) {
+                if window.label() == "main" {
                     api.prevent_close();
-                    let _ = window.hide();
+                    tray::close_main(window.app_handle());
                 }
                 return;
             }
