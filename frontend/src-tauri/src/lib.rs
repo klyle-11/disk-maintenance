@@ -9,7 +9,8 @@ mod caches;
 mod overlay;
 mod tray;
 
-use disk_core::catalog::{FileRow, Hit};
+use disk_core::catalog::{DriveHit, FileRow, Hit};
+use disk_core::drive_catalog::CatalogReport;
 use disk_core::di::{DiCheck, DiEvent, DiRunner};
 use disk_core::disks::DiskInfo;
 use disk_core::drives::Volume;
@@ -18,7 +19,7 @@ use disk_core::offload::{
     Candidate, CheckReport, ImportReport, ProgressEvent as OffloadProgress, ReleaseReport,
     Report as OffloadReport, RestoreReport,
 };
-use disk_core::offload_service::{CatalogView, Plan};
+use disk_core::offload_service::{CatalogView, DriveListing, Plan};
 use disk_core::snapshots::{default_db_path, SnapshotStore};
 use disk_core::tips::TipsPayload;
 use disk_core::Service;
@@ -374,6 +375,43 @@ async fn offload_volumes(svc: Svc<'_>) -> CmdResult<Vec<Volume>> {
     blocking(move || Ok(svc.offload_volumes())).await
 }
 
+/// Catalog everything on a drive (or a folder on one), offloaded or not.
+#[tauri::command]
+async fn drive_catalog(
+    svc: Svc<'_>,
+    path: String,
+    request_id: String,
+    on_progress: Channel<OffloadProgress>,
+) -> CmdResult<CatalogReport> {
+    let svc = svc.inner().clone();
+    blocking(move || {
+        svc.drive_catalog(&path, &request_id, |event| {
+            let _ = on_progress.send(event);
+        })
+    })
+    .await
+}
+
+/// One folder of a drive's catalog, with paths to scan when it is plugged in.
+#[tauri::command]
+async fn drive_list(svc: Svc<'_>, store_id: String, rel_path: String) -> CmdResult<DriveListing> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.drive_list(&store_id, &rel_path)).await
+}
+
+#[tauri::command]
+async fn drive_search(svc: Svc<'_>, query: String) -> CmdResult<Vec<DriveHit>> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.drive_search(&query)).await
+}
+
+/// Forget a drive's catalog. Nothing on the drive is touched.
+#[tauri::command]
+async fn drive_forget(svc: Svc<'_>, store_id: String) -> CmdResult<()> {
+    let svc = svc.inner().clone();
+    blocking(move || svc.drive_forget(&store_id)).await
+}
+
 // ---------------------------------------------------------------------------
 // di: the command line, run from the di window
 // ---------------------------------------------------------------------------
@@ -573,6 +611,10 @@ pub fn run() {
             offload_import,
             offload_forget,
             offload_volumes,
+            drive_catalog,
+            drive_list,
+            drive_search,
+            drive_forget,
             di_commands,
             di_check,
             di_run,

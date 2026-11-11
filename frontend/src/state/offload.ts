@@ -1,11 +1,16 @@
 /**
  * Offloading, in one window: move folders to an external drive (MOVE), see
- * what is on which drive and get it back (DRIVES), and find a file whether
- * or not its drive is plugged in (FIND). One run of any kind at a time: the
- * backend refuses a second.
+ * what is on which drive and get it back (DRIVES), list everything on a drive
+ * whether or not anything was offloaded to it, browse that list and scan
+ * from it (CATALOG), and find a file whether or not its drive is plugged in
+ * (FIND). One run of any kind at a time: the backend refuses a second.
  */
 import {
+  catalogDrive,
   checkOffload,
+  forgetDriveCatalog,
+  listDrive,
+  searchDrives,
   forgetOffload,
   getOffloadCandidates,
   getOffloadCatalog,
@@ -18,6 +23,8 @@ import {
   runOffload,
   searchOffloaded,
   type CheckReport,
+  type DriveHit,
+  type DriveListing,
   type OffloadCandidate,
   type OffloadCatalog,
   type OffloadFileRow,
@@ -37,6 +44,7 @@ import { createStore, useStore } from "../store";
 import { errorMessage } from "../windows/common";
 import { openWindow } from "../wm/state";
 import { loadTips } from "./app";
+import { scanFolder } from "./scan";
 
 export type OffloadPhase = "setup" | "planning" | "running" | "done" | "error";
 
@@ -51,7 +59,16 @@ export interface ActionResult {
   problemsTotal: number;
 }
 
-export type OffloadSection = "move" | "drives" | "find";
+export type OffloadSection = "move" | "drives" | "catalog" | "find";
+
+/** The folder of a drive catalog being looked at. */
+export interface Browse {
+  storeId: string;
+  rel: string;
+  listing: DriveListing | null;
+  loading: boolean;
+  error: string | null;
+}
 
 export interface OffloadState {
   section: OffloadSection;
@@ -85,6 +102,13 @@ export interface OffloadState {
   action: { jobId: string; kind: "check" | "restore" | "release"; progress: OffloadProgress | null } | null;
   result: ActionResult | null;
   jobProblems: { jobId: string; rows: OffloadFileRow[] } | null;
+
+  // -- CATALOG --
+  /** A drive being cataloged, and how far it has got. */
+  cataloging: { path: string; progress: OffloadProgress | null } | null;
+  catalogNote: { good: boolean; text: string } | null;
+  browse: Browse | null;
+  driveHits: DriveHit[] | null;
 }
 
 const store = createStore<OffloadState>({
@@ -111,6 +135,10 @@ const store = createStore<OffloadState>({
   action: null,
   result: null,
   jobProblems: null,
+  cataloging: null,
+  catalogNote: null,
+  browse: null,
+  driveHits: null,
 });
 
 let abort: AbortController | null = null;
@@ -134,7 +162,7 @@ export function patchOffload(patch: Partial<OffloadState>): void {
 
 /** A run of some kind is under way. */
 export function offloadBusy(s: OffloadState): boolean {
-  return s.phase === "running" || s.phase === "planning" || s.action !== null;
+  return s.phase === "running" || s.phase === "planning" || s.action !== null || s.cataloging !== null;
 }
 
 export function setDest(dest: string): void {
@@ -276,7 +304,7 @@ export function setQuery(query: string): void {
   patchOffload({ query });
   if (searchTimer) clearTimeout(searchTimer);
   if (!query.trim()) {
-    patchOffload({ hits: null });
+    patchOffload({ hits: null, driveHits: null });
     return;
   }
   searchTimer = setTimeout(() => {
@@ -285,6 +313,11 @@ export function setQuery(query: string): void {
         if (store.get().query === query) patchOffload({ hits });
       })
       .catch((err) => patchOffload({ hits: [], catalogError: errorMessage(err) }));
+    searchDrives(query)
+      .then((driveHits) => {
+        if (store.get().query === query) patchOffload({ driveHits });
+      })
+      .catch(() => patchOffload({ driveHits: [] }));
   }, 200);
 }
 
@@ -439,6 +472,91 @@ export async function importStore(path: string): Promise<void> {
         (r.rows_rejected ? `, ${r.rows_rejected} invalid entries ignored` : "") +
         ".",
     );
+  } catch (err) {
+    void notify(errorMessage(err));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CATALOG: everything on a drive, offloaded or not, browsable and scannable
+// ---------------------------------------------------------------------------
+
+/** Catalog the drive (or folder on a drive) at `path`, then show it. */
+export async function runCatalog(path: string): Promise<void> {
+  if (offloadBusy(store.get())) return;
+  abort = new AbortController();
+  patchOffload({ section: "catalog", cataloging: { path, progress: null }, catalogNote: null });
+  try {
+    const r = await catalogDrive(
+      path,
+      (progress) => {
+        const cataloging = store.get().cataloging;
+        if (cataloging) patchOffload({ cataloging: { ...cataloging, progress } });
+      },
+      abort.signal,
+    );
+    if (r.outcome === "cancelled") {
+      patchOffload({ cataloging: null, catalogNote: { good: false, text: `Cataloging "${r.store_label}" was cancelled. Its previous catalog, if it had one, is unchanged.` } });
+    } else {
+      patchOffload({
+        cataloging: null,
+        catalogNote: {
+          good: !r.unreadable,
+          text:
+            `"${r.store_label}": ${r.files.toLocaleString()} files in ${r.dirs.toLocaleString()} folders, ${formatBytes(r.bytes)}` +
+            (r.unreadable ? `. ${r.unreadable.toLocaleString()} folders couldn't be read and are listed empty.` : "."),
+        },
+      });
+      void browseDrive(r.store_id, "");
+    }
+  } catch (err) {
+    patchOffload({ cataloging: null, catalogNote: { good: false, text: errorMessage(err) } });
+  }
+  abort = null;
+  void loadCatalog();
+}
+
+export function cancelCatalog(): void {
+  abort?.abort();
+}
+
+/** Show one folder of a drive's catalog ("" is the top). */
+export async function browseDrive(storeId: string, rel: string): Promise<void> {
+  const keep = store.get().browse;
+  const listing = keep?.storeId === storeId ? keep.listing : null;
+  patchOffload({ section: "catalog", browse: { storeId, rel, listing, loading: true, error: null } });
+  try {
+    const next = await listDrive(storeId, rel);
+    const now = store.get().browse;
+    if (now?.storeId === storeId && now.rel === rel) patchOffload({ browse: { ...now, listing: next, loading: false } });
+  } catch (err) {
+    const now = store.get().browse;
+    if (now?.storeId === storeId && now.rel === rel) patchOffload({ browse: { ...now, loading: false, error: errorMessage(err) } });
+  }
+}
+
+export function closeBrowse(): void {
+  patchOffload({ browse: null });
+}
+
+/** Open the CATALOG section on a drive: its catalog if it has one. */
+export function openDriveCatalog(storeId: string): void {
+  openOffload();
+  void browseDrive(storeId, "");
+}
+
+/** Scan a folder of a cataloged drive in the scan window. */
+export function scanCatalogPath(path: string): void {
+  void scanFolder(path);
+}
+
+export async function forgetCatalog(storeId: string, label: string): Promise<void> {
+  const go = await ask(`Forget the catalog of "${label}"?\n\nNothing on the drive is touched; it can be cataloged again whenever it is plugged in.`);
+  if (!go) return;
+  try {
+    await forgetDriveCatalog(storeId);
+    if (store.get().browse?.storeId === storeId) patchOffload({ browse: null });
+    await loadCatalog();
   } catch (err) {
     void notify(errorMessage(err));
   }

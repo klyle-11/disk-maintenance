@@ -51,6 +51,30 @@ CREATE TABLE IF NOT EXISTS offload_files (
     drive_state TEXT,
     PRIMARY KEY (job_id, rel_path)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS drive_catalogs (
+    store_id TEXT NOT NULL PRIMARY KEY,
+    gen TEXT NOT NULL,
+    root_path TEXT NOT NULL,
+    cataloged_at TEXT NOT NULL,
+    files INTEGER NOT NULL,
+    dirs INTEGER NOT NULL,
+    bytes INTEGER NOT NULL,
+    unreadable INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS drive_entries (
+    store_id TEXT NOT NULL,
+    gen TEXT NOT NULL,
+    rel_path TEXT NOT NULL,
+    parent TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    files INTEGER NOT NULL,
+    mtime_ns INTEGER,
+    unreadable INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (store_id, gen, rel_path)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS drive_entries_parent ON drive_entries (store_id, gen, parent);
 ";
 
 /// A folder on an external drive that holds offloaded files. It is known by
@@ -137,6 +161,74 @@ pub struct Hit {
     pub mtime_ns: Option<i64>,
     pub source_removed: bool,
     pub drive_state: Option<String>,
+}
+
+/// What a drive held when it was last cataloged: every file and folder
+/// under its store folder, whether or not anything was offloaded to it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DriveCatalog {
+    pub store_id: String,
+    /// The folder that was read, as it was mounted then.
+    pub root_path: String,
+    pub cataloged_at: String,
+    pub files: i64,
+    pub dirs: i64,
+    pub bytes: i64,
+    /// Folders that could not be read (their contents are not listed).
+    pub unreadable: i64,
+}
+
+/// One file, folder or link in a drive catalog. A folder's `size` and
+/// `files` count everything under it.
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
+pub struct DriveEntry {
+    /// "/"-separated, relative to the store folder; "" is the folder itself.
+    pub rel_path: String,
+    pub name: String,
+    /// "file", "dir" or "symlink"
+    pub kind: String,
+    pub size: i64,
+    pub files: i64,
+    pub mtime_ns: Option<i64>,
+    pub unreadable: bool,
+}
+
+/// A drive catalog search result.
+#[derive(Debug, Clone, Serialize)]
+pub struct DriveHit {
+    pub store_id: String,
+    pub store_label: String,
+    #[serde(flatten)]
+    pub entry: DriveEntry,
+}
+
+fn drive_catalog(row: &Row) -> rusqlite::Result<DriveCatalog> {
+    Ok(DriveCatalog {
+        store_id: row.get("store_id")?,
+        root_path: row.get("root_path")?,
+        cataloged_at: row.get("cataloged_at")?,
+        files: row.get("files")?,
+        dirs: row.get("dirs")?,
+        bytes: row.get("bytes")?,
+        unreadable: row.get("unreadable")?,
+    })
+}
+
+fn drive_entry(row: &Row) -> rusqlite::Result<DriveEntry> {
+    Ok(DriveEntry {
+        rel_path: row.get("rel_path")?,
+        name: row.get("name")?,
+        kind: row.get("kind")?,
+        size: row.get("size")?,
+        files: row.get("files")?,
+        mtime_ns: row.get("mtime_ns")?,
+        unreadable: row.get::<_, i64>("unreadable")? != 0,
+    })
+}
+
+/// The folder holding `rel`: "" for a top-level entry and for "" itself.
+pub fn rel_parent(rel: &str) -> &str {
+    rel.rfind('/').map(|i| &rel[..i]).unwrap_or("")
 }
 
 pub struct Catalog {
@@ -604,6 +696,186 @@ impl Catalog {
             .query_map(params![job_id, limit as i64], file_row)?
             .collect();
         rows
+    }
+
+    // -- drive catalogs ----------------------------------------------------
+    //
+    // A new catalog of a drive is written beside the old one under a fresh
+    // `gen`, and replaces it only once it is complete: a cancelled or crashed
+    // run leaves the previous catalog as it was.
+
+    /// Start a new catalog of a store: clear what an unfinished earlier run
+    /// left, and return the generation to write under.
+    pub fn begin_drive_catalog(&mut self, store_id: &str) -> Sql<String> {
+        self.commit()?;
+        self.conn.execute(
+            "DELETE FROM drive_entries WHERE store_id = ?1
+             AND gen IS NOT (SELECT gen FROM drive_catalogs WHERE store_id = ?1)",
+            params![store_id],
+        )?;
+        Ok(uuid::Uuid::new_v4().simple().to_string())
+    }
+
+    pub fn add_drive_entry(&mut self, store_id: &str, gen: &str, entry: &DriveEntry) -> Sql<()> {
+        self.begin()?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO drive_entries (store_id, gen, rel_path, parent, name, kind, size, files, mtime_ns, unreadable)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                store_id,
+                gen,
+                entry.rel_path,
+                rel_parent(&entry.rel_path),
+                entry.name,
+                entry.kind,
+                entry.size,
+                entry.files,
+                entry.mtime_ns,
+                entry.unreadable as i64
+            ],
+        )?;
+        self.batched_write()
+    }
+
+    /// Make the catalog written under `summary`'s generation the store's
+    /// catalog, and drop the one it replaces.
+    pub fn finish_drive_catalog(&mut self, gen: &str, summary: &DriveCatalog) -> Sql<()> {
+        self.commit()?;
+        self.begin()?;
+        let result = (|| {
+            self.conn.execute(
+                "INSERT INTO drive_catalogs (store_id, gen, root_path, cataloged_at, files, dirs, bytes, unreadable)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(store_id) DO UPDATE SET gen = excluded.gen, root_path = excluded.root_path,
+                    cataloged_at = excluded.cataloged_at, files = excluded.files, dirs = excluded.dirs,
+                    bytes = excluded.bytes, unreadable = excluded.unreadable",
+                params![
+                    summary.store_id,
+                    gen,
+                    summary.root_path,
+                    summary.cataloged_at,
+                    summary.files,
+                    summary.dirs,
+                    summary.bytes,
+                    summary.unreadable
+                ],
+            )?;
+            self.conn.execute(
+                "DELETE FROM drive_entries WHERE store_id = ?1 AND gen != ?2",
+                params![summary.store_id, gen],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => self.commit(),
+            Err(e) => {
+                self.rollback();
+                Err(e)
+            }
+        }
+    }
+
+    /// Throw away an unfinished catalog; the previous one stays.
+    pub fn abandon_drive_catalog(&mut self, store_id: &str, gen: &str) -> Sql<()> {
+        self.rollback();
+        self.conn.execute(
+            "DELETE FROM drive_entries WHERE store_id = ?1 AND gen = ?2",
+            params![store_id, gen],
+        )?;
+        Ok(())
+    }
+
+    pub fn drive_catalogs(&self) -> Sql<Vec<DriveCatalog>> {
+        let mut stmt = self.conn.prepare("SELECT * FROM drive_catalogs")?;
+        let rows = stmt.query_map([], drive_catalog)?.collect();
+        rows
+    }
+
+    pub fn drive_catalog(&self, store_id: &str) -> Sql<Option<DriveCatalog>> {
+        self.conn
+            .query_row(
+                "SELECT * FROM drive_catalogs WHERE store_id = ?1",
+                params![store_id],
+                drive_catalog,
+            )
+            .optional()
+    }
+
+    /// One entry of a store's current catalog.
+    pub fn drive_entry(&self, store_id: &str, rel_path: &str) -> Sql<Option<DriveEntry>> {
+        self.conn
+            .query_row(
+                "SELECT e.* FROM drive_entries e JOIN drive_catalogs c ON c.store_id = e.store_id AND c.gen = e.gen
+                 WHERE e.store_id = ?1 AND e.rel_path = ?2",
+                params![store_id, rel_path],
+                drive_entry,
+            )
+            .optional()
+    }
+
+    /// What a folder of a store's current catalog holds: folders first, then
+    /// the biggest first.
+    pub fn drive_children(
+        &self,
+        store_id: &str,
+        parent: &str,
+        limit: usize,
+    ) -> Sql<Vec<DriveEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.* FROM drive_entries e JOIN drive_catalogs c ON c.store_id = e.store_id AND c.gen = e.gen
+             WHERE e.store_id = ?1 AND e.parent = ?2 AND e.rel_path != ''
+             ORDER BY e.kind = 'dir' DESC, e.size DESC, e.name COLLATE NOCASE LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![store_id, parent, limit as i64], drive_entry)?
+            .collect();
+        rows
+    }
+
+    /// Entries of any drive catalog whose path contains every word of `query`.
+    pub fn drive_search(&self, query: &str, limit: usize) -> Sql<Vec<DriveHit>> {
+        let words: Vec<String> = query.split_whitespace().map(like_pattern).collect();
+        if words.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut sql = String::from(
+            "SELECT e.*, s.label AS store_label FROM drive_entries e
+             JOIN drive_catalogs c ON c.store_id = e.store_id AND c.gen = e.gen
+             JOIN offload_stores s ON s.id = e.store_id
+             WHERE e.rel_path != ''",
+        );
+        for i in 0..words.len() {
+            sql.push_str(&format!(" AND e.rel_path LIKE ?{} ESCAPE '\\'", i + 1));
+        }
+        sql.push_str(&format!(
+            " ORDER BY e.kind = 'dir' DESC, length(e.rel_path), e.rel_path LIMIT {}",
+            limit.min(5000)
+        ));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(words.iter()), |row| {
+                Ok(DriveHit {
+                    store_id: row.get("store_id")?,
+                    store_label: row.get("store_label")?,
+                    entry: drive_entry(row)?,
+                })
+            })?
+            .collect();
+        rows
+    }
+
+    /// Forget a drive's catalog. Nothing on the drive is touched.
+    pub fn forget_drive_catalog(&mut self, store_id: &str) -> Sql<bool> {
+        self.commit()?;
+        self.conn.execute(
+            "DELETE FROM drive_entries WHERE store_id = ?1",
+            params![store_id],
+        )?;
+        let n = self.conn.execute(
+            "DELETE FROM drive_catalogs WHERE store_id = ?1",
+            params![store_id],
+        )?;
+        Ok(n > 0)
     }
 
     /// Files whose path contains every word of `query`, on any store.
