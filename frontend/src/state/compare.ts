@@ -15,6 +15,7 @@ import { closeWindow, openWindow } from "../wm/state";
 import { errorMessage, snapshotProblem } from "../windows/common";
 import { folderKeys, topLevelFolders, visibleItems, type Side, type StatusFilter } from "../windows/compareTree";
 import { isReady, setProblem, upsertSnapshot } from "./app";
+import { pathKey } from "./scan";
 import { ask, notify } from "../desktop";
 
 export interface CompareResult {
@@ -58,6 +59,9 @@ export const EMPTY_SUMMARY: ComparisonSummary = {
 };
 
 const store = createStore<Record<string, CompareSession>>({ [COMPARE]: blank(COMPARE) });
+
+/** Bumped by every run, so a superseded comparison's late result is dropped. */
+let compareToken = 0;
 
 /** The snapshot the compare window is showing, if any. */
 export function useOpenCompareSnapshot(): string | null {
@@ -126,6 +130,7 @@ export async function openCompareSnapshot(snapshot: ComparisonSnapshot): Promise
   const current = store.get()[COMPARE];
   if (current?.snapshotId !== snapshot.id) {
     if (unsaved(current) && !(await ask("This comparison isn't saved. Open the other one anyway?"))) return;
+    compareToken++;
     const result = fromSnapshot(snapshot);
     store.set((all) => ({
       ...all,
@@ -144,15 +149,62 @@ export async function openCompareSnapshot(snapshot: ComparisonSnapshot): Promise
   if (isReady()) void refreshCompare(COMPARE);
 }
 
+/**
+ * Start a comparison from somewhere else (a scan, du-hast-much, a saved
+ * scan): `source` on the left, and `target` on the right when it's known,
+ * which runs it straight away. Without a target the window opens with the
+ * folder fields ready for the other side.
+ */
+export async function compareWith(source: string, target?: string): Promise<void> {
+  const current = store.get()[COMPARE];
+  const same =
+    !!current &&
+    current.phase === "results" &&
+    pathKey(current.paths.source) === pathKey(source) &&
+    pathKey(current.paths.target) === pathKey(target ?? "");
+  if (same) return newCompare();
+  if (unsaved(current) && !(await ask("This comparison isn't saved. Start another anyway?"))) return;
+  compareToken++;
+  store.set((all) => ({
+    ...all,
+    [COMPARE]: { ...blank(COMPARE), deepScan: current?.deepScan ?? false, paths: { source, target: target ?? "" } },
+  }));
+  newCompare();
+  if (target && isReady()) void runCompare(COMPARE);
+}
+
+/** The folder waiting in the compare window for a second one, if any. */
+function waitingSource(s: CompareSession | undefined): string | null {
+  const source = s?.paths.source.trim();
+  return s && source && !s.paths.target.trim() && !s.result && s.phase !== "comparing" ? source : null;
+}
+
+/**
+ * Add one folder to the comparison: it becomes the target when a source is
+ * waiting for one (and the comparison runs), otherwise it starts a new one
+ * as the source. So two clicks, on two folders, compare them.
+ */
+export async function addToCompare(path: string): Promise<void> {
+  const source = waitingSource(store.get()[COMPARE]);
+  if (source && pathKey(source) !== pathKey(path)) return compareWith(source, path);
+  return compareWith(path);
+}
+
+export function useWaitingSource(): string | null {
+  return useStore(store, (all) => waitingSource(all[COMPARE]));
+}
+
 export async function runCompare(id: string): Promise<void> {
   const session = store.get()[id];
   if (!session) return;
   const source = session.paths.source.trim();
   const target = session.paths.target.trim();
   if (!source || !target) return;
+  const token = ++compareToken;
   patchCompare(id, { phase: "comparing", error: null });
   try {
     const result = await compareDirectories(source, target, session.deepScan);
+    if (token !== compareToken) return;
     patchCompare(id, {
       result,
       phase: "results",
@@ -163,6 +215,7 @@ export async function runCompare(id: string): Promise<void> {
       foldersOpen: false,
     });
   } catch (err) {
+    if (token !== compareToken) return;
     patchCompare(id, { phase: "error", error: errorMessage(err) });
   }
 }
@@ -224,6 +277,7 @@ export function toggleFolder(id: string, key: string): void {
 export async function closeCompare(): Promise<void> {
   const session = store.get()[COMPARE];
   if (unsaved(session) && !(await ask("This comparison isn't saved. Close it anyway?"))) return;
+  compareToken++;
   closeWindow(COMPARE);
   store.set((all) => ({ ...all, [COMPARE]: { ...blank(COMPARE), paths: session?.paths ?? blank(COMPARE).paths } }));
 }

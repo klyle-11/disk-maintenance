@@ -1517,9 +1517,19 @@
 .scan-summary {
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  white-space: nowrap;
+}
+
+/* Save, compare, du-hast-much, offload: to the right, or on a line of their own when narrow. */
+.scan-actions {
+  display: flex;
   align-items: center;
   gap: 8px;
-  white-space: nowrap;
+  margin-left: auto;
+  min-width: 0;
 }
 
 .scan-total {
@@ -1580,7 +1590,20 @@
   color: var(--lcd-accent);
 }
 
-.dhm-recent {
+.folder-choice.is-chip {
+  flex: 0 0 96px;
+  height: 16px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 9px;
+}
+
+.folder-choice.cmp-recent {
+  flex: 0 1 84px;
+}
+
+.dhm-recent,
+.folder-choice {
   flex: 0 1 190px;
   min-width: 0;
   appearance: none;
@@ -1594,7 +1617,9 @@
   cursor: pointer;
 }
 
-.dhm-recent option {
+.dhm-recent option,
+.folder-choice option,
+.folder-choice optgroup {
   color: var(--lcd-text);
   background: var(--lcd-bg);
 }

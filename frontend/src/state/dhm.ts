@@ -13,6 +13,8 @@ import {
   type DuHastMuchResult,
 } from "../api";
 import { createStore, useStore } from "../store";
+import { openWindow } from "../wm/state";
+import { isReady } from "./app";
 
 /** One scan as kept in history and in the folder cache. */
 export interface DhmRecord extends DuHastMuchResponse {
@@ -192,6 +194,13 @@ export function openDhmFolder(path: string): void {
   }
   patchDhm({ trail: shown ? [...trail, shown.path].slice(-50) : trail });
   void measure(path, false);
+}
+
+/** Open the du-hast-much window on a folder (from a scan or a comparison). */
+export function showInDhm(path: string): void {
+  openWindow("dhm");
+  if (isReady()) openDhmFolder(path);
+  else patchDhm({ path });
 }
 
 /** The folder above `path` ("C:\\Users" for "C:\\Users\\me"), or null at a root. */

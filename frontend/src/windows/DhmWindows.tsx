@@ -20,7 +20,8 @@ import {
   timeAgo,
   useDhm,
 } from "../state/dhm";
-import { openScanSnapshot, savedScanOf, scanFolder } from "../state/scan";
+import { addToCompare, useWaitingSource } from "../state/compare";
+import { openScanSnapshot, pathKey, savedScanOf, scanFolder } from "../state/scan";
 import { Window } from "../wm/Window";
 import { baseName } from "./common";
 import type { WindowArgs } from "./HubWindows";
@@ -41,6 +42,13 @@ const OpenIcon = () => (
   </svg>
 );
 
+const CompareIcon = () => (
+  <svg {...ICON} aria-hidden>
+    <path d="M0.75 3h8M6.5 0.75 8.75 3 6.5 5.25" />
+    <path d="M9.25 7h-8M3.5 4.75 1.25 7l2.25 2.25" />
+  </svg>
+);
+
 const UpdateIcon = () => (
   <svg {...ICON} aria-hidden>
     <path d="M8.6 4.2A3.75 3.75 0 1 0 8.5 6.4" />
@@ -49,12 +57,16 @@ const UpdateIcon = () => (
 );
 
 /**
- * A row's buttons: copy its full path, and scan it in the scan window, or,
- * once it has a saved scan, update that snapshot.
+ * A row's buttons: copy its full path, scan it in the scan window (or, once
+ * it has a saved scan, update that snapshot), and compare it: the first
+ * folder picked waits in COMPARE, the next one is compared with it.
  */
 function RowActions({ path, copied, onCopy }: { path: string; copied: boolean; onCopy: (path: string) => void }) {
   const saved = useApp((s) => savedScanOf(s.snapshots, path));
+  const waiting = useWaitingSource();
   const name = baseName(path);
+  const pairs = !!waiting && pathKey(waiting) !== pathKey(path);
+  const compareLabel = pairs ? `Compare ${baseName(waiting!)} with ${name}` : `Compare ${name} with another folder (pick it next)`;
   return (
     <span className="dhm-actions" onClick={(e) => e.stopPropagation()}>
       <button type="button" className="dhm-act" title={copied ? "Copied" : `Copy ${path}`} aria-label={`Copy the path of ${name}`} onClick={() => onCopy(path)}>
@@ -72,6 +84,15 @@ function RowActions({ path, copied, onCopy }: { path: string; copied: boolean; o
         onClick={() => void (saved ? openScanSnapshot(saved) : scanFolder(path))}
       >
         {saved ? <UpdateIcon /> : <OpenIcon />}
+      </button>
+      <button
+        type="button"
+        className={`dhm-act ${pairs ? "is-update" : ""}`}
+        title={compareLabel}
+        aria-label={compareLabel}
+        onClick={() => void addToCompare(path)}
+      >
+        <CompareIcon />
       </button>
     </span>
   );

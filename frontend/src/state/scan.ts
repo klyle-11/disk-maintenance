@@ -106,7 +106,7 @@ async function mayReplace(session: ScanSession | undefined, action: string): Pro
 }
 
 /** A path as a comparable key: Windows paths ignore case and slash direction. */
-function pathKey(path: string): string {
+export function pathKey(path: string): string {
   const windows = /^[a-z]:|\\/i.test(path);
   const key = windows ? path.replace(/\//g, "\\").toLowerCase() : path;
   return key.length > 1 ? key.replace(/[\\/]+$/, "") : key;

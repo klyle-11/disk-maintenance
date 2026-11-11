@@ -6,10 +6,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBytes, type ComparisonItem } from "../api";
 import { useApp } from "../state/app";
+import { showInDhm } from "../state/dhm";
+import { openScanSnapshot, savedScanOf, scanFolder } from "../state/scan";
 import {
   chooseFilter,
   closeCompare,
   COMPARE,
+  compareWith,
   EMPTY_SUMMARY,
   patchCompare,
   refreshCompare,
@@ -34,6 +37,7 @@ import {
   type Side,
   type StatusFilter,
 } from "./compareTree";
+import { FolderChoice } from "./FolderChoice";
 import type { WindowArgs } from "./HubWindows";
 import { pickDirectory } from "./pickDirectory";
 import { Section } from "./Section";
@@ -98,6 +102,14 @@ export function CompareWindow({ view, controls }: WindowArgs) {
                 <button type="button" className="steel-btn" onClick={() => browse(side)} disabled={busy}>
                   BROWSE
                 </button>
+                <FolderChoice
+                  label="RECENT"
+                  className="cmp-recent"
+                  exclude={[s.paths.source, s.paths.target]}
+                  disabled={busy}
+                  title={`Pick the ${side} from saved scans and recent folders`}
+                  onPick={(picked) => patchCompare(id, (c) => ({ paths: { ...c.paths, [side]: picked } }))}
+                />
               </div>
             ))}
             <div className="field-row">
@@ -126,7 +138,13 @@ export function CompareWindow({ view, controls }: WindowArgs) {
         {s.phase === "error" ? <div className="lcd lcd-bad lcd-ellipsis">FAILED · {s.error}</div> : null}
         {!s.result && s.phase === "setup" ? (
           <div className="lcd lcd-banner">
-            <span className="lcd-dim">{ready ? "Pick a source and a target folder, then COMPARE." : "Waiting for the backend…"}</span>
+            <span className="lcd-dim">
+              {!ready
+                ? "Waiting for the backend…"
+                : s.paths.source.trim() && !s.paths.target.trim()
+                  ? "Now pick the target: BROWSE, RECENT, or ⇄ on a folder in DU-HAST-MUCH."
+                  : "Pick a source and a target folder, then COMPARE."}
+            </span>
           </div>
         ) : null}
 
@@ -177,6 +195,14 @@ export function CompareWindow({ view, controls }: WindowArgs) {
                 −
               </button>
               <span className="spacer" />
+              <FolderChoice
+                label="SRC VS…"
+                className="is-chip"
+                exclude={[s.result.sourcePath, s.result.targetPath]}
+                disabled={busy}
+                title={`Compare ${s.result.sourcePath} with another folder instead`}
+                onPick={(target) => void compareWith(s.result!.sourcePath, target)}
+              />
               {s.busy === "refreshing" ? (
                 <span className="lcd-accent blink">REFRESHING</span>
               ) : s.problem ? (
@@ -199,6 +225,27 @@ export function CompareWindow({ view, controls }: WindowArgs) {
         ) : null}
       </div>
     </Window>
+  );
+}
+
+/** A side's way back out: its scan (the saved one, or a new one) and DU-HAST-MUCH. */
+function SideLinks({ path }: { path: string }) {
+  const saved = useApp((a) => savedScanOf(a.snapshots, path));
+  const name = baseName(path);
+  return (
+    <>
+      <button
+        type="button"
+        className="chip"
+        onClick={() => void (saved ? openScanSnapshot(saved) : scanFolder(path))}
+        title={saved ? `Open the saved scan of ${name}` : `Scan ${name} in SCAN`}
+      >
+        SCAN
+      </button>
+      <button type="button" className="chip" onClick={() => showInDhm(path)} title={`See ${name}'s biggest subfolders in DU-HAST-MUCH`}>
+        DHM
+      </button>
+    </>
   );
 }
 
@@ -369,6 +416,7 @@ function CompareTrees({ session: s }: { session: CompareSession }) {
                 {base}
               </span>
               <span>{formatBytes(total)}</span>
+              <SideLinks path={base} />
             </div>
             {s.mode === "paths" ? (
               <PathList base={base} tree={tree} side={side} filter={s.filter} />
