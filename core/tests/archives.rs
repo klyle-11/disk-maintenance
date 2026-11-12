@@ -453,7 +453,8 @@ fn archived_copies_with_different_checksums_are_not_duplicates() {
     let mut names: Vec<_> = dups[0]
         .paths
         .iter()
-        .map(|p| p.rsplit('/').next().unwrap())
+        // The archive's own path uses the platform's separator.
+        .map(|p| p.rsplit(['/', '\\']).next().unwrap())
         .collect();
     names.sort();
     assert_eq!(names, vec!["a.zip › data.bin", "c.zip › data.bin"]);
