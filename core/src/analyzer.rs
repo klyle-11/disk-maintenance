@@ -1,5 +1,6 @@
 //! Findings: heuristics over a finished scan.
 
+use crate::archives::{ArchiveInfo, ArchivedFile, ListStatus};
 use crate::model::{ExtensionSummary, Finding};
 use crate::scanner::{FolderStats, ScanData};
 use crate::util::now_secs;
@@ -66,6 +67,30 @@ fn days_since(ts: f64, now: f64) -> i64 {
     ((now - ts) / 86400.0).floor() as i64
 }
 
+/// One copy in a duplicate-file group.
+enum DupCopy<'a> {
+    Loose(String),
+    Archived(&'a ArchivedFile),
+}
+
+impl DupCopy<'_> {
+    fn content_key(&self) -> Option<&str> {
+        match self {
+            DupCopy::Loose(_) => None,
+            DupCopy::Archived(f) => f.content_key.as_deref(),
+        }
+    }
+
+    /// The path shown in a finding: an archived copy is the archive's path,
+    /// " › ", then its path inside.
+    fn display(&self) -> String {
+        match self {
+            DupCopy::Loose(p) => p.clone(),
+            DupCopy::Archived(f) => format!("{} › {}", f.archive, f.inner),
+        }
+    }
+}
+
 pub struct Analyzer<'a> {
     data: &'a ScanData,
     /// Folders in path order, so findings come out in a stable order.
@@ -92,7 +117,10 @@ impl<'a> Analyzer<'a> {
         self.cache_candidates();
         self.duplicate_folder_candidates();
         self.duplicate_file_candidates();
+        self.duplicate_archive_candidates();
+        self.extracted_archive_candidates();
         self.cold_archive_candidates();
+        self.unlisted_archives();
         self.findings
     }
 
@@ -240,30 +268,202 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    /// Files over 1 MB with the same name and size.
+    /// Files over 1 MB with the same name and size, loose on disk or inside
+    /// a zip or rar.
+    ///
+    /// Copies inside archives can only be told apart by the checksum the
+    /// archive stores, so when a group is made only of archived copies it is
+    /// split by that checksum. A loose file has no checksum without reading
+    /// it, so a group with loose copies stays a name-and-size match.
     fn duplicate_file_candidates(&mut self) {
-        let mut by_key: BTreeMap<(String, u64), Vec<String>> = BTreeMap::new();
+        // (name, size) -> copies; an archived copy carries its checksum.
+        let mut by_key: BTreeMap<(String, u64), Vec<DupCopy>> = BTreeMap::new();
         for (path, size) in &self.data.large_files {
             if *size > DUPLICATE_FILE_MIN {
                 by_key
                     .entry((name_of(path), *size))
                     .or_default()
-                    .push(path.clone());
+                    .push(DupCopy::Loose(path.clone()));
             }
         }
-        for ((name, size), mut paths) in by_key {
-            if paths.len() < 2 {
+        for f in &self.data.archived_files {
+            if f.size > DUPLICATE_FILE_MIN {
+                by_key
+                    .entry((name_of(&f.inner), f.size))
+                    .or_default()
+                    .push(DupCopy::Archived(f));
+            }
+        }
+        for ((name, size), copies) in by_key {
+            if copies.len() < 2 {
                 continue;
             }
-            paths.sort();
+            let loose = copies
+                .iter()
+                .filter(|c| matches!(c, DupCopy::Loose(_)))
+                .count();
+            let groups: Vec<Vec<&DupCopy>> = if loose > 0 {
+                vec![copies.iter().collect()]
+            } else {
+                let mut split: BTreeMap<Option<&str>, Vec<&DupCopy>> = BTreeMap::new();
+                for c in &copies {
+                    split.entry(c.content_key()).or_default().push(c);
+                }
+                split.into_values().collect()
+            };
+            for group in groups.into_iter().filter(|g| g.len() >= 2) {
+                let mut paths: Vec<String> = group.iter().map(|c| c.display()).collect();
+                paths.sort();
+                let archived = group.len() - loose;
+                let mut reason = format!(
+                    "{} files named '{}' ({:.1} MB each)",
+                    group.len(),
+                    name,
+                    size as f64 / MB
+                );
+                if archived > 0 {
+                    let checksums_agree = loose == 0 && group[0].content_key().is_some();
+                    reason.push_str(&format!(
+                        ", {} inside archives{}",
+                        if archived == group.len() {
+                            "all".to_string()
+                        } else {
+                            archived.to_string()
+                        },
+                        if checksums_agree {
+                            ", stored checksums match"
+                        } else {
+                            ""
+                        }
+                    ));
+                }
+                // Only loose copies free space when removed; a copy inside an
+                // archive stays until the archive is rebuilt or deleted. One
+                // copy is always kept.
+                let removable = loose.min(group.len() - 1) as u64;
+                self.push("duplicate_file_candidate", reason, paths, size * removable);
+            }
+        }
+    }
+
+    /// Archives holding the same files (same sizes and stored checksums),
+    /// even when the archives' own bytes differ: different compression, a
+    /// zip and a rar, renamed copies.
+    fn duplicate_archive_candidates(&mut self) {
+        let mut by_key: BTreeMap<&str, Vec<&ArchiveInfo>> = BTreeMap::new();
+        for a in &self.data.archives {
+            if let Some(key) = &a.content_key {
+                if a.unpacked_bytes > DUPLICATE_FILE_MIN {
+                    by_key.entry(key).or_default().push(a);
+                }
+            }
+        }
+        let mut found = Vec::new();
+        for (_, mut group) in by_key {
+            if group.len() < 2 {
+                continue;
+            }
+            // Byte-identical copies with one name are already reported as
+            // duplicate files.
+            let first_name = name_of(&group[0].path);
+            if group
+                .iter()
+                .all(|a| name_of(&a.path) == first_name && a.size == group[0].size)
+            {
+                continue;
+            }
+            group.sort_by(|a, b| b.size.cmp(&a.size).then(a.path.cmp(&b.path)));
+            let total: u64 = group.iter().map(|a| a.size).sum();
             let reason = format!(
-                "{} files named '{}' ({:.1} MB each)",
-                paths.len(),
-                name,
-                size as f64 / MB
+                "{} archives hold the same {} files ({:.1} MB unpacked), by their stored checksums",
+                group.len(),
+                group[0].files,
+                group[0].unpacked_bytes as f64 / MB
             );
-            let reclaimable = size * (paths.len() as u64 - 1);
-            self.push("duplicate_file_candidate", reason, paths, reclaimable);
+            let paths = group.iter().map(|a| a.path.clone()).collect();
+            // Keep the largest copy, as with folders.
+            found.push((reason, paths, total - group[0].size));
+        }
+        for (reason, paths, bytes) in found {
+            self.push("duplicate_archive_candidate", reason, paths, bytes);
+        }
+    }
+
+    /// An archive with a folder of the same name beside it that has as many
+    /// files and about as many bytes as the archive unpacks to: most likely
+    /// it was extracted there, and one of the two can go.
+    fn extracted_archive_candidates(&mut self) {
+        let by_path: HashMap<&str, &FolderStats> =
+            self.folders.iter().map(|(p, s)| (*p, *s)).collect();
+        let mut found = Vec::new();
+        for a in &self.data.archives {
+            if a.status != ListStatus::Listed || a.files == 0 || a.size <= DUPLICATE_FILE_MIN {
+                continue;
+            }
+            let path = Path::new(&a.path);
+            let (Some(parent), Some(stem)) = (path.parent(), path.file_stem()) else {
+                continue;
+            };
+            let folder = parent.join(stem);
+            let folder = folder.to_string_lossy();
+            let Some(stats) = by_path.get(folder.as_ref()) else {
+                continue;
+            };
+            // Allow a few extra files (.DS_Store, Thumbs.db) in the folder;
+            // on-disk sizes run a little over the original sizes.
+            let slack = (a.files / 50).max(2);
+            let unpacked = a.unpacked_bytes as f64;
+            let on_disk = stats.total_size as f64;
+            let close = on_disk >= unpacked * 0.9
+                && on_disk <= unpacked * 1.1 + (stats.file_count * 4096) as f64;
+            if stats.file_count >= a.files && stats.file_count <= a.files + slack && close {
+                let reason = format!(
+                    "'{}' looks already extracted to the folder beside it ({} files, {:.1} MB unpacked)",
+                    name_of(&a.path),
+                    a.files,
+                    a.unpacked_bytes as f64 / MB
+                );
+                found.push((reason, vec![a.path.clone(), folder.into_owned()], a.size));
+            }
+        }
+        for (reason, paths, bytes) in found {
+            self.push("extracted_archive_candidate", reason, paths, bytes);
+        }
+    }
+
+    /// Archives whose contents couldn't be listed: password-protected down
+    /// to the file names, or damaged. One finding for each, so they are
+    /// visible rather than silently left out of the checks above.
+    fn unlisted_archives(&mut self) {
+        let mut locked: Vec<&ArchiveInfo> = Vec::new();
+        let mut unreadable: Vec<&ArchiveInfo> = Vec::new();
+        for a in &self.data.archives {
+            match a.status {
+                ListStatus::Locked => locked.push(a),
+                ListStatus::Unreadable => unreadable.push(a),
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for (list, category, what) in [
+            (locked, "locked_archive", "password-protected, file names included, so what's inside wasn't checked. No password was asked for"),
+            (unreadable, "unreadable_archive", "damaged or not really zip/rar files, so what's inside wasn't checked"),
+        ] {
+            if list.is_empty() {
+                continue;
+            }
+            let mut paths: Vec<String> = list.iter().map(|a| a.path.clone()).collect();
+            paths.sort();
+            let bytes = list.iter().map(|a| a.size).sum();
+            let reason = if list.len() == 1 {
+                format!("1 archive is {what}")
+            } else {
+                format!("{} archives are {what}", list.len())
+            };
+            found.push((category, reason, paths, bytes));
+        }
+        for (category, reason, paths, bytes) in found {
+            self.push(category, reason, paths, bytes);
         }
     }
 
