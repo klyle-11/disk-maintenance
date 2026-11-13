@@ -5,6 +5,10 @@
 //! Left-click the icon to toggle the panel; right-click for a menu (Open,
 //! Quick panel, Quit). Linux tray hosts send no clicks, so there the panel is
 //! opened from the menu.
+//!
+//! Linux (Raspberry Pi OS included): the icon shows only where the desktop
+//! has a tray, so closing to the tray is decided by asking for one each time
+//! (see `linux_host`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -32,15 +36,121 @@ pub struct PanelState {
     hidden_at: Mutex<Option<Instant>>,
 }
 
-/// Whether closing the main window hides it to the tray instead of quitting.
-/// On for macOS and Windows once the icon is up. Linux keeps quitting: many
-/// desktops there (GNOME) show no tray, which would leave the app unreachable.
+/// Whether the tray icon is up. Closing the main window then hides it to the
+/// tray instead of quitting, on Linux only while a tray is there to show the
+/// icon: some desktops (GNOME without the AppIndicator extension) have none,
+/// and a hidden window there would leave the app unreachable.
 #[derive(Default)]
 pub struct InTray(pub AtomicBool);
 
 pub fn keeps_running<R: Runtime>(app: &AppHandle<R>) -> bool {
-    app.try_state::<InTray>()
-        .is_some_and(|t| t.0.load(Ordering::Relaxed))
+    let icon_up = app
+        .try_state::<InTray>()
+        .is_some_and(|t| t.0.load(Ordering::Relaxed));
+    icon_up && tray_shown()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tray_shown() -> bool {
+    true
+}
+
+/// Asked at every close, so a panel restarted (or removed) since launch counts.
+#[cfg(target_os = "linux")]
+fn tray_shown() -> bool {
+    linux_host::status_notifier_host() || linux_host::xembed_tray()
+}
+
+/// The two kinds of Linux tray. The icon goes to a StatusNotifierItem host
+/// when there is one (KDE, Xfce, LXQt, Raspberry Pi OS's wf-panel-pi, GNOME
+/// with the AppIndicator extension), else appindicator falls back to an
+/// X11 XEmbed tray (lxpanel, older panels).
+#[cfg(target_os = "linux")]
+mod linux_host {
+    use gtk::gio;
+    use gtk::glib::{ToVariant, Variant, VariantTy};
+    use std::ffi::CString;
+
+    const WATCHER: &str = "org.kde.StatusNotifierWatcher";
+
+    fn call(
+        bus: &gio::DBusConnection,
+        (name, path, iface): (&str, &str, &str),
+        method: &str,
+        args: Variant,
+        reply: &str,
+    ) -> Option<Variant> {
+        bus.call_sync(
+            Some(name),
+            path,
+            iface,
+            method,
+            Some(&args),
+            VariantTy::new(reply).ok(),
+            gio::DBusCallFlags::NO_AUTO_START,
+            500,
+            gio::Cancellable::NONE,
+        )
+        .ok()
+    }
+
+    /// A StatusNotifierWatcher is on the session bus and does not say that
+    /// no host has registered with it.
+    pub fn status_notifier_host() -> bool {
+        let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
+            return false;
+        };
+        let dbus = (
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+        );
+        let owned = call(&bus, dbus, "NameHasOwner", (WATCHER,).to_variant(), "(b)")
+            .and_then(|r| r.child_value(0).get::<bool>())
+            .unwrap_or(false);
+        if !owned {
+            return false;
+        }
+        // Some watchers run without a host (nothing draws the icons). One
+        // that can't answer gets the benefit of the doubt.
+        let props = (
+            WATCHER,
+            "/StatusNotifierWatcher",
+            "org.freedesktop.DBus.Properties",
+        );
+        let args = (WATCHER, "IsStatusNotifierHostRegistered").to_variant();
+        call(&bus, props, "Get", args, "(v)")
+            .and_then(|r| r.child_value(0).as_variant())
+            .and_then(|v| v.get::<bool>())
+            .unwrap_or(true)
+    }
+
+    /// An X11 tray owns `_NET_SYSTEM_TRAY_S<screen>`. Only counts when GTK
+    /// draws on X11: under Wayland the fallback icon has nowhere to go.
+    pub fn xembed_tray() -> bool {
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+            && !std::env::var("GDK_BACKEND").is_ok_and(|b| b.starts_with("x11"));
+        if wayland || std::env::var_os("DISPLAY").is_none() {
+            return false;
+        }
+        let Ok(xlib) = x11_dl::xlib::Xlib::open() else {
+            return false;
+        };
+        // SAFETY: a private connection, closed before returning; the atom
+        // name is a valid C string.
+        unsafe {
+            let display = (xlib.XOpenDisplay)(std::ptr::null());
+            if display.is_null() {
+                return false;
+            }
+            let screen = (xlib.XDefaultScreen)(display);
+            let name = CString::new(format!("_NET_SYSTEM_TRAY_S{screen}")).unwrap();
+            let atom = (xlib.XInternAtom)(display, name.as_ptr(), 1);
+            let owned = atom != 0 && (xlib.XGetSelectionOwner)(display, atom) != 0;
+            (xlib.XCloseDisplay)(display);
+            owned
+        }
+    }
 }
 
 /// Close the main window: hide it while the tray keeps the app going, or quit.
@@ -102,9 +212,7 @@ pub fn setup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
-    if !cfg!(target_os = "linux") {
-        app.state::<InTray>().0.store(true, Ordering::Relaxed);
-    }
+    app.state::<InTray>().0.store(true, Ordering::Relaxed);
     Ok(())
 }
 

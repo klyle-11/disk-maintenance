@@ -28,8 +28,9 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
 
 `.github/workflows/build.yml` runs on every push to `main` and every pull
 request. It tests the Rust core and the di bridge, and builds the installers on
-Windows, macOS and Linux. Download them from the run's **Artifacts**
-(`disk-intelligence-windows`, `-macos`, `-linux`). Run it by hand from the
+Windows, macOS, Linux x64 and Linux arm64 (Raspberry Pi). Download them from
+the run's **Artifacts** (`disk-intelligence-windows`, `-macos`, `-linux`,
+`-linux-arm64`). Run it by hand from the
 Actions tab ("Run workflow") when you just need fresh installers.
 
 ## Quick start
@@ -76,11 +77,31 @@ Everything lands in `frontend/src-tauri/target/release/bundle/`:
 
 ### Raspberry Pi / Linux arm64
 
-Build on the Pi itself (a Pi 5 is fine; the first Rust build takes a while).
-Install the Linux packages above plus Node.js and Rust, then run
-`./scripts/package-linux.sh`. Install the result with
-`sudo apt install ./frontend/src-tauri/target/release/bundle/deb/*.deb`.
-The AppImage needs `libfuse2` (`libfuse2t64` on Pi OS "trixie") to run.
+CI builds the arm64 installers on GitHub's ARM runners: take
+`disk-intelligence-linux-arm64` from a run's Artifacts and install the .deb on
+the Pi with `sudo apt install ./Disk*Intelligence_*_arm64.deb`. It needs
+64-bit Raspberry Pi OS (Bookworm or later) on a Pi 3, 4, 5 or Zero 2 W; 32-bit
+(armhf) Pi OS is not built. The AppImage needs `libfuse2` (`libfuse2t64` on
+Pi OS "trixie") to run.
+
+To build on the Pi itself instead (a Pi 5 is fine; the first Rust build takes
+a while), install the Linux packages above plus Node.js and Rust, then run
+`./scripts/package-linux.sh`.
+
+On ARM Linux the app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` (unless already
+set), because WebKitGTK's GPU buffer path often draws a blank window on the
+Pi. Set it to `0` to try the GPU path.
+
+### The tray on Linux
+
+The tray icon uses appindicator: it shows on desktops with a
+StatusNotifierItem tray (Raspberry Pi OS's taskbar, KDE, Xfce, LXQt, GNOME with
+the AppIndicator extension) or an X11 system tray. Closing the main window
+leaves the app running in the tray only while such a tray is there (checked at
+each close); on a desktop without one (stock GNOME) closing quits, as nothing
+could bring the window back. Linux trays open the icon's menu on any click, so
+the quick panel is the menu's **Quick panel** item. `scripts/ci/linux-tray-check.sh`
+tests both cases in CI.
 
 ## The di window and Python
 
