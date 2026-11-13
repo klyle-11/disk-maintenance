@@ -21,6 +21,7 @@
         "shadow": false,
         "resizable": false,
         "maximizable": false,
+        "acceptFirstMouse": true,
         "visible": false
       }
     ],

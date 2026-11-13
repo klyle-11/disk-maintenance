@@ -488,18 +488,12 @@ fn follow_cursor_to_monitor(window: WebviewWindow) -> Option<serde_json::Value> 
     overlay::follow_cursor(&window).map(|(x, y)| json!({ "x": x, "y": y }))
 }
 
-/// macOS/Windows: let clicks through while the pointer is off the UI's windows.
+/// macOS/Windows: a press on one of the UI's windows is down, so keep the mouse.
 #[tauri::command]
-fn set_click_through(
-    window: WebviewWindow,
-    state: State<'_, Arc<ClickThrough>>,
-    ignore: bool,
-    rects: Vec<Rect>,
-) {
-    overlay::set_click_through(&window, &state, ignore, rects);
+fn set_pointer_hold(state: State<'_, Arc<ClickThrough>>, held: bool) {
+    overlay::set_pointer_hold(&state, held);
 }
 
-/// macOS/Windows: where the UI's windows are now (they move and animate).
 #[tauri::command]
 fn set_hit_rects(state: State<'_, Arc<ClickThrough>>, rects: Vec<Rect>) {
     overlay::set_hit_rects(&state, rects);
@@ -639,7 +633,7 @@ pub fn run() {
             minimize_window,
             quit_app,
             follow_cursor_to_monitor,
-            set_click_through,
+            set_pointer_hold,
             set_hit_rects,
             set_input_region,
         ])

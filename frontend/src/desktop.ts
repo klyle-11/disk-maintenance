@@ -32,14 +32,14 @@ export interface DesktopAPI {
 
   /**
    * The app floats on the desktop, so clicks must pass through it except over
-   * its windows. "hover": the UI turns click-through on when the pointer
-   * leaves its windows (macOS, Windows). "shape": only the given rects take
-   * clicks (Linux).
+   * its windows. "hover": the shell watches the pointer against the rects the
+   * UI reports (macOS, Windows). "shape": only the given rects take clicks
+   * (Linux).
    */
   clickThrough: "hover" | "shape";
-  /** hover: let clicks through (or stop); `rects` are the UI's windows. */
-  setIgnoreMouse: (ignore: boolean, rects: ShellRect[]) => void;
-  /** hover: the UI's windows moved (Tauri watches the pointer against them). */
+  /** hover: a press that began on one of the UI's windows is down (or ended). */
+  setPointerHold?: (held: boolean) => void;
+  /** hover: where the UI's windows are. */
   setHitRects?: (rects: ShellRect[]) => void;
   /**
    * Mid-drag of the main window with the pointer off this window: move the
@@ -72,7 +72,7 @@ function makeTauriDesktop(): DesktopAPI {
     close: () => void invoke("close_main_window").catch(ignoreError),
     closesToTray: () => invoke<boolean>("keeps_running_in_tray").catch(() => false),
     clickThrough: platform === "linux" ? "shape" : "hover",
-    setIgnoreMouse: (ignore, rects) => void invoke("set_click_through", { ignore, rects }).catch(ignoreError),
+    setPointerHold: (held) => void invoke("set_pointer_hold", { held }).catch(ignoreError),
     setHitRects: (rects) => void invoke("set_hit_rects", { rects }).catch(ignoreError),
     setShape: (rects) => void invoke("set_input_region", { rects }).catch(ignoreError),
     followCursorToMonitor: () => invoke<{ x: number; y: number } | null>("follow_cursor_to_monitor").catch(() => null),
