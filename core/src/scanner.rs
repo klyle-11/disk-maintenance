@@ -5,7 +5,14 @@
 //! [`LARGE_FILE_THRESHOLD`] for duplicate detection, so memory scales with the
 //! number of folders rather than files. Sizes are on-disk bytes from lstat
 //! (symlinks are not followed) and a hard-linked file is counted once.
+//!
+//! Zip and rar archives are also listed (see [`crate::archives`]): their
+//! index is read, never their contents, so a password-protected archive is
+//! recorded as locked instead of stopping the scan. What is inside an
+//! archive does not count towards any folder's size or file count; the
+//! archive file itself does.
 
+use crate::archives::{self, ArchiveInfo, ArchivedFile};
 use crate::paths::IgnoreRules;
 use crate::util::{atime, disk_usage_bytes, extension_of, hardlink_key, mtime};
 use std::collections::{HashMap, HashSet};
@@ -37,6 +44,10 @@ pub struct ScanData {
     pub extensions: HashMap<String, (u64, u64)>,
     /// (path, apparent size) for files >= LARGE_FILE_THRESHOLD.
     pub large_files: Vec<(String, u64)>,
+    /// Every zip and rar found, with what its index says.
+    pub archives: Vec<ArchiveInfo>,
+    /// Files inside archives of at least LARGE_FILE_THRESHOLD.
+    pub archived_files: Vec<ArchivedFile>,
     pub total_files: u64,
     pub total_size: u64,
 }
@@ -62,6 +73,8 @@ struct DirRecord {
     own: FolderStats,
     extensions: HashMap<String, (u64, u64)>,
     large_files: Vec<(String, u64)>,
+    archives: Vec<ArchiveInfo>,
+    archived_files: Vec<ArchivedFile>,
 }
 
 struct Ctx<'a> {
@@ -150,6 +163,8 @@ fn absorb(data: &mut ScanData, record: DirRecord) {
         e.1 += bytes;
     }
     data.large_files.extend(record.large_files);
+    data.archives.extend(record.archives);
+    data.archived_files.extend(record.archived_files);
 }
 
 fn walk_dir<'s>(
@@ -168,6 +183,8 @@ fn walk_dir<'s>(
         own: FolderStats::default(),
         extensions: HashMap::new(),
         large_files: Vec::new(),
+        archives: Vec::new(),
+        archived_files: Vec::new(),
     };
     let mut subdirs = Vec::new();
 
@@ -230,6 +247,12 @@ fn add_file(record: &mut DirRecord, path: &Path, name: &str, md: &fs::Metadata, 
         record
             .large_files
             .push((path.to_string_lossy().into_owned(), md.len()));
+    }
+
+    if md.is_file() && archives::is_archive_name(name) {
+        let (info, big) = archives::index(path, md.len(), LARGE_FILE_THRESHOLD, ctx.cancel);
+        record.archives.push(info);
+        record.archived_files.extend(big);
     }
 }
 
