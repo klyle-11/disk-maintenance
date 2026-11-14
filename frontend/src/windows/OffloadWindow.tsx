@@ -1,32 +1,41 @@
 /**
- * Offloading in one window: the drive on top, then MOVE (copy folders to it,
- * verified), DRIVES (what is on which drive; check it, bring it back, remove
- * the originals), CATALOG (list everything on a drive, offloaded or not,
- * browse it and scan any folder of it) and FIND (any offloaded or cataloged
- * file, whether or not its drive is plugged in), as sections of which one is
- * open at a time.
+ * Offloading in one window, as four sections of which one is open at a time:
+ *
+ *   MOVE     copy folders FROM this computer TO an external drive, verified,
+ *            then keep, trash or delete the originals. A finished move leads
+ *            to its record in DRIVES.
+ *   DRIVES   what was offloaded to which drive. An offload opens to check it,
+ *            bring it back or remove its originals. A drive leads to CATALOG.
+ *   CATALOG  everything on a drive, offloaded or not: catalog a drive, browse
+ *            its folders, scan any of them (in the SCAN window).
+ *   FIND     any offloaded or cataloged file, whether or not its drive is
+ *            plugged in. A hit leads to its offload in DRIVES or its folder
+ *            in CATALOG.
+ *
+ * Only one run of any kind goes at a time; its section's header says so while
+ * the others wait. The window is never shorter than the open section needs
+ * (useContentFloor), and scrolls rather than overlaps if it can't have that.
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { formatBytes } from "../api";
 import { isTauri } from "../desktop";
 import type { DriveCatalog, ListedEntry, OffloadJob, OffloadProblem, OffloadProgress, OffloadReport, OffloadStore, RemoveMode } from "../offloadApi";
 import { useApp } from "../state/app";
 import {
   browseDrive,
-  cancelAction,
-  cancelCatalog,
-  cancelOffload,
+  cancelRun,
   checkJob,
   chosenSources,
   closeBrowse,
   forgetCatalog,
   forgetJob,
+  hasPicks,
   importStore,
-  loadCatalog,
   loadVolumes,
   modeWords,
   offloadBusy,
   patchOffload,
+  refreshOffload,
   releaseJob,
   removalLines,
   resetOffload,
@@ -36,13 +45,17 @@ import {
   selectJob,
   setDest,
   setQuery,
+  showJob,
   showProblems,
+  startBlocker,
   startOffload,
   togglePick,
+  toggleSection,
   useOffload,
   type OffloadSection,
   type OffloadState,
 } from "../state/offload";
+import { useContentFloor } from "../wm/useContentFloor";
 import { Window } from "../wm/Window";
 import { baseName, formatDate } from "./common";
 import type { WindowArgs } from "./HubWindows";
@@ -110,7 +123,7 @@ function Problems({ problems, total }: { problems: OffloadProblem[]; total: numb
   );
 }
 
-function ReportView({ report }: { report: OffloadReport }) {
+function ReportView({ report, link = false }: { report: OffloadReport; link?: boolean }) {
   const good = report.outcome === "complete";
   const headline = good
     ? "VERIFIED"
@@ -121,9 +134,14 @@ function ReportView({ report }: { report: OffloadReport }) {
     <div className="off-report">
       <div className="off-report-head">
         <span className={good ? "lcd-accent" : "lcd-bad"}>{headline}</span>
-        <span className="lcd-strong lcd-ellipsis" title={report.source}>
+        <span className="lcd-strong lcd-ellipsis off-name" title={report.source}>
           {report.source}
         </span>
+        {link ? (
+          <button type="button" className="chip" onClick={() => showJob(report.job_id)} title="Open this offload in DRIVES, to check it, bring it back or remove its originals">
+            IN DRIVES ›
+          </button>
+        ) : null}
       </div>
       <div>
         {report.verified_files.toLocaleString()} of {report.items_seen.toLocaleString()} items verified on "{report.store_label}" ({formatBytes(report.verified_bytes)})
@@ -144,9 +162,60 @@ function ReportView({ report }: { report: OffloadReport }) {
   );
 }
 
-function MoveSection({ s }: { s: OffloadState }) {
+/** Where the folders go: a path, or one of the connected drives. */
+function Destination({ s }: { s: OffloadState }) {
   const busy = offloadBusy(s);
+  const used = (s.catalog?.stores ?? []).filter((st) => st.path);
+  const fresh = s.volumes.filter((v) => !used.some((st) => st.path === v.mount));
+  return (
+    <>
+      <div className="field-row">
+        <span className="field-tag off-tag">TO</span>
+        <input
+          className="lcd-input"
+          value={s.dest}
+          placeholder="a folder on the external drive"
+          onChange={(e) => setDest(e.target.value)}
+          spellCheck={false}
+          aria-label="Destination on the external drive"
+          disabled={busy}
+        />
+        <button
+          type="button"
+          className="steel-btn"
+          disabled={busy}
+          onClick={async () => {
+            const picked = await pickDirectory();
+            if (picked) setDest(picked);
+            void loadVolumes();
+          }}
+        >
+          BROWSE
+        </button>
+      </div>
+      {used.length || fresh.length ? (
+        <div className="off-chips" role="group" aria-label="Connected drives">
+          {used.map((st) => (
+            <button key={st.id} type="button" className={`chip ${s.dest === st.path ? "is-on" : ""}`} disabled={busy} onClick={() => setDest(st.path!)} title={`${st.path}\nused for offloads before`}>
+              ★ {st.label}
+              {st.free_bytes != null ? ` · ${formatBytes(st.free_bytes)} free` : ""}
+            </button>
+          ))}
+          {fresh.map((v) => (
+            <button key={v.mount} type="button" className={`chip ${s.dest === v.mount ? "is-on" : ""}`} disabled={busy} onClick={() => setDest(v.mount)} title={v.mount}>
+              {v.name || v.mount} · {formatBytes(v.free_bytes)} free
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function MoveSection({ s }: { s: OffloadState }) {
   const sources = chosenSources(s);
+  const picks = hasPicks(s);
+  const blocker = startBlocker(s);
   if (s.phase === "running" || s.phase === "planning") {
     return (
       <div className="off-pane">
@@ -155,6 +224,9 @@ function MoveSection({ s }: { s: OffloadState }) {
             {s.phase === "planning"
               ? "Checking the folders and the drive…"
               : `${s.sources.length > 1 ? `${s.running + 1} of ${s.sources.length} · ` : ""}${s.sources[s.running] ?? ""}`}
+          </span>
+          <span className="lcd-dim" title={s.dest.trim()}>
+            → {s.dest.trim()}
           </span>
         </div>
         {s.phase === "running" ? <ProgressRows progress={s.progress} /> : null}
@@ -165,7 +237,7 @@ function MoveSection({ s }: { s: OffloadState }) {
           <div className="lcd-dim">Stopping is safe at any moment: a file counts only once its copy has been read back, and the next run picks up where this one stopped.</div>
         </div>
         <div className="field-row is-end">
-          <button type="button" className="steel-btn is-warn" onClick={cancelOffload} disabled={s.phase !== "running"}>
+          <button type="button" className="steel-btn is-warn" onClick={cancelRun} disabled={s.phase !== "running"}>
             CANCEL
           </button>
         </div>
@@ -178,7 +250,7 @@ function MoveSection({ s }: { s: OffloadState }) {
         <div className="lcd off-scroll">
           {s.error ? <div className="lcd-bad">STOPPED · {s.error}</div> : null}
           {s.reports.map((r) => (
-            <ReportView key={r.job_id} report={r} />
+            <ReportView key={r.job_id} report={r} link />
           ))}
         </div>
         <div className="field-row is-end">
@@ -196,11 +268,11 @@ function MoveSection({ s }: { s: OffloadState }) {
         <input
           className="lcd-input"
           value={s.sourceInput}
-          placeholder={s.candidates.some((c) => s.picked[c.path]) ? "(the ticked folders below)" : "/path/to/folder to move"}
+          placeholder={picks ? "(the ticked folders below)" : "the folder to move"}
           onChange={(e) => patchOffload({ sourceInput: e.target.value })}
           spellCheck={false}
           aria-label="Folder to offload"
-          disabled={s.candidates.some((c) => s.picked[c.path])}
+          disabled={picks}
         />
         <button
           type="button"
@@ -232,7 +304,8 @@ function MoveSection({ s }: { s: OffloadState }) {
           </label>
         ))}
       </div>
-      <div className="field-row">
+      <Destination s={s} />
+      <div className="field-row off-go">
         <div className="seg is-wide" role="radiogroup" aria-label="What happens to the originals">
           {MODES.map(({ mode, label }) => (
             <button key={mode} type="button" role="radio" aria-checked={s.remove === mode} className={`seg-btn ${s.remove === mode ? "is-on" : ""}`} onClick={() => patchOffload({ remove: mode })}>
@@ -241,11 +314,11 @@ function MoveSection({ s }: { s: OffloadState }) {
           ))}
         </div>
         <span className="spacer" />
-        <button type="button" className="steel-btn is-primary" onClick={() => void startOffload()} disabled={busy || !sources.length || !s.dest.trim()}>
+        <button type="button" className="steel-btn is-primary" onClick={() => void startOffload()} disabled={blocker !== null} title={blocker ?? "Check the folders and the drive, then ask before anything is copied"}>
           {sources.length > 1 ? `START (${sources.length})` : "START"}
         </button>
       </div>
-      <div className="hint">Every file is copied, read back from the drive and compared. {modeWords(s.remove)}</div>
+      <div className="hint">{blocker ?? `Every file is copied, read back from the drive and compared. ${modeWords(s.remove)}`}</div>
     </div>
   );
 }
@@ -279,7 +352,7 @@ function JobActions({ s, job, store }: { s: OffloadState; job: OffloadJob; store
         <>
           <ProgressRows progress={running.progress} />
           <div className="off-actions">
-            <button type="button" className="chip" onClick={cancelAction}>
+            <button type="button" className="chip" onClick={cancelRun}>
               CANCEL
             </button>
           </div>
@@ -352,6 +425,11 @@ function JobActions({ s, job, store }: { s: OffloadState; job: OffloadJob; store
 
 function DrivesSection({ s }: { s: OffloadState }) {
   const catalog = s.catalog;
+  // Arriving at an offload from FIND or a finished move: bring it into view.
+  const opened = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    opened.current?.scrollIntoView({ block: "nearest" });
+  }, [s.selectedJob]);
   return (
     <div className="off-pane">
       <div className="lcd off-scroll">
@@ -370,12 +448,12 @@ function DrivesSection({ s }: { s: OffloadState }) {
                 <span className="spacer" />
                 {store.free_bytes != null ? <span className="lcd-dim">{formatBytes(store.free_bytes)} free</span> : null}
                 {catalog.drive_catalogs.some((c) => c.store_id === store.id) ? (
-                  <button type="button" className="chip" onClick={() => void browseDrive(store.id, "")} title="Browse everything on this drive, and scan any folder of it">
-                    CATALOG
+                  <button type="button" className="chip" onClick={() => void browseDrive(store.id, "")} title="Browse everything on this drive in CATALOG, and scan any folder of it">
+                    BROWSE ›
                   </button>
                 ) : store.path ? (
-                  <button type="button" className="chip" disabled={offloadBusy(s)} onClick={() => void runCatalog(store.path!)} title="List everything on this drive, offloaded or not, to browse and scan">
-                    CATALOG IT
+                  <button type="button" className="chip" disabled={offloadBusy(s)} onClick={() => void runCatalog(store.path!)} title="List everything on this drive, offloaded or not, to browse and scan in CATALOG">
+                    CATALOG ›
                   </button>
                 ) : null}
               </div>
@@ -384,7 +462,7 @@ function DrivesSection({ s }: { s: OffloadState }) {
                 const badge = jobBadge(job, catalog.host);
                 const open = s.selectedJob === job.id;
                 return (
-                  <div key={job.id} className={`off-job ${open ? "is-open" : ""}`}>
+                  <div key={job.id} ref={open ? opened : undefined} className={`off-job ${open ? "is-open" : ""}`}>
                     <button type="button" className="off-row off-job-head" aria-expanded={open} onClick={() => selectJob(open ? null : job.id)} title={job.source_path}>
                       <span className="section-twisty" aria-hidden>
                         {open ? "▾" : "▸"}
@@ -402,7 +480,7 @@ function DrivesSection({ s }: { s: OffloadState }) {
         })}
       </div>
       <div className="field-row is-end">
-        <button type="button" className="steel-btn" onClick={() => void loadCatalog()} title="Look again for connected drives">
+        <button type="button" className="steel-btn" onClick={refreshOffload} title="Look again for connected drives">
           REFRESH
         </button>
         <button
@@ -430,8 +508,9 @@ function FindSection({ s }: { s: OffloadState }) {
         <input className="lcd-input" value={s.query} placeholder="part of a file or folder name" onChange={(e) => setQuery(e.target.value)} spellCheck={false} aria-label="Find an offloaded file" />
       </div>
       <div className="lcd off-scroll" role="list">
+        {s.findError ? <div className="lcd-bad">Couldn't search: {s.findError}</div> : null}
         {s.hits === null ? <div className="lcd-dim">Searches every offload's file list and every drive catalog, including drives that aren't plugged in.</div> : null}
-        {s.hits?.length === 0 && !s.driveHits?.length ? <div className="lcd-dim">No offloaded or cataloged file or folder matches.</div> : null}
+        {s.hits?.length === 0 && !s.driveHits?.length && !s.findError ? <div className="lcd-dim">No offloaded or cataloged file or folder matches.</div> : null}
         {s.hits?.map((hit) => {
           const original = hit.rel_path ? `${hit.source_path}/${hit.rel_path}` : hit.source_path;
           return (
@@ -440,8 +519,8 @@ function FindSection({ s }: { s: OffloadState }) {
               type="button"
               role="listitem"
               className="off-row off-hit"
-              title={`${original}\non "${hit.store_label}"${connected.has(hit.store_id) ? "" : " (not connected)"}`}
-              onClick={() => patchOffload({ section: "drives", selectedJob: hit.job_id, jobProblems: null })}
+              title={`${original}\non "${hit.store_label}"${connected.has(hit.store_id) ? "" : " (not connected)"}\nOpen its offload in DRIVES`}
+              onClick={() => showJob(hit.job_id)}
             >
               <span className="library-kind">{hit.kind === "dir" ? "▣" : hit.kind === "symlink" ? "↗" : "·"}</span>
               <span className="off-name">
@@ -479,7 +558,6 @@ function FindSection({ s }: { s: OffloadState }) {
   );
 }
 
-
 function relParent(rel: string): string {
   const i = rel.lastIndexOf("/");
   return i < 0 ? "" : rel.slice(0, i);
@@ -498,7 +576,8 @@ function CatalogDrives({ s }: { s: OffloadState }) {
   const fresh = s.volumes.filter((v) => !stores.some((st) => st.path === v.mount));
   return (
     <div className="lcd off-scroll" role="list">
-      {stores.length === 0 && fresh.length === 0 ? <div className="lcd-dim">Plug in an external drive, or pick a folder on one below, to list everything on it.</div> : null}
+      {s.catalogError ? <div className="lcd-bad">Couldn't read the catalog: {s.catalogError}</div> : null}
+      {stores.length === 0 && fresh.length === 0 && !s.catalogError ? <div className="lcd-dim">Plug in an external drive, or pick a folder on one below, to list everything on it.</div> : null}
       {stores.map((store) => {
         const c = catalogs.get(store.id);
         return (
@@ -581,7 +660,7 @@ function CatalogBrowser({ s }: { s: OffloadState }) {
     <>
       <div className="field-row off-crumbs">
         <button type="button" className="chip" onClick={closeBrowse} title="Back to the list of drives">
-          ‹ DRIVES
+          ‹ BACK
         </button>
         <span className="lcd-ellipsis off-name">
           <button type="button" className="off-link lcd-strong" onClick={() => void browseDrive(b.storeId, "")}>
@@ -653,7 +732,7 @@ function CatalogSection({ s }: { s: OffloadState }) {
           <div className="field-row is-end">
             <span className="hint">Only reads the drive. Stopping keeps its previous catalog.</span>
             <span className="spacer" />
-            <button type="button" className="steel-btn is-warn" onClick={cancelCatalog}>
+            <button type="button" className="steel-btn is-warn" onClick={cancelRun}>
               CANCEL
             </button>
           </div>
@@ -670,7 +749,7 @@ function CatalogSection({ s }: { s: OffloadState }) {
               Lists a whole drive, offloaded or not.
             </span>
             <span className="spacer" />
-            <button type="button" className="steel-btn" onClick={() => void loadVolumes().then(loadCatalog)} title="Look again for connected drives">
+            <button type="button" className="steel-btn" onClick={refreshOffload} title="Look again for connected drives">
               REFRESH
             </button>
             <button
@@ -692,26 +771,23 @@ function CatalogSection({ s }: { s: OffloadState }) {
   );
 }
 
+/** What the run under way is, for the header of the section it belongs to. */
+function runWords(s: OffloadState): Partial<Record<OffloadSection, string>> {
+  return {
+    move: s.phase === "planning" ? "checking" : s.phase === "running" ? "running" : undefined,
+    drives: s.action ? { check: "checking", restore: "restoring", release: "removing originals" }[s.action.kind] : undefined,
+    catalog: s.cataloging ? "cataloging" : undefined,
+  };
+}
+
 export function OffloadWindow({ view, controls }: WindowArgs) {
   const s = useOffload((state) => state);
   const ready = useApp((a) => a.connected === true);
+  const content = useContentFloor(view.unit.id, view.unit.shaded);
   // The window comes back by itself after a restart: fill it in then, too.
   useEffect(() => {
-    if (!ready || !isTauri) return;
-    void loadVolumes();
-    void loadCatalog();
+    if (ready && isTauri) refreshOffload();
   }, [ready]);
-  const busy = offloadBusy(s);
-  const running = s.phase === "running" ? s.progress : (s.action?.progress ?? null);
-  const shadeInfo = s.cataloging ? "cataloging" : busy ? `${percent(running)}%` : s.catalog ? `${s.catalog.jobs.length} offloaded` : undefined;
-  const section = (id: OffloadSection) => ({
-    open: s.section === id,
-    onToggle: () => {
-      patchOffload({ section: s.section === id ? (id === "move" ? "drives" : "move") : id });
-      if (id !== "move") void loadCatalog();
-      if (id === "catalog") void loadVolumes();
-    },
-  });
 
   if (!isTauri) {
     return (
@@ -725,77 +801,39 @@ export function OffloadWindow({ view, controls }: WindowArgs) {
     );
   }
 
+  const busy = offloadBusy(s);
+  const running = s.phase === "running" ? s.progress : (s.action?.progress ?? null);
+  const jobs = s.catalog?.jobs ?? [];
   const stores = s.catalog?.stores ?? [];
-  const removedTotal = (s.catalog?.jobs ?? []).filter((j) => j.host === s.catalog?.host).reduce((sum, j) => sum + j.removed_bytes, 0);
+  const catalogs = s.catalog?.drive_catalogs.length ?? 0;
+  const removedTotal = jobs.filter((j) => j.host === s.catalog?.host).reduce((sum, j) => sum + j.removed_bytes, 0);
+  const shadeInfo = s.cataloging ? "cataloging" : busy ? `${percent(running)}%` : s.catalog ? `${jobs.length} offloaded` : undefined;
+  const run = runWords(s);
+  const info: Record<OffloadSection, string | undefined> = {
+    move: run.move ?? (s.candidates.length ? `${s.candidates.length} suggested` : undefined),
+    drives: run.drives ?? (s.catalog ? `${stores.length} ${stores.length === 1 ? "drive" : "drives"} · ${formatBytes(removedTotal)} moved off this computer` : undefined),
+    catalog: run.catalog ?? (catalogs ? `${catalogs} ${catalogs === 1 ? "drive" : "drives"}` : undefined),
+    find: s.hits ? String(s.hits.length + (s.driveHits?.length ?? 0)) : undefined,
+  };
+  const section = (id: OffloadSection) => ({ info: info[id], open: s.section === id, onToggle: () => toggleSection(id), fill: true });
+
   return (
     <Window title="OFFLOAD" shadeInfo={shadeInfo} view={view} controls={controls} className="kind-offload">
-      <div className="tool">
-        {/* The destination is for moving: CATALOG has its own list of drives and needs the room. */}
-        {s.section === "catalog" ? null : (
-          <>
-            <div className="field-row">
-              <span className={`led ${busy ? "is-busy" : ""}`} data-on={ready} />
-              <span className="field-tag off-tag">TO</span>
-              <input
-                className="lcd-input"
-                value={s.dest}
-                placeholder="a folder on the external drive"
-                onChange={(e) => setDest(e.target.value)}
-                spellCheck={false}
-                aria-label="Destination on the external drive"
-                disabled={busy}
-              />
-              <button
-                type="button"
-                className="steel-btn"
-                disabled={busy}
-                onClick={async () => {
-                  const picked = await pickDirectory();
-                  if (picked) setDest(picked);
-                  void loadVolumes();
-                }}
-              >
-                BROWSE
-              </button>
-            </div>
-            {s.volumes.length || stores.some((st) => st.path) ? (
-              <div className="off-chips">
-                {stores
-                  .filter((st) => st.path)
-                  .map((st) => (
-                    <button key={st.id} type="button" className={`chip ${s.dest === st.path ? "is-on" : ""}`} disabled={busy} onClick={() => setDest(st.path!)} title={`${st.path}\nused for offloads before`}>
-                      ★ {st.label}
-                      {st.free_bytes != null ? ` · ${formatBytes(st.free_bytes)} free` : ""}
-                    </button>
-                  ))}
-                {s.volumes
-                  .filter((v) => !stores.some((st) => st.path === v.mount))
-                  .map((v) => (
-                    <button key={v.mount} type="button" className={`chip ${s.dest === v.mount ? "is-on" : ""}`} disabled={busy} onClick={() => setDest(v.mount)} title={v.mount}>
-                      {v.name || v.mount} · {formatBytes(v.free_bytes)} free
-                    </button>
-                  ))}
-              </div>
-            ) : null}
-          </>
-        )}
-        <Section title="MOVE" info={s.phase === "running" ? "running" : s.candidates.length ? `${s.candidates.length} suggested` : undefined} fill {...section("move")}>
-          <MoveSection s={s} />
-        </Section>
-        <Section title="DRIVES" info={s.catalog ? `${stores.length} · ${formatBytes(removedTotal)} moved off this computer` : undefined} fill {...section("drives")}>
-          <DrivesSection s={s} />
-        </Section>
-        <Section
-          title="CATALOG"
-          info={s.cataloging ? "cataloging" : s.catalog?.drive_catalogs.length ? `${s.catalog.drive_catalogs.length} ${s.catalog.drive_catalogs.length === 1 ? "drive" : "drives"}` : undefined}
-          fill
-          {...section("catalog")}
-        >
-          <CatalogSection s={s} />
-        </Section>
-        <Section title="FIND" info={s.hits ? s.hits.length + (s.driveHits?.length ?? 0) : undefined} fill {...section("find")}>
-          <FindSection s={s} />
-        </Section>
+      <div className="tool off-tool">
+        <div className="off-fit" ref={content}>
+          <Section title="MOVE" {...section("move")}>
+            <MoveSection s={s} />
+          </Section>
+          <Section title="DRIVES" {...section("drives")}>
+            <DrivesSection s={s} />
+          </Section>
+          <Section title="CATALOG" {...section("catalog")}>
+            <CatalogSection s={s} />
+          </Section>
+          <Section title="FIND" {...section("find")}>
+            <FindSection s={s} />
+          </Section>
+        </div>
       </div>
     </Window>
   );

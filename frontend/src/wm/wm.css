@@ -1756,29 +1756,90 @@
 
 /* ── Offload ───────────────────────────────────────────────────────────── */
 
-.off-pane {
-  flex: 1;
-  min-height: 0;
+/*
+ * No overlapping, at any size: the content column is as tall as its rows need
+ * and never squeezed below that. The open section takes what height is left
+ * over, and inside it only the list (.off-scroll) gives way, down to
+ * its min-height. useContentFloor measures this column to hold the window to
+ * that height; where it can't have it, .off-tool scrolls.
+ */
+.off-tool {
+  overflow: hidden auto;
+}
+
+.off-fit {
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+}
+
+.off-fit > .section.is-open {
+  flex: 1 0 auto;
+}
+
+.off-fit .section-body {
+  flex: 1 0 auto;
+}
+
+.off-pane {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
 .field-tag.off-tag {
   width: 32px;
 }
 
+/* A fixed basis, so a long list asks for no more room than a short one. */
 .off-scroll {
-  flex: 1;
-  min-height: 40px;
+  flex: 1 1 54px;
+  min-height: 54px;
   overflow: auto;
 }
 
+.off-pane > .hint,
+.off-pane > .lcd-accent,
+.off-pane > .lcd-bad {
+  flex-shrink: 0;
+}
+
+/* Room for two lines, so the window doesn't change height as the hint does. */
+.off-pane > .hint {
+  min-height: 2.6em;
+}
+
+/* A move's banner: the folder, then where it is going; each gives way. */
+.off-pane > .lcd-banner > span {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The drives to pick from: a few rows of them, then they scroll. */
 .off-chips {
   flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
+  max-height: 54px;
+  overflow: hidden auto;
+}
+
+/* The mode buttons and START part ways when the window is too narrow for both. */
+.off-go {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.off-go .seg {
+  flex: 1 0 auto;
 }
 
 .off-chips .chip.is-on {

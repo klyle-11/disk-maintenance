@@ -71,7 +71,8 @@ export interface Browse {
 }
 
 export interface OffloadState {
-  section: OffloadSection;
+  /** The open section; null when all four are closed. */
+  section: OffloadSection | null;
   // -- MOVE --
   phase: OffloadPhase;
   /** Folders to move, in order. */
@@ -97,6 +98,7 @@ export interface OffloadState {
   catalogError: string | null;
   query: string;
   hits: OffloadHit[] | null;
+  findError: string | null;
   selectedJob: string | null;
   /** The job an action is running on, and which. */
   action: { jobId: string; kind: "check" | "restore" | "release"; progress: OffloadProgress | null } | null;
@@ -131,6 +133,7 @@ const store = createStore<OffloadState>({
   catalogError: null,
   query: "",
   hits: null,
+  findError: null,
   selectedJob: null,
   action: null,
   result: null,
@@ -190,17 +193,31 @@ export async function loadCatalog(): Promise<void> {
   }
 }
 
+/** Bring the drives and what is on them up to date. */
+export function refreshOffload(): void {
+  void loadVolumes();
+  void loadCatalog();
+}
+
+/** Open a section (closing the one that was open), or close it if it is the open one. */
+export function toggleSection(id: OffloadSection): void {
+  const open = store.get().section === id;
+  patchOffload({ section: open ? null : id });
+  if (!open) refreshOffload();
+}
+
 /** Open the OFFLOAD window and bring what it shows up to date. */
 export function openOffload(): void {
   openWindow("offload");
-  void loadVolumes();
-  void loadCatalog();
+  refreshOffload();
 }
 
 /** Open the OFFLOAD window with the folders a scan suggests moving. */
 export async function openOffloadForScan(scanId: string, root: string): Promise<void> {
   openOffload();
-  if (store.get().phase === "running") return;
+  // A move that is being checked or is under way keeps the window as it is.
+  const { phase } = store.get();
+  if (phase === "running" || phase === "planning") return;
   patchOffload({ section: "move", candidatesLoading: true, candidatesFrom: root, candidates: [], picked: {}, phase: "setup", error: null, reports: [] });
   try {
     const candidates = await getOffloadCandidates(scanId);
@@ -212,6 +229,11 @@ export async function openOffloadForScan(scanId: string, root: string): Promise<
 
 export function togglePick(path: string): void {
   store.set((s) => ({ ...s, picked: { ...s.picked, [path]: !s.picked[path] } }));
+}
+
+/** Some suggested folders are ticked: they are what moves, not the FROM field. */
+export function hasPicks(s: OffloadState): boolean {
+  return s.candidates.some((c) => s.picked[c.path]);
 }
 
 /** The folders the START button would move. */
@@ -229,6 +251,15 @@ const MODE_WORDS: Record<RemoveMode, string> = {
 
 export function modeWords(mode: RemoveMode): string {
   return MODE_WORDS[mode];
+}
+
+/** What START still needs before it can run, or null when it is ready. */
+export function startBlocker(s: OffloadState): string | null {
+  if (!chosenSources(s).length) return s.candidates.length ? "Tick a folder, or pick one in FROM." : "Pick the folder to move in FROM.";
+  if (!s.dest.trim()) return "Pick where it goes in TO: a folder on an external drive.";
+  if (s.cataloging) return "Wait for the cataloging in CATALOG to finish, or cancel it.";
+  if (s.action) return "Wait for the run in DRIVES to finish, or cancel it.";
+  return null;
 }
 
 /** Check, confirm and run the offload of every chosen folder, one by one. */
@@ -283,17 +314,24 @@ export async function startOffload(): Promise<void> {
     patchOffload({ phase: "error", error: errorMessage(err), progress: null });
   }
   abort = null;
-  void loadCatalog();
-  void loadVolumes();
+  refreshOffload();
   void loadTips();
 }
 
-export function cancelOffload(): void {
+/** Stop whichever run is under way: a move, a check, a restore, a removal or a cataloging. */
+export function cancelRun(): void {
   abort?.abort();
 }
 
+/**
+ * Leave the report and go back to choosing folders. What moved completely is
+ * cleared; after an error, a cancel or an incomplete run the choice is kept so
+ * it can be started again (a second run picks up where the first stopped).
+ */
 export function resetOffload(): void {
-  patchOffload({ phase: "setup", reports: [], error: null, progress: null, picked: {} });
+  const { phase, reports, sources } = store.get();
+  const allDone = phase === "done" && reports.length === sources.length && reports.every((r) => r.outcome === "complete");
+  patchOffload({ phase: "setup", reports: [], error: null, progress: null, ...(allDone ? { picked: {}, sourceInput: "" } : {}) });
 }
 
 // ---------------------------------------------------------------------------
@@ -301,23 +339,29 @@ export function resetOffload(): void {
 // ---------------------------------------------------------------------------
 
 export function setQuery(query: string): void {
-  patchOffload({ query });
+  patchOffload({ query, findError: null });
   if (searchTimer) clearTimeout(searchTimer);
   if (!query.trim()) {
     patchOffload({ hits: null, driveHits: null });
     return;
   }
+  // An answer to a query that has since been retyped is dropped.
+  const current = () => store.get().query === query;
   searchTimer = setTimeout(() => {
     searchOffloaded(query)
       .then((hits) => {
-        if (store.get().query === query) patchOffload({ hits });
+        if (current()) patchOffload({ hits });
       })
-      .catch((err) => patchOffload({ hits: [], catalogError: errorMessage(err) }));
+      .catch((err) => {
+        if (current()) patchOffload({ hits: [], findError: errorMessage(err) });
+      });
     searchDrives(query)
       .then((driveHits) => {
-        if (store.get().query === query) patchOffload({ driveHits });
+        if (current()) patchOffload({ driveHits });
       })
-      .catch(() => patchOffload({ driveHits: [] }));
+      .catch(() => {
+        if (current()) patchOffload({ driveHits: [] });
+      });
   }, 200);
 }
 
@@ -325,7 +369,13 @@ export function selectJob(jobId: string | null): void {
   patchOffload({ selectedJob: jobId, jobProblems: null });
 }
 
-function removalLines(removal: ReleaseReport["removal"]): string[] {
+/** Go to an offload in DRIVES, opened (from a search hit or a finished move). */
+export function showJob(jobId: string): void {
+  patchOffload({ section: "drives", selectedJob: jobId, jobProblems: null });
+  void loadCatalog();
+}
+
+export function removalLines(removal: ReleaseReport["removal"]): string[] {
   const lines: string[] = [];
   if (removal.trashed) lines.push(`${removal.removed_files.toLocaleString()} originals (${formatBytes(removal.removed_bytes)}) moved to the Trash`);
   else if (removal.removed_files) lines.push(`${removal.removed_files.toLocaleString()} originals removed, ${formatBytes(removal.freed_bytes)} freed`);
@@ -334,8 +384,6 @@ function removalLines(removal: ReleaseReport["removal"]): string[] {
   if (removal.folders_left) lines.push(`${removal.folders_left.toLocaleString()} folders left (not empty)`);
   return lines;
 }
-
-export { removalLines };
 
 async function act<R>(job: OffloadJob, kind: "check" | "restore" | "release", start: (onProgress: (p: OffloadProgress) => void, signal: AbortSignal) => Promise<R>, describe: (report: R) => ActionResult): Promise<void> {
   if (offloadBusy(store.get())) return;
@@ -427,10 +475,6 @@ export async function releaseJob(job: OffloadJob, mode: "trash" | "delete"): Pro
   );
 }
 
-export function cancelAction(): void {
-  abort?.abort();
-}
-
 export async function showProblems(jobId: string): Promise<void> {
   if (store.get().jobProblems?.jobId === jobId) {
     patchOffload({ jobProblems: null });
@@ -507,7 +551,7 @@ export async function runCatalog(path: string): Promise<void> {
             (r.unreadable ? `. ${r.unreadable.toLocaleString()} folders couldn't be read and are listed empty.` : "."),
         },
       });
-      void browseDrive(r.store_id, "");
+      void showFolder(r.store_id, "");
     }
   } catch (err) {
     patchOffload({ cataloging: null, catalogNote: { good: false, text: errorMessage(err) } });
@@ -516,12 +560,14 @@ export async function runCatalog(path: string): Promise<void> {
   void loadCatalog();
 }
 
-export function cancelCatalog(): void {
-  abort?.abort();
+/** Show one folder of a drive's catalog ("" is the top). */
+export function browseDrive(storeId: string, rel: string): Promise<void> {
+  // The note about the last cataloging has been read by the time someone browses on.
+  patchOffload({ catalogNote: null });
+  return showFolder(storeId, rel);
 }
 
-/** Show one folder of a drive's catalog ("" is the top). */
-export async function browseDrive(storeId: string, rel: string): Promise<void> {
+async function showFolder(storeId: string, rel: string): Promise<void> {
   const keep = store.get().browse;
   const listing = keep?.storeId === storeId ? keep.listing : null;
   patchOffload({ section: "catalog", browse: { storeId, rel, listing, loading: true, error: null } });
@@ -535,14 +581,10 @@ export async function browseDrive(storeId: string, rel: string): Promise<void> {
   }
 }
 
+/** Back from a drive's folders to the list of drives. */
 export function closeBrowse(): void {
-  patchOffload({ browse: null });
-}
-
-/** Open the CATALOG section on a drive: its catalog if it has one. */
-export function openDriveCatalog(storeId: string): void {
-  openOffload();
-  void browseDrive(storeId, "");
+  patchOffload({ browse: null, catalogNote: null });
+  refreshOffload();
 }
 
 /** Scan a folder of a cataloged drive in the scan window. */

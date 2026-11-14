@@ -69,6 +69,11 @@ export interface WmState {
   activeId: string | null;
   /** Bumped to replay the "here I am" flash on a window. */
   flash: { id: string; n: number } | null;
+  /**
+   * The least height each window's content needs, as measured from what it
+   * shows right now (see useContentFloor). Not saved: measured again on launch.
+   */
+  floors: Record<string, number>;
 }
 
 export type WmAction =
@@ -83,11 +88,23 @@ export type WmAction =
   | { type: "arrange" }
   | { type: "view"; size: Size }
   | { type: "pan"; pan: Point }
-  | { type: "fit"; id: string; h: number };
+  | { type: "fit"; id: string; h: number }
+  | { type: "floor"; id: string; h: number };
 
 export function outerSize(unit: Unit): Size {
   const w = unit.sizes.reduce((sum, s) => sum + s.w, 0);
   return { w, h: unit.shaded ? TITLE_H : unit.sizes[0].h };
+}
+
+/**
+ * The least height a unit may have: its kind's minimum, or what its content
+ * needs when that is more. Content that needs more than the screen doesn't get
+ * it (the window scrolls inside instead of outgrowing the display).
+ */
+export function minHeight(state: Pick<WmState, "floors" | "view">, unit: Unit): number {
+  const min = KINDS[unit.kind].min.h;
+  const screen = Math.max(min, state.view.h - CLUSTER_PAD * 2);
+  return Math.max(min, Math.min(Math.ceil(state.floors[unit.id] ?? 0), screen));
 }
 
 export function newUnit(kind: Kind, id: string, extra?: Partial<Unit>): Unit {
@@ -126,6 +143,35 @@ function reshape(state: WmState, id: string, change: (u: Unit) => Unit, candidat
   const units = state.units.map((u) => (u.id === id ? change(u) : u));
   const rects = relayout(units, { ...state.rects, [id]: spot }, state.view);
   return { ...state, units, rects };
+}
+
+/**
+ * Set a unit's height from its content. Keeps its top edge (or its bottom)
+ * docked if it can; otherwise the packer moves things aside.
+ */
+function setHeight(state: WmState, unit: Unit, h: number): WmState {
+  const rect = state.rects[unit.id];
+  if (!rect || unit.shaded || unit.sizes[0].h === h) return state;
+  const resized = { ...unit, sizes: unit.sizes.map((s) => ({ ...s, h })) };
+  const next = reshape(state, unit.id, () => resized, [
+    { ...rect, h },
+    { ...rect, y: rect.y + rect.h - h, h },
+  ]);
+  if (next !== state) return next;
+  const units = state.units.map((u) => (u.id === unit.id ? resized : u));
+  return { ...state, units, rects: relayout(units, { ...state.rects, [unit.id]: { ...rect, h } }, state.view) };
+}
+
+/** Grow any open window that is shorter than its content needs. */
+function raiseToFloors(state: WmState): WmState {
+  let next = state;
+  for (const { id } of state.units) {
+    const unit = next.units.find((u) => u.id === id);
+    if (!unit || unit.shaded) continue;
+    const h = minHeight(next, unit);
+    if (unit.sizes[0].h < h) next = setHeight(next, unit, h);
+  }
+  return next;
 }
 
 /**
@@ -218,10 +264,15 @@ export function wmReducer(state: WmState, action: WmAction): WmState {
       const gone = withChildren(state.units, action.id);
       const units = state.units.filter((u) => !gone.has(u.id));
       const rects = { ...state.rects };
-      for (const id of gone) delete rects[id];
+      const floors = { ...state.floors };
+      for (const id of gone) {
+        delete rects[id];
+        delete floors[id];
+      }
       return {
         ...state,
         units,
+        floors,
         rects: relayout(units, rects, state.view),
         activeId: state.activeId && gone.has(state.activeId) ? null : state.activeId,
       };
@@ -238,7 +289,9 @@ export function wmReducer(state: WmState, action: WmAction): WmState {
       const unit = state.units.find((u) => u.id === action.id);
       const rect = state.rects[action.id];
       if (!unit || !rect) return state;
-      const toggled = { ...unit, shaded: !unit.shaded };
+      // A window that comes back up is at least as tall as its content needs.
+      const full = Math.max(unit.sizes[0].h, minHeight(state, unit));
+      const toggled = { ...unit, shaded: !unit.shaded, sizes: unit.sizes.map((s) => ({ ...s, h: full })) };
       const { h } = outerSize(toggled);
       // Keep whichever edge is docked: the top, or the bottom.
       const candidates = [
@@ -251,8 +304,12 @@ export function wmReducer(state: WmState, action: WmAction): WmState {
       const units = state.units.map((u) => (u.id === action.id ? toggled : u));
       return { ...state, units, rects: relayout(units, state.rects, state.view) };
     }
-    case "resize":
+    case "resize": {
+      // The gesture already keeps to the minimum; this refuses anything else that doesn't.
+      const unit = state.units.find((u) => u.id === action.id);
+      if (!unit || action.sizes.some((s) => s.h < minHeight(state, unit))) return state;
       return reshape(state, action.id, (u) => ({ ...u, sizes: action.sizes }), action.candidates);
+    }
     case "swap":
       return swap(state, action.a, action.b);
     case "move": {
@@ -265,25 +322,23 @@ export function wmReducer(state: WmState, action: WmAction): WmState {
     case "pan":
       return action.pan.x === state.pan.x && action.pan.y === state.pan.y ? state : { ...state, pan: action.pan };
     case "fit": {
-      // A window sizing itself to its content: keep its top edge (or its
-      // bottom) docked if it can; otherwise the packer moves things aside.
+      // A window sizing itself to its content.
       const unit = state.units.find((u) => u.id === action.id);
-      const rect = state.rects[action.id];
-      const h = Math.max(KINDS[unit?.kind ?? "hub"].min.h, Math.round(action.h));
-      if (!unit || !rect || unit.shaded || unit.sizes[0].h === h) return state;
-      const resized = { ...unit, sizes: unit.sizes.map((s) => ({ ...s, h })) };
-      const next = reshape(state, action.id, () => resized, [
-        { ...rect, h },
-        { ...rect, y: rect.y + rect.h - h, h },
-      ]);
-      if (next !== state) return next;
-      const units = state.units.map((u) => (u.id === action.id ? resized : u));
-      return { ...state, units, rects: relayout(units, { ...state.rects, [action.id]: { ...rect, h } }, state.view) };
+      if (!unit) return state;
+      return setHeight(state, unit, Math.max(minHeight(state, unit), Math.round(action.h)));
+    }
+    case "floor": {
+      // What a window's content needs changed: it may never be shorter than that.
+      const unit = state.units.find((u) => u.id === action.id);
+      const h = Math.max(0, Math.ceil(action.h));
+      if (!unit || state.floors[action.id] === h) return state;
+      return raiseToFloors({ ...state, floors: { ...state.floors, [action.id]: h } });
     }
     case "view":
+      // A bigger screen lifts the cap on what content may ask for.
       return action.size.w === state.view.w && action.size.h === state.view.h
         ? state
-        : { ...state, view: action.size };
+        : raiseToFloors({ ...state, view: action.size });
   }
 }
 
@@ -331,7 +386,7 @@ function initialState(defaults: Unit[], view: Size): WmState {
   } catch {
     // Unreadable or no storage: start from the default arrangement.
   }
-  return { units, rects: relayout(units, rects, view), view, pan, activeId: null, flash: null };
+  return { units, rects: relayout(units, rects, view), view, pan, activeId: null, flash: null, floors: {} };
 }
 
 function saveState(state: WmState): void {
