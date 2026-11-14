@@ -12,7 +12,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { desktop } from "../desktop";
 import { useHoverClickThrough, updateShape } from "./clickThrough";
 import { bounds, fits, type Point, type Rect } from "./layout";
-import { CLUSTER_PAD as PAD, KINDS, type Unit, type WmAction, type WmState } from "./state";
+import { CLUSTER_PAD as PAD, KINDS, minHeight, type Unit, type WmAction, type WmState } from "./state";
 
 export type Handle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
@@ -226,6 +226,14 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
     );
   };
 
+  // The latest layout, for a drag that outlives the render it began in.
+  const geometry = useRef({ clampPan, centred, rects: state.rects });
+  const live = useRef(state);
+  useLayoutEffect(() => {
+    geometry.current = { clampPan, centred, rects: state.rects };
+    live.current = state;
+  });
+
   const beginResize = (id: string, e: ReactPointerEvent, member: number, handle: Handle) => {
     if (e.button !== 0) return;
     const index = state.units.findIndex((u) => u.id === id);
@@ -262,12 +270,14 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
     track(
       (ev) => {
         let w = Math.max(min.w, Math.round(startMember.w + sx * (ev.clientX - startX)));
-        let h = Math.max(min.h, Math.round(startMember.h + sy * (ev.clientY - startY)));
+        // What the content needs can change mid-drag (a narrower window wraps more).
+        const floor = minHeight(live.current, unit);
+        let h = Math.max(floor, Math.round(startMember.h + sy * (ev.clientY - startY)));
         let rect = spot(w, h);
         if (!rect) {
           // Ran into a neighbour: grow as far as it allows on each axis.
           w = furthest(startMember.w, w, (v) => !!spot(v, startMember.h));
-          h = furthest(startMember.h, h, (v) => !!spot(w, v));
+          h = furthest(Math.max(floor, startMember.h), h, (v) => !!spot(w, v));
           rect = spot(w, h);
           if (!rect) return;
         }
@@ -280,12 +290,6 @@ export function Cluster({ state, dispatch, renderUnit }: ClusterProps) {
       },
     );
   };
-
-  // The latest layout, for a drag that outlives the render it began in.
-  const geometry = useRef({ clampPan, centred, rects: state.rects });
-  useLayoutEffect(() => {
-    geometry.current = { clampPan, centred, rects: state.rects };
-  });
 
   const beginPan = (id: string, e: ReactPointerEvent) => {
     if (e.button !== 0) return;
