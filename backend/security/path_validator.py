@@ -35,12 +35,6 @@ class PathValidator:
         validator.validate("../../../etc/passwd")  # Raises InvalidPathError
     """
 
-    # Patterns that indicate path traversal attempts
-    TRAVERSAL_PATTERNS = [
-        r'\.\.',          # Parent directory references
-        r'\x00',          # Null bytes
-    ]
-
     # Maximum path length (prevent DoS)
     MAX_PATH_LENGTH = 1000
 
@@ -97,12 +91,17 @@ class PathValidator:
         if '\x00' in path_str:
             raise InvalidPathError("Null bytes not allowed in paths")
 
-        # Check 3: Traversal patterns (prevent path traversal)
-        for pattern in self.TRAVERSAL_PATTERNS:
-            if re.search(pattern, path_str):
-                raise InvalidPathError(
-                    f"Path contains dangerous sequence: {pattern}"
-                )
+        # Check 3: Parent-directory segments (prevent path traversal). Only a
+        # whole ".." segment is a traversal: folder names like "Backup..2024"
+        # or "Vol.. 1" (common on external media drives) are fine. Windows
+        # drops trailing dots and spaces, so ".. " and "..." count too.
+        if any(
+            re.fullmatch(r'\.\.[. ]*', part)
+            for part in re.split(r'[\\/]', path_str)
+        ):
+            raise InvalidPathError(
+                "Path contains dangerous sequence: '..' segment"
+            )
 
         # Check 4: Resolve path (handle symlinks, relative paths)
         try:

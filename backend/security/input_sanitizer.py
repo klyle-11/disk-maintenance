@@ -262,7 +262,12 @@ class InputSanitizer:
         Raises:
             ValidationError: If path is invalid
         """
-        return self.sanitize_string(path, InputType.COMPARISON_PATH)
+        sanitized = self.sanitize_string(path, InputType.COMPARISON_PATH)
+        # Windows "Copy as path" wraps the path in double quotes; no real
+        # path starts and ends with a quote, so drop one matching pair.
+        if len(sanitized) >= 2 and sanitized[0] == sanitized[-1] and sanitized[0] in "\"'":
+            sanitized = sanitized[1:-1].strip()
+        return sanitized
 
     def sanitize_depth(self, depth_str: str) -> int:
         """

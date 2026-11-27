@@ -13,7 +13,20 @@ struct Entry {
     full_path: PathBuf,
     size: u64,
     modified: String,
+    mtime: f64,
     is_dir: bool,
+}
+
+/// FAT32 keeps file times to 2 seconds (exFAT to 10 ms), so a faithful copy
+/// on such a drive can be up to this far off from the original.
+const MTIME_SLACK_SECS: f64 = 2.0;
+
+/// True when two file times should count as the same: within the slack of
+/// FAT/exFAT rounding, or exactly an hour apart (FAT stores local time, so a
+/// daylight-saving change shifts every file by one hour).
+fn same_mtime(a: f64, b: f64) -> bool {
+    let diff = (a - b).abs();
+    diff <= MTIME_SLACK_SECS || (diff - 3600.0).abs() <= MTIME_SLACK_SECS
 }
 
 /// Every file and folder under `root`, keyed by relative path.
@@ -48,6 +61,7 @@ fn build_index(root: &Path) -> BTreeMap<String, Entry> {
                     full_path: path.clone(),
                     size: if is_dir { 0 } else { md.len() },
                     modified: epoch_to_local_iso(mtime(&md)),
+                    mtime: mtime(&md),
                     is_dir,
                 },
             );
@@ -78,7 +92,7 @@ fn compare_files(source: &Entry, target: &Entry, deep: bool) -> ComparisonStatus
     if source.size != target.size {
         return Modified;
     }
-    if source.modified != target.modified {
+    if !same_mtime(source.mtime, target.mtime) {
         // Same size, different date: with a deep scan the content decides.
         if deep {
             if let (Some(a), Some(b)) = (hash_file(&source.full_path), hash_file(&target.full_path))
@@ -251,13 +265,41 @@ mod tests {
         assert_eq!(b.difference_count, 1);
     }
 
+    fn set_mtime(path: &Path, secs: f64) {
+        let when = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs_f64(secs);
+        fs::File::options().write(true).open(path).unwrap().set_modified(when).unwrap();
+    }
+
+    #[test]
+    fn fat_rounded_and_dst_shifted_copies_are_identical() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        for name in ["rounded.txt", "dst.txt", "edited.txt"] {
+            write(&src.path().join(name), "abc");
+            write(&dst.path().join(name), "abc");
+            set_mtime(&src.path().join(name), 1_700_000_001.25);
+        }
+        // FAT32 rounds up to the next even second.
+        set_mtime(&dst.path().join("rounded.txt"), 1_700_000_002.0);
+        // FAT stores local time: an hour off after a DST change.
+        set_mtime(&dst.path().join("dst.txt"), 1_700_003_601.25);
+        // A real later edit of the same size still counts as modified.
+        set_mtime(&dst.path().join("edited.txt"), 1_700_000_100.0);
+
+        let (_, summary) = compare(src.path(), dst.path(), false);
+        assert_eq!(summary.identical, 2);
+        assert_eq!(summary.modified, 1);
+    }
+
     #[test]
     fn deep_scan_treats_same_content_as_identical() {
         let src = tempfile::tempdir().unwrap();
         let dst = tempfile::tempdir().unwrap();
         write(&src.path().join("f.bin"), "same bytes");
-        std::thread::sleep(std::time::Duration::from_millis(20));
         write(&dst.path().join("f.bin"), "same bytes");
+        // Dates far enough apart that only the content can make them match.
+        set_mtime(&src.path().join("f.bin"), 1_700_000_000.0);
+        set_mtime(&dst.path().join("f.bin"), 1_700_000_100.0);
 
         let (_, summary) = compare(src.path(), dst.path(), true);
         assert_eq!(summary.identical, 1);
