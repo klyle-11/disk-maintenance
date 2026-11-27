@@ -440,7 +440,15 @@ fn files_inside_archives_join_duplicate_detection() {
 fn archived_copies_with_different_checksums_are_not_duplicates() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    write_zip(&root.join("a.zip"), &[entry("data.bin", &noise(1, 2 * MB))]);
+    // a.zip holds one more file than c.zip, so the two aren't archives with
+    // the same files (that case is one finding for the archives instead).
+    write_zip(
+        &root.join("a.zip"),
+        &[
+            entry("data.bin", &noise(1, 2 * MB)),
+            entry("notes.txt", b"hi"),
+        ],
+    );
     write_zip(&root.join("b.zip"), &[entry("data.bin", &noise(2, 2 * MB))]);
     write_zip(&root.join("c.zip"), &[entry("data.bin", &noise(1, 2 * MB))]);
 
@@ -493,6 +501,57 @@ fn archives_with_the_same_files_are_flagged_even_when_their_bytes_differ() {
     assert_eq!(same[0].paths.len(), 2);
     assert!(same[0].reason.contains("same 2 files"));
     assert!(same[0].total_bytes > 0);
+}
+
+#[test]
+fn twin_archives_are_one_finding_not_one_per_file_inside() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let files: Vec<_> = (0..5)
+        .map(|i| entry(&format!("img{i}.jpg"), &noise(10 + i, 2 * MB)))
+        .collect();
+    write_zip(&root.join("photos.zip"), &files);
+    fs::create_dir(root.join("old")).unwrap();
+    write_zip(&root.join("old/photos-copy.zip"), &files);
+    // A real duplicate inside one archive still shows up.
+    let twice = noise(20, 2 * MB);
+    write_zip(
+        &root.join("mixed.zip"),
+        &[entry("a/song.mp3", &twice), entry("b/song.mp3", &twice)],
+    );
+
+    let (_, findings) = scan(root);
+    assert_eq!(
+        by_category(&findings, "duplicate_archive_candidate").len(),
+        1
+    );
+    let dups = by_category(&findings, "duplicate_file_candidate");
+    assert!(
+        dups.iter().all(|f| !f.reason.contains("'img")),
+        "no finding per file inside the twin archives: {dups:#?}"
+    );
+    assert_eq!(dups.len(), 1);
+    assert!(dups[0].reason.contains("'song.mp3'"));
+}
+
+#[cfg(unix)]
+#[test]
+fn listing_an_archive_keeps_its_last_access_time() {
+    use std::time::{Duration, SystemTime};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.zip");
+    write_zip(&path, &[entry("x.txt", b"abc")]);
+    // Older than its modification time, so even relatime would update it.
+    let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1_600_000_000);
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_accessed(long_ago))
+        .unwrap();
+    assert_eq!(list(&path).entries.len(), 1);
+    let accessed = fs::metadata(&path).unwrap().accessed().unwrap();
+    assert_eq!(accessed, long_ago);
 }
 
 #[test]

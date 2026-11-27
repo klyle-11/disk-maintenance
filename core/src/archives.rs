@@ -18,9 +18,14 @@
 //! "encrypt file names" (and a zip with an encrypted central directory)
 //! hides even the names; that is reported as [`ListStatus::Locked`] and the
 //! scan moves on.
+//!
+//! Reading a file can update its last-access time, which the scanner's
+//! "cold archive" finding relies on. [`list`] puts the time back afterwards
+//! (where the file's owner allows it), so a scan never makes an archive look
+//! recently used.
 
 use serde::Serialize;
-use std::fs::File;
+use std::fs::{File, FileTimes};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -139,20 +144,62 @@ pub fn is_archive_name(name: &str) -> bool {
 /// self-extracting zips). Ok(None) when the file is neither a zip nor a rar.
 /// `cancel` is checked every few hundred entries.
 pub fn list(path: &Path, cancel: &AtomicBool) -> io::Result<Option<ArchiveListing>> {
-    let file = File::open(path)?;
-    let len = file.metadata()?.len();
+    let file = open_for_listing(path)?;
+    let md = file.metadata()?;
+    let len = md.len();
+    let accessed = md.accessed().ok();
     let mut r = BufReader::with_capacity(16 * 1024, file);
+    let listing = list_from(&mut r, len, cancel);
+    if let Some(accessed) = accessed {
+        // Best effort: needs the file's owner (or write-attribute access on
+        // Windows). Failing leaves the time as reading made it.
+        let _ = r
+            .get_ref()
+            .set_times(FileTimes::new().set_accessed(accessed));
+    }
+    listing
+}
+
+/// Open for reading and, on Windows, for setting the access time back.
+fn open_for_listing(path: &Path) -> io::Result<File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const GENERIC_READ: u32 = 0x8000_0000;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .access_mode(GENERIC_READ | FILE_WRITE_ATTRIBUTES)
+            .open(path)
+        {
+            return Ok(f);
+        }
+    }
+    File::open(path)
+}
+
+fn list_from(
+    r: &mut BufReader<File>,
+    len: u64,
+    cancel: &AtomicBool,
+) -> io::Result<Option<ArchiveListing>> {
     let mut magic = [0u8; 8];
-    let got = read_up_to(&mut r, &mut magic)?;
+    let got = read_up_to(r, &mut magic)?;
     let magic = &magic[..got];
     if magic.starts_with(RAR5_SIG) {
-        return Ok(Some(list_rar5(&mut r, len, cancel)));
+        return Ok(Some(list_rar5(r, len, cancel)));
     }
     if magic.starts_with(RAR4_SIG) {
-        r.seek(SeekFrom::Start(RAR4_SIG.len() as u64))?;
-        return Ok(Some(list_rar4(&mut r, len, cancel)));
+        return Ok(Some(list_rar4(r, len, cancel)));
     }
-    list_zip(&mut r, len, cancel)
+    list_zip(r, len, cancel)
+}
+
+/// Move to `target` keeping what is already buffered: a plain seek on a
+/// BufReader throws the buffer away, so walking an index header by header
+/// would read the disk again for every header.
+fn seek_to<R: Read + Seek>(r: &mut BufReader<R>, target: u64) -> io::Result<()> {
+    let here = r.stream_position()?;
+    r.seek_relative(target as i64 - here as i64)
 }
 
 fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
@@ -409,7 +456,7 @@ fn find_zip_end<R: Read + Seek>(r: &mut R, len: u64) -> io::Result<Option<ZipEnd
 }
 
 fn list_zip<R: Read + Seek>(
-    r: &mut R,
+    r: &mut BufReader<R>,
     len: u64,
     cancel: &AtomicBool,
 ) -> io::Result<Option<ArchiveListing>> {
@@ -475,7 +522,7 @@ fn list_zip<R: Read + Seek>(
             out.status = ListStatus::Unreadable;
             break;
         }
-        r.seek(SeekFrom::Current(comment_len as i64))?;
+        r.seek_relative(comment_len as i64)?;
         let (raw_name, extra) = var.split_at(name_len);
 
         // Extra fields: zip64 sizes, and the AES record (whose version 2
@@ -556,7 +603,11 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-fn list_rar5<R: Read + Seek>(r: &mut R, len: u64, cancel: &AtomicBool) -> ArchiveListing {
+fn list_rar5<R: Read + Seek>(
+    r: &mut BufReader<R>,
+    len: u64,
+    cancel: &AtomicBool,
+) -> ArchiveListing {
     let mut out = ArchiveListing::new(ArchiveFormat::Rar5);
     if let Err(status) = walk_rar5(r, len, cancel, &mut out) {
         if out.status == ListStatus::Listed {
@@ -567,7 +618,7 @@ fn list_rar5<R: Read + Seek>(r: &mut R, len: u64, cancel: &AtomicBool) -> Archiv
 }
 
 fn walk_rar5<R: Read + Seek>(
-    r: &mut R,
+    r: &mut BufReader<R>,
     len: u64,
     cancel: &AtomicBool,
     out: &mut ArchiveListing,
@@ -578,7 +629,7 @@ fn walk_rar5<R: Read + Seek>(
         if cancelled(cancel, out.entries.len()) || pos >= len {
             return Ok(());
         }
-        r.seek(SeekFrom::Start(pos)).map_err(bad)?;
+        seek_to(r, pos).map_err(bad)?;
         // CRC32 (4) then the header size as a vint (up to 3 bytes in
         // practice), then the header itself.
         let mut start = [0u8; 4 + 10];
@@ -591,7 +642,7 @@ fn walk_rar5<R: Read + Seek>(
         }
         let header_start = pos + p as u64;
         let mut hdr = vec![0u8; size as usize];
-        r.seek(SeekFrom::Start(header_start)).map_err(bad)?;
+        seek_to(r, header_start).map_err(bad)?;
         r.read_exact(&mut hdr).map_err(bad)?;
         let stored_crc = le32(head, 0).ok_or(ListStatus::Unreadable)?;
         let mut checked = head[4..p].to_vec();
@@ -734,7 +785,11 @@ const RAR4_FILE: u8 = 0x74;
 const RAR4_END: u8 = 0x7b;
 const RAR4_LONG_BLOCK: u16 = 0x8000;
 
-fn list_rar4<R: Read + Seek>(r: &mut R, len: u64, cancel: &AtomicBool) -> ArchiveListing {
+fn list_rar4<R: Read + Seek>(
+    r: &mut BufReader<R>,
+    len: u64,
+    cancel: &AtomicBool,
+) -> ArchiveListing {
     let mut out = ArchiveListing::new(ArchiveFormat::Rar4);
     if let Err(status) = walk_rar4(r, len, cancel, &mut out) {
         if out.status == ListStatus::Listed {
@@ -745,7 +800,7 @@ fn list_rar4<R: Read + Seek>(r: &mut R, len: u64, cancel: &AtomicBool) -> Archiv
 }
 
 fn walk_rar4<R: Read + Seek>(
-    r: &mut R,
+    r: &mut BufReader<R>,
     len: u64,
     cancel: &AtomicBool,
     out: &mut ArchiveListing,
@@ -756,7 +811,7 @@ fn walk_rar4<R: Read + Seek>(
         if cancelled(cancel, out.entries.len()) || pos + 7 > len {
             return Ok(());
         }
-        r.seek(SeekFrom::Start(pos)).map_err(bad)?;
+        seek_to(r, pos).map_err(bad)?;
         let mut base = [0u8; 7];
         r.read_exact(&mut base).map_err(bad)?;
         let kind = base[2];

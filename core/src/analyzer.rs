@@ -294,8 +294,34 @@ impl<'a> Analyzer<'a> {
                     .push(DupCopy::Archived(f));
             }
         }
+        // Archives holding the same files are reported as one finding (by
+        // duplicate_archive_candidates, or as duplicate files when their
+        // bytes match too); their matching insides would only repeat it.
+        let archive_key: HashMap<&str, &str> = self
+            .data
+            .archives
+            .iter()
+            .filter_map(|a| Some((a.path.as_str(), a.content_key.as_deref()?)))
+            .collect();
+        let twin_archives = |copies: &[DupCopy]| {
+            let mut keys = HashSet::new();
+            let mut archives = HashSet::new();
+            for c in copies {
+                let DupCopy::Archived(f) = c else {
+                    return false;
+                };
+                let Some(key) = archive_key.get(f.archive.as_str()) else {
+                    return false;
+                };
+                keys.insert(*key);
+                archives.insert(f.archive.as_str());
+            }
+            // One copy in each of several archives with the same files. Two
+            // copies inside one archive are a real duplicate and stay.
+            keys.len() == 1 && archives.len() == copies.len()
+        };
         for ((name, size), copies) in by_key {
-            if copies.len() < 2 {
+            if copies.len() < 2 || twin_archives(&copies) {
                 continue;
             }
             let loose = copies
