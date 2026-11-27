@@ -798,6 +798,30 @@ class Analyzer:
 # ============================================================================
 
 
+# FAT32 keeps file times to 2 seconds (exFAT to 10 ms), so a faithful copy on
+# such a drive can be up to this far off from the original.
+MTIME_SLACK_SECS = 2.0
+
+
+def _same_mtime(a: float, b: float) -> bool:
+    """
+    True when two file times should count as the same: within the slack of
+    FAT/exFAT rounding, or exactly an hour apart (FAT stores local time, so a
+    daylight-saving change shifts every file by one hour).
+    """
+    diff = abs(a - b)
+    return diff <= MTIME_SLACK_SECS or abs(diff - 3600) <= MTIME_SLACK_SECS
+
+
+def _iso_mtime(ts: float) -> Optional[str]:
+    """Local ISO time for a timestamp; None when it is out of range (corrupt
+    entries on FAT/exFAT drives) rather than failing the whole compare."""
+    try:
+        return datetime.fromtimestamp(ts).isoformat()
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
 class FolderComparator:
     """
     Compares two directory trees and identifies differences.
@@ -844,7 +868,8 @@ class FolderComparator:
                     index[rel_path] = {
                         "full_path": file_path,
                         "size": stat.st_size,
-                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "modified": _iso_mtime(stat.st_mtime),
+                        "mtime": stat.st_mtime,
                         "is_dir": False,
                     }
                 except (PermissionError, OSError):
@@ -862,7 +887,7 @@ class FolderComparator:
                     index[rel_path] = {
                         "full_path": dir_path,
                         "size": 0,  # Will be calculated
-                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "modified": _iso_mtime(stat.st_mtime),
                         "is_dir": True,
                     }
                 except (PermissionError, OSError):
@@ -879,7 +904,7 @@ class FolderComparator:
             return "modified"
 
         # Same size, check dates
-        if source_info["modified"] != target_info["modified"]:
+        if not _same_mtime(source_info["mtime"], target_info["mtime"]):
             # If deep scan, verify with hash
             if self.deep_scan:
                 source_hash = self._hash_file(source_info["full_path"])
