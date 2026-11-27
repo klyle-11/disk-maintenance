@@ -107,9 +107,28 @@ tests both cases in CI.
 
 `di` stays Python. The app bundles diskcli's sources (`bundle.resources` in
 `tauri.conf.json` puts `backend/diskcli/*.py` under `py/diskcli/`) and runs
-them with the machine's Python 3.10+, found like the `di` launchers do
-(`DI_PYTHON`, then `py -3` / `python` / `python3`). Without Python, only the di
-window is affected; it says what is missing.
+them with a Python 3.10+ (`core/src/python.rs`):
+
+1. `DI_PYTHON`, if set.
+2. The Python the app set up earlier (see 4).
+3. `py -3` / `python` / `python3` on the PATH (never macOS's `/usr/bin/python3`
+   stub), then where installers put Python, since an app opened from the Finder
+   or Start menu doesn't get a shell's PATH: Homebrew and python.org on macOS,
+   `%LOCALAPPDATA%\Programs\Python` and Program Files on Windows.
+4. None found: the first di command downloads a self-contained CPython from
+   python-build-standalone (about 35 MB; the release and each platform's
+   SHA-256 are pinned in `python.rs`), checks it, and unpacks it into
+   `<local data>/DiskIntelligence/python` (%LOCALAPPDATA% on Windows,
+   ~/Library/Application Support on macOS, ~/.local/share on Linux). No
+   administrator, nothing system-wide; progress shows in the di window. Delete
+   that folder to undo it.
+
+A failed search isn't remembered, so a Python installed while the app runs
+is used by the next command, without a restart.
+
+To move to a newer Python build: pick a python-build-standalone release at
+least two weeks old, take the six `install_only_stripped.tar.gz` lines from
+its SHA256SUMS, and update `RELEASE`, `VERSION` and `BUILDS`.
 
 ## App icon
 

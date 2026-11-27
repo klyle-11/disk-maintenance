@@ -6,6 +6,7 @@
 import {
   DiConfirmError,
   getDiCommands,
+  setupDiPython,
   sendDiInput,
   splitCommandLine,
   startDiRun,
@@ -120,6 +121,25 @@ function remember(text: string): void {
   }
 }
 
+/** Set once di has a Python to run on, so the check happens once per session. */
+let pythonReady = false;
+
+/**
+ * Before the first command: make sure di has a Python. On a machine without
+ * one the app downloads its own (once), and the progress shows here.
+ */
+async function ensurePython(): Promise<void> {
+  if (pythonReady) return;
+  let setUp = false;
+  await setupDiPython((line) => {
+    setUp = true;
+    note(line, { fg: "var(--lcd-accent)" });
+  });
+  pythonReady = true;
+  // The commands list needed Python too.
+  if (setUp || diStore.get().commands.length === 0) void loadDiCommands();
+}
+
 export async function loadDiCommands(): Promise<void> {
   try {
     patch({ commands: await getDiCommands() });
@@ -149,6 +169,8 @@ export async function runDi(text: string): Promise<void> {
   const controller = new AbortController();
   abort = controller;
   try {
+    await ensurePython();
+    if (controller.signal.aborted) return;
     const columns = diStore.get().columns;
     let runId: string;
     try {

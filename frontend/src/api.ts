@@ -1084,6 +1084,17 @@ export async function getDiCommands(): Promise<DiCommand[]> {
 /** Tauri: runs checked by startDiRun, waiting for streamDiRun to start them. */
 const pendingDiRuns = new Map<string, { args: string[]; columns: number; confirm: boolean }>();
 
+/**
+ * Make sure di has a Python to run on (desktop app only). With none on the
+ * machine, the app downloads its own once; `onProgress` gets lines to show.
+ */
+export async function setupDiPython(onProgress: (line: string) => void): Promise<void> {
+  if (!isTauri) return;
+  const channel = new Channel<string>();
+  channel.onmessage = onProgress;
+  await invoke("di_setup_python", { onProgress: channel });
+}
+
 /** Thrown when a di command changes the disk and needs the user's OK first. */
 export class DiConfirmError extends Error {}
 

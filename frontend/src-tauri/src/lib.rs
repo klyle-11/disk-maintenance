@@ -422,6 +422,19 @@ async fn di_commands(di: Di<'_>) -> CmdResult<Value> {
     blocking(move || di.commands()).await
 }
 
+/// Make sure di has a Python: the machine's, or one the app downloads into
+/// its data folder (once). Progress lines go to the di window.
+#[tauri::command]
+async fn di_setup_python(di: Di<'_>, on_progress: Channel<String>) -> CmdResult<()> {
+    let di = di.inner().clone();
+    blocking(move || {
+        di.setup_python(|line| {
+            let _ = on_progress.send(line.to_string());
+        })
+    })
+    .await
+}
+
 /// Whether a command line may run, and whether it needs the user's OK first.
 #[tauri::command]
 async fn di_check(di: Di<'_>, args: Vec<String>) -> CmdResult<DiCheck> {
@@ -619,6 +632,7 @@ pub fn run() {
             drive_search,
             drive_forget,
             di_commands,
+            di_setup_python,
             di_check,
             di_run,
             di_input,
