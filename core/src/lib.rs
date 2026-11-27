@@ -18,6 +18,7 @@ pub mod model;
 pub mod offload;
 pub mod offload_service;
 pub mod paths;
+pub mod python;
 pub mod scanner;
 pub mod service;
 pub mod snapshots;

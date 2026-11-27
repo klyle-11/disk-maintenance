@@ -20,6 +20,9 @@ dirs = "5"
 which = "6"
 fs4 = { version = "0.13", features = ["sync"] }
 sysinfo = { version = "0.40", default-features = false, features = ["disk"] }
+ureq = { version = "2", default-features = false, features = ["tls", "native-certs"] }
+flate2 = "1"
+tar = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

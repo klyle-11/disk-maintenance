@@ -11,8 +11,10 @@
 //! line typed there to the run with [`DiRunner::send_input`], and di asks
 //! y/n before deleting anything.
 //!
-//! The app bundles diskcli's sources; it needs a Python 3.10+ on the machine
-//! (found like the `di` launchers do, or set with `DI_PYTHON`).
+//! The app bundles diskcli's sources and runs them with a Python 3.10+: the
+//! machine's own (see [`crate::python::find`]), or, when it has none, one the
+//! app downloads into its data folder the first time di runs
+//! ([`DiRunner::setup_python`]).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,8 +23,10 @@ use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::Instant;
+
+use crate::python::{self, no_window};
 
 const MAX_LIVE_RUNS: usize = 4;
 
@@ -54,50 +58,23 @@ struct Live {
 pub struct DiRunner {
     /// The folder holding the `diskcli` package (PYTHONPATH).
     root: PathBuf,
-    python: OnceLock<Result<Vec<OsString>, String>>,
+    /// Where the app sets up its own Python when the machine has none.
+    python_home: Option<PathBuf>,
+    /// The Python found or set up. Only success is remembered, so a Python
+    /// installed while the app runs is picked up on the next command.
+    python: Mutex<Option<Vec<OsString>>>,
+    /// Held while a Python is being set up, so two windows don't both
+    /// download it.
+    setting_up: Mutex<()>,
     live: Mutex<Live>,
     /// Each running command's stdin, for answering its prompts.
     inputs: Mutex<HashMap<String, ChildStdin>>,
 }
 
-fn no_window(cmd: &mut Command) -> &mut Command {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd
-}
-
-/// The Python to run di with: `DI_PYTHON`, else the first of the usual
-/// names that is really Python 3.10+ (on Windows, `python` can be a Store stub).
-fn find_python() -> Result<Vec<OsString>, String> {
-    if let Some(py) = std::env::var_os("DI_PYTHON").filter(|p| !p.is_empty()) {
-        return Ok(vec![py]);
-    }
-    let candidates: &[&[&str]] = if cfg!(windows) {
-        &[&["py", "-3"], &["python"], &["python3"]]
-    } else {
-        &[&["python3"], &["python"]]
-    };
-    for candidate in candidates {
-        let mut cmd = Command::new(candidate[0]);
-        cmd.args(&candidate[1..])
-            .args(["-c", "import sys; sys.exit(sys.version_info < (3, 10))"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        if no_window(&mut cmd).status().is_ok_and(|s| s.success()) {
-            return Ok(candidate.iter().map(OsString::from).collect());
-        }
-    }
-    Err(
-        "di needs Python 3.10 or newer, and none was found. Install it from python.org, \
-         or set DI_PYTHON to its path, then restart the app."
-            .into(),
-    )
-}
+/// What the di window shows when there is no Python and none could be set up.
+const NO_PYTHON: &str = "di needs Python 3.10 or newer and none was found. \
+    It sets one up by itself the next time a command runs; or install Python \
+    from python.org, or set DI_PYTHON to its path.";
 
 /// Move the complete UTF-8 text out of `buf`, keeping a character cut in half
 /// at the end for the next chunk. Invalid bytes become U+FFFD.
@@ -148,14 +125,50 @@ impl DiRunner {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         DiRunner {
             root: root.into(),
-            python: OnceLock::new(),
+            python_home: python::default_home(),
+            python: Mutex::new(None),
+            setting_up: Mutex::new(()),
             live: Mutex::new(Live::default()),
             inputs: Mutex::new(HashMap::new()),
         }
     }
 
+    /// Keep the app's own Python somewhere else (tests).
+    pub fn with_python_home(mut self, home: Option<PathBuf>) -> Self {
+        self.python_home = home;
+        self
+    }
+
+    /// The Python to run di with, if the machine has one (or the app set one up).
+    fn python(&self) -> Option<Vec<OsString>> {
+        let mut cached = self.python.lock().unwrap();
+        if cached.is_none() {
+            *cached = python::find(self.python_home.as_deref());
+        }
+        cached.clone()
+    }
+
+    /// Whether di can run right now without setting anything up.
+    pub fn python_ready(&self) -> bool {
+        self.python().is_some()
+    }
+
+    /// Make sure there is a Python for di: the machine's, or else download
+    /// and unpack one into the app's data folder (once). `progress` gets
+    /// short lines for the di window while that happens.
+    pub fn setup_python(&self, progress: impl FnMut(&str)) -> Result<(), String> {
+        let _one_at_a_time = self.setting_up.lock().unwrap_or_else(|e| e.into_inner());
+        if self.python().is_some() {
+            return Ok(());
+        }
+        let home = self.python_home.as_deref().ok_or(NO_PYTHON)?;
+        let py = python::install(home, progress)?;
+        *self.python.lock().unwrap() = Some(py);
+        Ok(())
+    }
+
     fn python_command(&self) -> Result<Command, String> {
-        let py = self.python.get_or_init(find_python).clone()?;
+        let py = self.python().ok_or(NO_PYTHON)?;
         let mut cmd = Command::new(&py[0]);
         cmd.args(&py[1..]);
         let mut path = OsString::from(self.root.as_os_str());
@@ -373,7 +386,8 @@ impl DiRunner {
             let last = err.lines().last().unwrap_or("").trim();
             return Err(format!("di summary failed: {last}"));
         }
-        serde_json::from_slice(&output.stdout).map_err(|e| format!("di summary gave bad output: {e}"))
+        serde_json::from_slice(&output.stdout)
+            .map_err(|e| format!("di summary gave bad output: {e}"))
     }
 
     /// The folder this runner loads diskcli from.
